@@ -14,6 +14,7 @@ export default function SettingsLayout() {
       <Stack.Screen name="appearance" />
       <Stack.Screen name="language" />
       <Stack.Screen name="data-privacy" />
+      <Stack.Screen name="security" />
     </Stack>
   );
 }

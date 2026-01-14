@@ -30,7 +30,7 @@ export default function DataPrivacyScreen() {
 
     setIsExporting(true);
     try {
-      const success = await downloadUserData(user.id);
+      const success = await downloadUserData();
       if (success) {
         Alert.alert('Success', 'Your data has been exported successfully.');
       } else {
@@ -78,11 +78,11 @@ export default function DataPrivacyScreen() {
 
     setIsDeletingData(true);
     try {
-      const success = await deleteUserDataOnly(user.id);
-      if (success) {
-        Alert.alert('Success', 'All your data has been deleted. Your account is still active.');
+      const result = await deleteUserDataOnly();
+      if (result.success) {
+        Alert.alert('Success', result.message || 'All your data has been deleted. Your account is still active.');
       } else {
-        Alert.alert('Error', 'Failed to delete data. Please try again.');
+        Alert.alert('Error', result.error || 'Failed to delete data. Please try again.');
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to delete data. Please try again.');
@@ -126,12 +126,12 @@ export default function DataPrivacyScreen() {
 
     setIsDeletingAccount(true);
     try {
-      const success = await deleteUserAccount(user.id);
-      if (success) {
+      const result = await deleteUserAccount();
+      if (result.success) {
         // User will be signed out automatically
         router.replace('/(auth)/welcome');
       } else {
-        Alert.alert('Error', 'Failed to delete account. Please try again.');
+        Alert.alert('Error', result.error || 'Failed to delete account. Please try again.');
         setIsDeletingAccount(false);
       }
     } catch (error) {

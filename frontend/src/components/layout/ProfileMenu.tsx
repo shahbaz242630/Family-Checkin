@@ -14,6 +14,7 @@ const PROFILE_MENU_ITEMS = [
   { icon: '💳', label: 'Billing', path: '/(main)/settings/billing' },
   { icon: '🎨', label: 'Appearance', path: '/(main)/settings/appearance' },
   { icon: '🌐', label: 'Language', path: '/(main)/settings/language' },
+  { icon: '🛡️', label: 'Security', path: '/(main)/settings/security' },
   { icon: '🔒', label: 'Data & Privacy', path: '/(main)/settings/data-privacy' },
 ];
 

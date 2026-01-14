@@ -6,3 +6,16 @@ export {
   deleteUserDataOnly,
   deleteUserAccount,
 } from './userData';
+export {
+  isBiometricAvailable,
+  isBiometricEnrolled,
+  getBiometricType,
+  getBiometricName,
+  isBiometricEnabled,
+  enableBiometric,
+  disableBiometric,
+  getBiometricUserId,
+  authenticateWithBiometric,
+  getBiometricStatus,
+} from './biometric';
+export type { BiometricType, BiometricStatus } from './biometric';
