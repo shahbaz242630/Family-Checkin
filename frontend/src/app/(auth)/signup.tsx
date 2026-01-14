@@ -1,45 +1,95 @@
+// Signup screen - Google, Apple, and Email registration
 import { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  TextInput,
   Pressable,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
+import { SocialButton, TextInput, Button, Divider } from '../../components/auth';
+import { useAuth } from '../../hooks/useAuth';
 
 export default function SignupScreen() {
   const router = useRouter();
+  const { signUp, signInGoogle, signInApple, loading, error, clearError } = useAuth();
+
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [nameError, setNameError] = useState('');
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
-  const isValid = fullName.length >= 2 && email.includes('@') && password.length >= 6;
+  const validateForm = (): boolean => {
+    let valid = true;
+    clearError();
+    setNameError('');
+    setEmailError('');
+    setPasswordError('');
 
-  const handleSignup = async () => {
-    if (!isValid) return;
+    if (!fullName || fullName.length < 2) {
+      setNameError('Please enter your name');
+      valid = false;
+    }
 
-    setLoading(true);
-    try {
-      // TODO: Implement actual signup with Supabase
-      console.log('Signup:', { fullName, email, password });
+    if (!email) {
+      setEmailError('Email is required');
+      valid = false;
+    } else if (!email.includes('@')) {
+      setEmailError('Please enter a valid email');
+      valid = false;
+    }
 
-      // Simulate signup
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    if (!password) {
+      setPasswordError('Password is required');
+      valid = false;
+    } else if (password.length < 8) {
+      setPasswordError('Password must be at least 8 characters');
+      valid = false;
+    }
 
+    return valid;
+  };
+
+  const handleEmailSignUp = async () => {
+    if (!validateForm()) return;
+
+    const success = await signUp(email, password, fullName);
+    if (success) {
       // Go to onboarding to set up first loved one
       router.replace('/(auth)/onboarding');
-    } catch (error) {
-      console.error('Signup error:', error);
-    } finally {
-      setLoading(false);
     }
+  };
+
+  const handleGoogleSignUp = async () => {
+    const success = await signInGoogle();
+    if (success) {
+      // OAuth will redirect automatically
+    }
+  };
+
+  const handleAppleSignUp = async () => {
+    const success = await signInApple();
+    if (success) {
+      // OAuth will redirect automatically
+    }
+  };
+
+  const openPrivacyPolicy = () => {
+    // TODO: Replace with actual privacy policy URL
+    Linking.openURL('https://familycheckin.app/privacy');
+  };
+
+  const openTermsOfService = () => {
+    // TODO: Replace with actual terms URL
+    Linking.openURL('https://familycheckin.app/terms');
   };
 
   return (
@@ -51,86 +101,120 @@ export default function SignupScreen() {
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
         >
+          {/* Header */}
           <View style={styles.header}>
             <Pressable onPress={() => router.back()} style={styles.backButton}>
               <Text style={styles.backButtonText}>← Back</Text>
             </Pressable>
-            <Text style={styles.title}>Create Account</Text>
+            <Text style={styles.title}>Create your account</Text>
             <Text style={styles.subtitle}>
-              Start keeping your loved ones safe
+              Join thousands securing their loved ones
             </Text>
           </View>
 
-          <View style={styles.form}>
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Full Name</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Your name"
-                placeholderTextColor={colors.textLight}
-                autoCapitalize="words"
-                value={fullName}
-                onChangeText={setFullName}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="your@email.com"
-                placeholderTextColor={colors.textLight}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                value={email}
-                onChangeText={setEmail}
-              />
-            </View>
-
-            <View style={styles.inputGroup}>
-              <Text style={styles.label}>Password</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="At least 6 characters"
-                placeholderTextColor={colors.textLight}
-                secureTextEntry
-                value={password}
-                onChangeText={setPassword}
-              />
-            </View>
-
-            <Pressable
-              style={[
-                styles.button,
-                (!isValid || loading) && styles.buttonDisabled,
-              ]}
-              onPress={handleSignup}
-              disabled={!isValid || loading}
-            >
-              <Text style={styles.buttonText}>
-                {loading ? 'Creating account...' : 'Create Account'}
-              </Text>
-            </Pressable>
-
-            <Text style={styles.terms}>
-              By signing up, you agree to our Terms of Service and Privacy Policy
-            </Text>
-          </View>
-
-          <View style={styles.divider}>
-            <View style={styles.dividerLine} />
-            <Text style={styles.dividerText}>or continue with</Text>
-            <View style={styles.dividerLine} />
-          </View>
-
+          {/* Social Buttons */}
           <View style={styles.socialButtons}>
-            <Pressable style={styles.socialButton}>
-              <Text style={styles.socialButtonText}>Continue with Apple</Text>
-            </Pressable>
-            <Pressable style={styles.socialButton}>
-              <Text style={styles.socialButtonText}>Continue with Google</Text>
+            <SocialButton
+              provider="google"
+              onPress={handleGoogleSignUp}
+              loading={loading}
+              mode="signup"
+            />
+            <SocialButton
+              provider="apple"
+              onPress={handleAppleSignUp}
+              loading={loading}
+              mode="signup"
+            />
+          </View>
+
+          {/* Divider */}
+          <Divider text="or continue with email" />
+
+          {/* Email Form */}
+          <View style={styles.form}>
+            <TextInput
+              label="Full Name"
+              placeholder="Your name"
+              autoCapitalize="words"
+              value={fullName}
+              onChangeText={(text) => {
+                setFullName(text);
+                setNameError('');
+              }}
+              error={nameError}
+            />
+
+            <TextInput
+              label="Email"
+              placeholder="you@example.com"
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+              value={email}
+              onChangeText={(text) => {
+                setEmail(text);
+                setEmailError('');
+              }}
+              error={emailError}
+            />
+
+            <View>
+              <TextInput
+                label="Password"
+                placeholder="Create a strong password"
+                isPassword
+                value={password}
+                onChangeText={(text) => {
+                  setPassword(text);
+                  setPasswordError('');
+                }}
+                error={passwordError}
+              />
+              <Text style={styles.passwordHint}>
+                Use 8+ characters with uppercase, lowercase, numbers & symbols
+              </Text>
+            </View>
+
+            {/* Error Message */}
+            {error && (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>{error.message}</Text>
+              </View>
+            )}
+
+            {/* Create Account Button */}
+            <Button
+              title="Create account"
+              onPress={handleEmailSignUp}
+              loading={loading}
+              disabled={!fullName || !email || !password}
+            />
+
+            {/* Terms & Privacy */}
+            <View style={styles.termsContainer}>
+              <Text style={styles.termsText}>
+                By creating an account, you agree to our{' '}
+              </Text>
+              <View style={styles.termsLinks}>
+                <Pressable onPress={openTermsOfService}>
+                  <Text style={styles.termsLink}>Terms of Service</Text>
+                </Pressable>
+                <Text style={styles.termsText}> and </Text>
+                <Pressable onPress={openPrivacyPolicy}>
+                  <Text style={styles.termsLink}>Privacy Policy</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+
+          {/* Login Link */}
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Already have an account? </Text>
+            <Pressable onPress={() => router.replace('/(auth)/login')}>
+              <Text style={styles.footerLink}>Sign in</Text>
             </Pressable>
           </View>
         </ScrollView>
@@ -163,7 +247,7 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
   },
   title: {
-    fontSize: fontSize.xxl,
+    fontSize: fontSize.xl,
     fontWeight: 'bold',
     color: colors.text,
     marginBottom: spacing.xs,
@@ -172,75 +256,58 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
     color: colors.textSecondary,
   },
-  form: {
-    gap: spacing.md,
-  },
-  inputGroup: {
-    gap: spacing.xs,
-  },
-  label: {
-    fontSize: fontSize.sm,
-    fontWeight: '500',
-    color: colors.text,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    fontSize: fontSize.md,
-    color: colors.text,
-  },
-  button: {
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
-    alignItems: 'center',
-    marginTop: spacing.md,
-  },
-  buttonDisabled: {
-    backgroundColor: colors.disabled,
-  },
-  buttonText: {
-    color: colors.textOnPrimary,
-    fontSize: fontSize.lg,
-    fontWeight: '600',
-  },
-  terms: {
-    fontSize: fontSize.xs,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    marginTop: spacing.sm,
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: spacing.xl,
-    gap: spacing.md,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-  },
   socialButtons: {
     gap: spacing.md,
   },
-  socialButton: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.lg,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
+  form: {
+    gap: spacing.md,
   },
-  socialButtonText: {
-    color: colors.text,
-    fontSize: fontSize.md,
+  passwordHint: {
+    fontSize: fontSize.xs,
+    color: colors.textLight,
+    marginTop: spacing.xs,
+  },
+  errorContainer: {
+    backgroundColor: colors.error + '10',
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+  },
+  errorText: {
+    color: colors.error,
+    fontSize: fontSize.sm,
+    textAlign: 'center',
+  },
+  termsContainer: {
+    alignItems: 'center',
+    marginTop: spacing.sm,
+  },
+  termsText: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  termsLinks: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+  },
+  termsLink: {
+    fontSize: fontSize.xs,
+    color: colors.primary,
     fontWeight: '500',
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: spacing.xl,
+  },
+  footerText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.md,
+  },
+  footerLink: {
+    color: colors.primary,
+    fontSize: fontSize.md,
+    fontWeight: '600',
   },
 });

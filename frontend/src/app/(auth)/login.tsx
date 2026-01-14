@@ -1,111 +1,173 @@
+// Login screen - Google, Apple, and Email authentication
 import { useState } from 'react';
 import {
   View,
   Text,
   StyleSheet,
-  TextInput,
   Pressable,
   KeyboardAvoidingView,
   Platform,
+  ScrollView,
+  Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
+import { SocialButton, TextInput, Button, Divider } from '../../components/auth';
+import { useAuth } from '../../hooks/useAuth';
 
 export default function LoginScreen() {
   const router = useRouter();
+  const { signIn, signInGoogle, signInApple, loading, error, clearError } = useAuth();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
-  const handleLogin = async () => {
-    if (!email || !password) return;
+  const validateForm = (): boolean => {
+    let valid = true;
+    clearError();
+    setEmailError('');
+    setPasswordError('');
 
-    setLoading(true);
-    try {
-      // TODO: Implement actual login with Supabase
-      console.log('Login:', { email, password });
+    if (!email) {
+      setEmailError('Email is required');
+      valid = false;
+    } else if (!email.includes('@')) {
+      setEmailError('Please enter a valid email');
+      valid = false;
+    }
 
-      // Simulate login
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+    if (!password) {
+      setPasswordError('Password is required');
+      valid = false;
+    }
 
+    return valid;
+  };
+
+  const handleEmailSignIn = async () => {
+    if (!validateForm()) return;
+
+    const success = await signIn(email, password);
+    if (success) {
       router.replace('/(app)/home');
-    } catch (error) {
-      console.error('Login error:', error);
-    } finally {
-      setLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    const success = await signInGoogle();
+    if (success) {
+      // OAuth will redirect automatically
+    }
+  };
+
+  const handleAppleSignIn = async () => {
+    const success = await signInApple();
+    if (success) {
+      // OAuth will redirect automatically
     }
   };
 
   return (
     <SafeAreaView style={styles.container}>
       <KeyboardAvoidingView
-        style={styles.content}
+        style={styles.keyboardView}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
-        <View style={styles.header}>
-          <Pressable onPress={() => router.back()} style={styles.backButton}>
-            <Text style={styles.backButtonText}>← Back</Text>
-          </Pressable>
-          <Text style={styles.title}>Welcome Back</Text>
-          <Text style={styles.subtitle}>Sign in to continue</Text>
-        </View>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {/* Header */}
+          <View style={styles.header}>
+            <Pressable onPress={() => router.back()} style={styles.backButton}>
+              <Text style={styles.backButtonText}>← Back</Text>
+            </Pressable>
+            <Text style={styles.title}>Login to your account</Text>
+          </View>
 
-        <View style={styles.form}>
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Email</Text>
+          {/* Social Buttons */}
+          <View style={styles.socialButtons}>
+            <SocialButton
+              provider="google"
+              onPress={handleGoogleSignIn}
+              loading={loading}
+              mode="signin"
+            />
+            <SocialButton
+              provider="apple"
+              onPress={handleAppleSignIn}
+              loading={loading}
+              mode="signin"
+            />
+          </View>
+
+          {/* Divider */}
+          <Divider text="or continue with email" />
+
+          {/* Email Form */}
+          <View style={styles.form}>
             <TextInput
-              style={styles.input}
-              placeholder="your@email.com"
-              placeholderTextColor={colors.textLight}
+              label="Email"
+              placeholder="you@example.com"
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(text) => {
+                setEmail(text);
+                setEmailError('');
+              }}
+              error={emailError}
             />
-          </View>
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>Password</Text>
             <TextInput
-              style={styles.input}
+              label="Password"
               placeholder="Enter your password"
-              placeholderTextColor={colors.textLight}
-              secureTextEntry
+              isPassword
               value={password}
-              onChangeText={setPassword}
+              onChangeText={(text) => {
+                setPassword(text);
+                setPasswordError('');
+              }}
+              error={passwordError}
+            />
+
+            {/* Forgot Password Link */}
+            <Pressable
+              style={styles.forgotPassword}
+              onPress={() => router.push('/(auth)/forgot-password')}
+            >
+              <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+            </Pressable>
+
+            {/* Error Message */}
+            {error && (
+              <View style={styles.errorContainer}>
+                <Text style={styles.errorText}>{error.message}</Text>
+              </View>
+            )}
+
+            {/* Sign In Button */}
+            <Button
+              title="Sign in"
+              onPress={handleEmailSignIn}
+              loading={loading}
+              disabled={!email || !password}
             />
           </View>
 
-          <Pressable
-            style={[
-              styles.button,
-              (!email || !password || loading) && styles.buttonDisabled,
-            ]}
-            onPress={handleLogin}
-            disabled={!email || !password || loading}
-          >
-            <Text style={styles.buttonText}>
-              {loading ? 'Signing in...' : 'Sign In'}
-            </Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.divider}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>or continue with</Text>
-          <View style={styles.dividerLine} />
-        </View>
-
-        <View style={styles.socialButtons}>
-          <Pressable style={styles.socialButton}>
-            <Text style={styles.socialButtonText}>Continue with Apple</Text>
-          </Pressable>
-          <Pressable style={styles.socialButton}>
-            <Text style={styles.socialButtonText}>Continue with Google</Text>
-          </Pressable>
-        </View>
+          {/* Sign Up Link */}
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Don't have an account? </Text>
+            <Pressable onPress={() => router.replace('/(auth)/signup')}>
+              <Text style={styles.footerLink}>Sign up</Text>
+            </Pressable>
+          </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -116,9 +178,12 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
-  content: {
+  keyboardView: {
     flex: 1,
+  },
+  content: {
     paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xl,
   },
   header: {
     marginTop: spacing.md,
@@ -132,78 +197,46 @@ const styles = StyleSheet.create({
     fontSize: fontSize.md,
   },
   title: {
-    fontSize: fontSize.xxl,
+    fontSize: fontSize.xl,
     fontWeight: 'bold',
     color: colors.text,
-    marginBottom: spacing.xs,
-  },
-  subtitle: {
-    fontSize: fontSize.md,
-    color: colors.textSecondary,
-  },
-  form: {
-    gap: spacing.md,
-  },
-  inputGroup: {
-    gap: spacing.xs,
-  },
-  label: {
-    fontSize: fontSize.sm,
-    fontWeight: '500',
-    color: colors.text,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    fontSize: fontSize.md,
-    color: colors.text,
-  },
-  button: {
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
-    alignItems: 'center',
-    marginTop: spacing.md,
-  },
-  buttonDisabled: {
-    backgroundColor: colors.disabled,
-  },
-  buttonText: {
-    color: colors.textOnPrimary,
-    fontSize: fontSize.lg,
-    fontWeight: '600',
-  },
-  divider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: spacing.xl,
-    gap: spacing.md,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
   },
   socialButtons: {
     gap: spacing.md,
   },
-  socialButton: {
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.lg,
-    paddingVertical: spacing.md,
-    alignItems: 'center',
+  form: {
+    gap: spacing.md,
   },
-  socialButtonText: {
-    color: colors.text,
-    fontSize: fontSize.md,
+  forgotPassword: {
+    alignSelf: 'flex-end',
+  },
+  forgotPasswordText: {
+    color: colors.primary,
+    fontSize: fontSize.sm,
     fontWeight: '500',
+  },
+  errorContainer: {
+    backgroundColor: colors.error + '10',
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+  },
+  errorText: {
+    color: colors.error,
+    fontSize: fontSize.sm,
+    textAlign: 'center',
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    marginTop: spacing.xl,
+  },
+  footerText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.md,
+  },
+  footerLink: {
+    color: colors.primary,
+    fontSize: fontSize.md,
+    fontWeight: '600',
   },
 });

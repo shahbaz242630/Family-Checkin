@@ -1,77 +1,98 @@
+// Welcome screen - Landing page with Login/Signup tabs
+import { useState } from 'react';
 import { View, Text, StyleSheet, Pressable } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 
+type Tab = 'login' | 'signup';
+
 export default function WelcomeScreen() {
   const router = useRouter();
+  const [activeTab, setActiveTab] = useState<Tab>('login');
+
+  const handleContinue = () => {
+    if (activeTab === 'login') {
+      router.push('/(auth)/login');
+    } else {
+      router.push('/(auth)/signup');
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.content}>
+        {/* Logo & Tagline */}
         <View style={styles.header}>
+          <View style={styles.logoContainer}>
+            <Text style={styles.logoIcon}>✓</Text>
+          </View>
           <Text style={styles.title}>Family Check-In</Text>
-          <Text style={styles.subtitle}>
-            Keep your loved ones safe with daily check-ins
-          </Text>
+          <Text style={styles.tagline}>Peace of mind, one tap away</Text>
         </View>
 
+        {/* Features */}
         <View style={styles.features}>
           <FeatureItem
-            icon="✓"
-            title="Daily Safety Check"
-            description="One tap to let family know you're OK"
-          />
-          <FeatureItem
             icon="🔔"
-            title="Smart Alerts"
-            description="Get notified if someone misses their check-in"
+            text="Daily safety check-ins for your loved ones"
           />
           <FeatureItem
             icon="💬"
-            title="WhatsApp & SMS"
-            description="Works even without the app installed"
+            text="Alerts via WhatsApp, SMS & calls"
+          />
+          <FeatureItem
+            icon="👨‍👩‍👧‍👦"
+            text="Monitor parents, partners & family"
           />
         </View>
 
-        <View style={styles.buttons}>
+        {/* Tab Selector */}
+        <View style={styles.tabContainer}>
           <Pressable
-            style={styles.primaryButton}
-            onPress={() => router.push('/(auth)/signup')}
+            style={[styles.tab, activeTab === 'login' && styles.tabActive]}
+            onPress={() => setActiveTab('login')}
           >
-            <Text style={styles.primaryButtonText}>Get Started</Text>
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'login' && styles.tabTextActive,
+              ]}
+            >
+              Login
+            </Text>
           </Pressable>
-
           <Pressable
-            style={styles.secondaryButton}
-            onPress={() => router.push('/(auth)/login')}
+            style={[styles.tab, activeTab === 'signup' && styles.tabActive]}
+            onPress={() => setActiveTab('signup')}
           >
-            <Text style={styles.secondaryButtonText}>
-              Already have an account? Log in
+            <Text
+              style={[
+                styles.tabText,
+                activeTab === 'signup' && styles.tabTextActive,
+              ]}
+            >
+              Sign Up
             </Text>
           </Pressable>
         </View>
+
+        {/* Continue Button */}
+        <Pressable style={styles.continueButton} onPress={handleContinue}>
+          <Text style={styles.continueButtonText}>
+            {activeTab === 'login' ? 'Login to your account' : 'Create your account'}
+          </Text>
+        </Pressable>
       </View>
     </SafeAreaView>
   );
 }
 
-function FeatureItem({
-  icon,
-  title,
-  description,
-}: {
-  icon: string;
-  title: string;
-  description: string;
-}) {
+function FeatureItem({ icon, text }: { icon: string; text: string }) {
   return (
     <View style={styles.featureItem}>
       <Text style={styles.featureIcon}>{icon}</Text>
-      <View style={styles.featureText}>
-        <Text style={styles.featureTitle}>{title}</Text>
-        <Text style={styles.featureDescription}>{description}</Text>
-      </View>
+      <Text style={styles.featureText}>{text}</Text>
     </View>
   );
 }
@@ -85,70 +106,87 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingHorizontal: spacing.lg,
     justifyContent: 'space-between',
+    paddingVertical: spacing.xl,
   },
   header: {
-    marginTop: spacing.xxl,
     alignItems: 'center',
+    marginTop: spacing.xl,
+  },
+  logoContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  logoIcon: {
+    fontSize: 40,
+    color: colors.textOnPrimary,
   },
   title: {
     fontSize: fontSize.xxl,
     fontWeight: 'bold',
-    color: colors.primary,
-    marginBottom: spacing.sm,
-  },
-  subtitle: {
-    fontSize: fontSize.md,
-    color: colors.textSecondary,
-    textAlign: 'center',
-    paddingHorizontal: spacing.lg,
-  },
-  features: {
-    gap: spacing.lg,
-  },
-  featureItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: spacing.md,
-  },
-  featureIcon: {
-    fontSize: fontSize.xl,
-    width: 40,
-    textAlign: 'center',
-  },
-  featureText: {
-    flex: 1,
-  },
-  featureTitle: {
-    fontSize: fontSize.lg,
-    fontWeight: '600',
     color: colors.text,
     marginBottom: spacing.xs,
   },
-  featureDescription: {
-    fontSize: fontSize.sm,
+  tagline: {
+    fontSize: fontSize.md,
     color: colors.textSecondary,
   },
-  buttons: {
+  features: {
     gap: spacing.md,
-    marginBottom: spacing.xl,
   },
-  primaryButton: {
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.backgroundSecondary,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.lg,
+  },
+  featureIcon: {
+    fontSize: fontSize.xl,
+  },
+  featureText: {
+    flex: 1,
+    fontSize: fontSize.md,
+    color: colors.text,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: colors.backgroundSecondary,
+    borderRadius: borderRadius.lg,
+    padding: spacing.xs,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    borderRadius: borderRadius.md,
+  },
+  tabActive: {
+    backgroundColor: colors.primary,
+  },
+  tabText: {
+    fontSize: fontSize.md,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
+  tabTextActive: {
+    color: colors.textOnPrimary,
+  },
+  continueButton: {
     backgroundColor: colors.primary,
     paddingVertical: spacing.md,
     borderRadius: borderRadius.lg,
     alignItems: 'center',
   },
-  primaryButtonText: {
+  continueButtonText: {
     color: colors.textOnPrimary,
     fontSize: fontSize.lg,
     fontWeight: '600',
-  },
-  secondaryButton: {
-    paddingVertical: spacing.md,
-    alignItems: 'center',
-  },
-  secondaryButtonText: {
-    color: colors.primary,
-    fontSize: fontSize.md,
   },
 });
