@@ -1,0 +1,14 @@
+{
+  "name": "@family-checkin/backend",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "migrate": "supabase db push",
+    "seed": "supabase db seed",
+    "functions:serve": "supabase functions serve",
+    "functions:deploy": "supabase functions deploy"
+  },
+  "devDependencies": {
+    "supabase": "^1.200.0"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "name": "family-checkin-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend",
+    "shared"
+  ],
+  "scripts": {
+    "frontend": "npm --prefix frontend",
+    "backend": "npm --prefix backend",
+    "start": "npm --prefix frontend start",
+    "ios": "npm --prefix frontend run ios",
+    "android": "npm --prefix frontend run android",
+    "db:migrate": "npm --prefix backend run migrate",
+    "db:seed": "npm --prefix backend run seed"
+  }
+}

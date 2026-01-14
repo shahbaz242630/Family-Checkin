@@ -1,0 +1,1412 @@
+# Business Requirements Document (BRD)
+
+## Product Name (Working)
+
+Family Check‑In / I’m OK (final name TBD)
+
+## Target Region
+
+GCC – UAE, Saudi Arabia, Qatar
+
+## Target Users
+
+* Primary: Account Owners / Caregivers (expats living in GCC)
+* Secondary: Loved Ones (parents, partners, children, siblings, relatives, dependents)
+
+The product is relationship-agnostic and supports multiple use cases such as elderly parents, partners traveling, children on trips or camps, and siblings living alone.
+
+## Platforms
+
+* iOS (Apple)
+* Android
+
+---
+
+# STEP 1 – CORE PRODUCT DEFINITION
+
+## 1.1 Problem Statement
+
+Users worry that if their parent or loved one does not respond for an extended period, no one will know something is wrong. Existing solutions are SMS‑only, US‑centric, and not optimized for WhatsApp, multiple languages, or GCC family structures.
+
+## 1.2 Solution Overview
+
+A daily (or scheduled) safety check‑in system where:
+
+* A parent confirms they are okay with one tap or voice response
+* If no response occurs, the system escalates alerts automatically across multiple channels
+* Family members are notified before emergencies escalate
+
+---
+
+# STEP 2 – USER ROLES & PERMISSIONS
+
+## 2.1 Core Roles
+
+### A. Account Owner / Caregiver
+
+* Initiates connections
+* Manages settings and escalation rules
+* Receives alerts
+* Pays for subscription
+
+### B. Loved One
+
+* Receives check-in prompts
+* Confirms status
+* Limited configuration access
+
+### C. Peer (Two-Way Relationship)
+
+* Mutual check-in relationship (partners, siblings, adult children)
+* Both users can initiate and respond to check-ins
+* Two-way monitoring enabled by default
+
+### D. Backup Contact (Optional)
+
+* Receives alerts only
+* No app access required
+
+## 2.2 Relationship Types
+
+Each linked profile must have a relationship type selected:
+
+* Mother
+* Father
+* Child
+* Partner
+* Brother
+* Sister
+* Relative
+* Other
+
+Relationship type influences:
+
+* UI copy
+* Notification tone
+* Default escalation rules
+
+---
+
+# STEP 2A – PAIRING & CONNECTION FLOW
+
+## 2A.1 Pairing Methods
+
+### Method 1: App-to-App Pairing (Recommended)
+
+1. Account owner generates a 6-digit pairing code
+2. Loved one installs the app
+3. Enters pairing code
+4. Relationship type confirmed
+5. Two-way or one-way permissions applied based on subscription tier
+6. Profiles linked
+
+### Method 2: App-to-Phone (No App Required)
+
+1. Account owner adds loved one phone number
+2. Check-ins delivered via WhatsApp / SMS / Voice Calls
+3. Loved one confirms via link or keypad input
+4. One-way monitoring only
+
+---
+
+# STEP 3 – AUTHENTICATION & ACCOUNT SETUP
+
+## 3.1 Authentication
+
+* Email + password
+* Apple Sign‑In (iOS)
+* Google Sign‑In (Android)
+
+## 3.2 Initial Onboarding Flow (Caregiver)
+
+1. Create account
+2. Select country & timezone
+3. Add parent profile
+4. Add emergency contacts
+5. Set daily check‑in time
+6. Select escalation channels
+7. Choose language preferences
+
+## 3.3 Parent Onboarding
+
+* Invite via SMS or WhatsApp link
+* One‑tap accept
+* Minimal setup (language, large text toggle)
+
+---
+
+# STEP 4 – CHECK‑IN MECHANISM
+
+## 4.1 Check‑In Triggers
+
+* Scheduled daily time
+* Optional multiple times per day
+
+## 4.2 Check‑In Methods
+
+* App notification with “I’m OK” button
+* WhatsApp message with confirmation link
+* Automated voice call (press 1 to confirm)
+
+## 4.3 Successful Check‑In
+
+* Timestamp stored
+* Status updated to “Safe”
+* Notifications stopped
+
+---
+
+# STEP 5 – ESCALATION ENGINE (CRITICAL)
+
+## 5.1 Escalation Logic
+
+Escalation starts only if no response is received.
+
+Default flow (configurable):
+
+1. App push notification to loved one
+2. WhatsApp message to loved one
+3. Automated voice call to loved one
+4. WhatsApp alert to account owner / peer
+5. Phone call to account owner / peer
+6. Backup contact notified
+
+## 5.2 Escalation Data Included
+
+* Loved one name
+* Relationship type
+* Last successful check-in time
+* Loved one timezone
+* Optional last known location
+* Custom emergency note
+
+## 5.3 Retry & Snooze Options
+
+* “I’m OK but busy”
+* “Remind me in 30 minutes”
+* Auto-retry before escalation
+
+---
+
+# STEP 5A – ESCALATION STATE MACHINE (CODEX-CRITICAL)
+
+## 5A.1 States
+
+* IDLE (no active check-in)
+* PENDING (check-in sent, awaiting response)
+* SNOOZED (temporary deferment)
+* CONFIRMED (check-in successful)
+* ESCALATING (alerts in progress)
+* ESCALATED (all channels triggered)
+* RESOLVED (manual or automatic resolution)
+
+## 5A.2 State Transitions
+
+* IDLE → PENDING (scheduled trigger)
+* PENDING → CONFIRMED (user responds)
+* PENDING → SNOOZED (user requests delay)
+* SNOOZED → PENDING (timer expires)
+* PENDING → ESCALATING (timeout)
+* ESCALATING → ESCALATED (all steps complete)
+* ESCALATED → RESOLVED (manual confirmation)
+
+Each state change must be logged with timestamp.
+
+---
+
+# STEP 6 – NOTIFICATIONS & COMMUNICATION CHANNELS
+
+## 6.1 Supported Channels
+
+* Push notifications (iOS & Android)
+* WhatsApp messages
+* SMS (fallback)
+* Automated phone calls
+* Email (secondary)
+
+## 6.2 Language Support
+
+* English
+* Arabic
+* Urdu
+* Hindi
+* Tagalog (phase 2)
+
+Language selection applies to:
+
+* App UI
+* Voice calls
+* WhatsApp/SMS templates
+
+---
+
+# STEP 7 – DASHBOARD & HISTORY
+
+## 7.1 Caregiver Dashboard
+
+* Current status (Safe / Pending / Escalated)
+* Last check‑in time
+* Escalation history
+
+## 7.2 History Logs
+
+* Daily check‑in log
+* Missed check‑ins
+* Escalation actions taken
+
+---
+
+# STEP 8 – SUBSCRIPTIONS & PAYMENTS
+
+## 8.1 Subscription Tiers
+
+* Free: Push notifications only (one-way, limited)
+
+* One-Way Safety: USD 9.99 / month
+
+  * One-way check-in (Account Owner → Loved One)
+  * WhatsApp + SMS alerts
+  * Single loved one
+
+* Two-Way Safety: USD 14.99 / month
+
+  * Two-way check-in (Peer relationships)
+  * Mutual monitoring
+  * WhatsApp + SMS alerts
+  * Higher alert priority
+
+* Pro Family: USD 24.99 / month
+
+  * Calls + full escalation
+  * Multiple loved ones
+  * Mixed one-way and two-way relationships
+
+## 8.2 Payments
+
+* Apple In‑App Purchases (iOS)
+* Google Play Billing (Android)
+
+## 8.3 Trial Logic
+
+* 7 or 14‑day free trial for paid tiers
+
+---
+
+# STEP 9 – PLATFORM‑SPECIFIC REQUIREMENTS
+
+## 9.1 iOS
+
+* Apple Sign‑In support
+* Background notifications
+* Battery optimization handling
+* App Store compliance messaging
+
+## 9.2 Android
+
+* Google Sign‑In support
+* Background task permissions
+* Battery optimization exemptions
+
+---
+
+# STEP 10 – SECURITY & PRIVACY
+
+## 10.1 Data Security
+
+* Encrypted data at rest
+* Secure API authentication
+* Role‑based access
+
+## 10.2 Privacy
+
+* GDPR‑aligned consent
+* Clear disclaimer (not emergency services)
+* User‑controlled data deletion
+
+---
+
+# STEP 11 – ADMIN & CONFIGURATION (INTERNAL)
+
+## 11.1 Admin Capabilities
+
+* View system health
+* Message template management
+* Escalation flow configuration
+* Subscription monitoring
+
+---
+
+# STEP 12 – FUTURE PHASES (OUT OF MVP)
+
+* Wearable integration
+* Location-based auto-check
+* Employer / B2B mode
+* Government emergency integration
+* AI anomaly detection
+
+---
+
+# STEP 13 – CODEX EXECUTION PROMPTS (IMPLEMENTATION GUIDE)
+
+Each step below should be given to Codex independently.
+
+## STEP 13.1 – User & Relationship Models
+
+"Implement database models for Users, LovedOnes, Relationships, RelationshipType, and Permissions. Support one-way and two-way relationships."
+
+## STEP 13.2 – Pairing Flow
+
+"Implement 6-digit pairing code generation, validation, expiration, and linking of two user profiles."
+
+## STEP 13.3 – Check-In Scheduler
+
+"Implement scheduled check-ins with timezone awareness and support multiple daily schedules."
+
+## STEP 13.4 – Escalation State Machine
+
+"Implement escalation state machine with states defined in STEP 5A, including timers and retries."
+
+## STEP 13.5 – Notification Channels
+
+"Implement pluggable notification channels (Push, WhatsApp, SMS, Voice) with fallback logic."
+
+---
+
+# STEP 14 – UX SCREENS & FLOWS (REFERENCE)
+
+## 14.1 Onboarding – Relationship Selection
+
+Screen: "Who do you want to check in on?"
+Options: Mother, Father, Partner, Child, Sibling, Other
+
+## 14.2 Pairing Screen
+
+* Show 6-digit code
+* Explain installation / acceptance steps
+
+## 14.3 Loved One Home Screen
+
+* Large "I’m OK" button
+* Last check-in time
+* Snooze options
+
+## 14.4 Account Owner Dashboard
+
+* Status per loved one (Safe / Pending / Escalating)
+* Last activity
+
+## 14.5 Alert Screen
+
+* Clear warning
+* Action buttons (Call, Message, Acknowledge)
+
+---
+
+# STEP 15 – DATA MODELS (TABLES + FIELDS)
+
+These are logical tables. Implementation can be SQL (Postgres/Supabase) or equivalent.
+All timestamps are UTC with timezone stored separately.
+
+## 15.1 users
+
+Stores each app user (can be Account Owner, Loved One, or Peer).
+
+* id (uuid, PK)
+* email (text, unique, nullable if phone-only)
+* phone_e164 (text, unique, nullable)
+* full_name (text)
+* locale (text)  // e.g., en, ar, ur
+* timezone (text) // IANA, e.g., Asia/Dubai
+* country (text)  // e.g., AE, SA, QA
+* role_default (text) // owner|loved_one|peer (informational)
+* created_at (timestamptz)
+* updated_at (timestamptz)
+* last_seen_at (timestamptz)
+
+## 15.2 loved_one_profiles
+
+A profile representing the person being monitored within an owner’s “family set”.
+This can map to a real user (app-to-app) or be phone-only (app-to-phone).
+
+* id (uuid, PK)
+* owner_user_id (uuid, FK -> users.id)
+* linked_user_id (uuid, FK -> users.id, nullable) // present if app-to-app paired
+* display_name (text) // what owner calls them
+* relationship_type (text) // mother|father|child|partner|brother|sister|relative|other
+* preferred_channels (jsonb) // {push:true, whatsapp:true, sms:true, voice:true, email:false}
+* preferred_language (text) // en|ar|ur|hi|tl
+* timezone (text)
+* phone_e164 (text, nullable) // required if not linked_user_id
+* email (text, nullable)
+* large_text_enabled (boolean, default false)
+* is_active (boolean, default true)
+* created_at (timestamptz)
+* updated_at (timestamptz)
+
+## 15.3 relationships
+
+Defines monitoring directionality and permissions between two identities.
+Supports one-way and two-way.
+
+* id (uuid, PK)
+* owner_user_id (uuid, FK -> users.id)
+* loved_one_profile_id (uuid, FK -> loved_one_profiles.id)
+* relationship_mode (text) // one_way|two_way
+* can_initiate_checkin (boolean)
+* can_receive_alerts (boolean)
+* subscription_tier_required (text) // free|one_way|two_way|pro_family
+* created_at (timestamptz)
+* updated_at (timestamptz)
+
+## 15.4 pairing_codes
+
+Temporary codes for app-to-app linking.
+
+* id (uuid, PK)
+* code (text) // 6-digit, unique while active
+* generated_by_user_id (uuid, FK -> users.id)
+* target_owner_user_id (uuid, FK -> users.id) // who will “own” the relationship
+* target_profile_id (uuid, FK -> loved_one_profiles.id, nullable) // optional pre-created profile
+* expires_at (timestamptz)
+* used_at (timestamptz, nullable)
+* status (text) // active|used|expired|revoked
+* created_at (timestamptz)
+
+## 15.5 checkin_schedules
+
+Defines when check-ins should occur.
+
+* id (uuid, PK)
+* relationship_id (uuid, FK -> relationships.id)
+* schedule_type (text) // daily|multi_daily|temporary
+* time_local (time) // local time in loved one’s timezone
+* days_of_week (int[]) // 0-6 (optional)
+* start_date (date, nullable)
+* end_date (date, nullable) // for travel/camp
+* grace_period_minutes (int, default 30)
+* max_retries (int, default 2)
+* retry_interval_minutes (int, default 10)
+* is_enabled (boolean, default true)
+* created_at (timestamptz)
+* updated_at (timestamptz)
+
+## 15.6 checkins
+
+An instance of a scheduled check-in.
+
+* id (uuid, PK)
+* relationship_id (uuid, FK -> relationships.id)
+* schedule_id (uuid, FK -> checkin_schedules.id)
+* due_at (timestamptz) // computed from local schedule + timezone
+* status (text) // pending|snoozed|confirmed|escalating|escalated|resolved|canceled
+* responded_at (timestamptz, nullable)
+* response_method (text, nullable) // app|whatsapp|sms|voice
+* snooze_until (timestamptz, nullable)
+* created_at (timestamptz)
+* updated_at (timestamptz)
+
+## 15.7 escalation_plans
+
+Configurable steps per relationship (can have defaults).
+
+* id (uuid, PK)
+* relationship_id (uuid, FK -> relationships.id)
+* plan_name (text)
+* steps (jsonb) // ordered list [{channel:"push", delay_min:0},{channel:"whatsapp", delay_min:10},...]
+* is_active (boolean, default true)
+* created_at (timestamptz)
+* updated_at (timestamptz)
+
+## 15.8 escalation_events
+
+Every action taken during escalation (audit log + debugging).
+
+* id (uuid, PK)
+* checkin_id (uuid, FK -> checkins.id)
+* step_index (int)
+* channel (text) // push|whatsapp|sms|voice|email
+* target (text) // e.g., phone/email/device token masked
+* status (text) // queued|sent|delivered|failed
+* provider_message_id (text, nullable)
+* error_code (text, nullable)
+* error_message (text, nullable)
+* sent_at (timestamptz, nullable)
+* created_at (timestamptz)
+
+## 15.9 contact_points
+
+Stores emergency and backup contacts.
+
+* id (uuid, PK)
+* owner_user_id (uuid, FK -> users.id)
+* display_name (text)
+* phone_e164 (text, nullable)
+* email (text, nullable)
+* preferred_channels (jsonb)
+* priority (int) // lower = earlier notification
+* created_at (timestamptz)
+* updated_at (timestamptz)
+
+## 15.10 subscriptions
+
+Cross-platform subscription tracking.
+
+* id (uuid, PK)
+* user_id (uuid, FK -> users.id)
+* platform (text) // ios|android
+* product_id (text)
+* tier (text) // free|one_way|two_way|pro_family
+* status (text) // active|trialing|past_due|canceled|expired
+* current_period_start (timestamptz, nullable)
+* current_period_end (timestamptz, nullable)
+* external_transaction_id (text, nullable)
+* created_at (timestamptz)
+* updated_at (timestamptz)
+
+## 15.11 device_tokens
+
+Push notification tokens per device.
+
+* id (uuid, PK)
+* user_id (uuid, FK -> users.id)
+* platform (text) // ios|android
+* token (text)
+* is_active (boolean, default true)
+* last_registered_at (timestamptz)
+* created_at (timestamptz)
+* updated_at (timestamptz)
+
+## 15.12 locations (optional, gated by consent)
+
+Latest known location (store minimally).
+
+* id (uuid, PK)
+* user_id (uuid, FK -> users.id)
+* lat (numeric)
+* lng (numeric)
+* accuracy_m (numeric, nullable)
+* recorded_at (timestamptz)
+
+## 15.13 templates
+
+Message and voice templates per language.
+
+* id (uuid, PK)
+* template_key (text) // checkin_prompt|missed_alert|voice_prompt|etc
+* language (text)
+* channel (text) // whatsapp|sms|email|voice|push
+* body (text)
+* created_at (timestamptz)
+* updated_at (timestamptz)
+
+## 15.14 audit_log
+
+Security-critical audit events.
+
+* id (uuid, PK)
+* actor_user_id (uuid, FK -> users.id, nullable)
+* event_type (text) // login|pairing_created|pairing_used|checkin_confirmed|escalation_triggered|etc
+* entity_type (text)
+* entity_id (uuid, nullable)
+* metadata (jsonb)
+* created_at (timestamptz)
+
+---
+
+# STEP 16 – API CONTRACTS (ENDPOINTS + PAYLOADS)
+
+This section defines backend API contracts Codex can implement step-by-step.
+Assume JSON over HTTPS.
+All endpoints require auth unless marked PUBLIC.
+
+## 16.1 Auth
+
+### 16.1.1 POST /auth/signup
+
+Request:
+
+* email, password, full_name, country, timezone, locale
+  Response:
+* user, access_token, refresh_token
+
+### 16.1.2 POST /auth/login
+
+Request:
+
+* email, password
+  Response:
+* user, access_token, refresh_token
+
+### 16.1.3 POST /auth/oauth/apple  (iOS)
+
+Request:
+
+* apple_id_token
+  Response:
+* user, access_token, refresh_token
+
+### 16.1.4 POST /auth/oauth/google (Android)
+
+Request:
+
+* google_id_token
+  Response:
+* user, access_token, refresh_token
+
+### 16.1.5 POST /auth/logout
+
+Request:
+
+* refresh_token
+  Response:
+* ok: true
+
+---
+
+## 16.2 Loved Ones & Relationships
+
+### 16.2.1 POST /loved-ones
+
+Create a loved one profile (phone-only or pre-linked).
+Request:
+
+* display_name
+* relationship_type
+* phone_e164 (optional if linking later)
+* email (optional)
+* timezone
+* preferred_language
+* preferred_channels
+* large_text_enabled
+  Response:
+* loved_one_profile
+
+### 16.2.2 GET /loved-ones
+
+Response:
+
+* loved_one_profiles[]
+
+### 16.2.3 PATCH /loved-ones/:id
+
+Request:
+
+* any updatable fields
+  Response:
+* loved_one_profile
+
+### 16.2.4 DELETE /loved-ones/:id
+
+Response:
+
+* ok: true
+
+### 16.2.5 GET /relationships
+
+Response:
+
+* relationships[] (joined with loved_one_profile summary)
+
+### 16.2.6 PATCH /relationships/:id
+
+Update relationship mode and permissions (subject to subscription tier).
+Request:
+
+* relationship_mode (one_way|two_way)
+* can_initiate_checkin
+* can_receive_alerts
+  Response:
+* relationship
+
+---
+
+## 16.3 Pairing (App-to-App)
+
+### 16.3.1 POST /pairing-codes
+
+Create a 6-digit code.
+Request:
+
+* loved_one_profile_id (optional)
+* relationship_type
+* desired_mode (one_way|two_way)
+  Response:
+* code, expires_at
+
+### 16.3.2 POST /pairing-codes/verify  (PUBLIC)
+
+Validates code and returns minimal context for acceptance screen.
+Request:
+
+* code
+  Response:
+* status (active|expired|used)
+* owner_display_name
+* relationship_type
+* desired_mode
+
+### 16.3.3 POST /pairing-codes/accept
+
+Accept pairing and link accounts.
+Request:
+
+* code
+* relationship_type_confirmed
+  Response:
+* relationship
+* loved_one_profile
+
+### 16.3.4 POST /pairing-codes/revoke
+
+Request:
+
+* code
+  Response:
+* ok: true
+
+---
+
+## 16.4 Schedules
+
+### 16.4.1 POST /schedules
+
+Request:
+
+* relationship_id
+* schedule_type (daily|multi_daily|temporary)
+* time_local
+* days_of_week (optional)
+* start_date (optional)
+* end_date (optional)
+* grace_period_minutes
+* max_retries
+* retry_interval_minutes
+  Response:
+* schedule
+
+### 16.4.2 GET /schedules?relationship_id=
+
+Response:
+
+* schedules[]
+
+### 16.4.3 PATCH /schedules/:id
+
+Request:
+
+* any updatable schedule fields
+  Response:
+* schedule
+
+### 16.4.4 DELETE /schedules/:id
+
+Response:
+
+* ok: true
+
+---
+
+## 16.5 Check-Ins
+
+### 16.5.1 GET /checkins?relationship_id=&range=
+
+Returns check-in history.
+Response:
+
+* checkins[]
+
+### 16.5.2 POST /checkins/:id/confirm
+
+Confirm a check-in (app button, link, or voice).
+Request:
+
+* response_method (app|whatsapp|sms|voice)
+  Response:
+* checkin
+
+### 16.5.3 POST /checkins/:id/snooze
+
+Request:
+
+* minutes (e.g., 15, 30, 60)
+  Response:
+* checkin
+
+### 16.5.4 POST /checkins/:id/resolve
+
+Manual resolution after escalation.
+Request:
+
+* resolution_note (optional)
+  Response:
+* checkin
+
+---
+
+## 16.6 Escalation Plans & Events
+
+### 16.6.1 GET /escalation-plans?relationship_id=
+
+Response:
+
+* plans[]
+
+### 16.6.2 POST /escalation-plans
+
+Request:
+
+* relationship_id
+* plan_name
+* steps[]  // [{channel, delay_min}]
+  Response:
+* plan
+
+### 16.6.3 PATCH /escalation-plans/:id
+
+Request:
+
+* plan_name
+* steps[]
+* is_active
+  Response:
+* plan
+
+### 16.6.4 GET /escalations/events?checkin_id=
+
+Response:
+
+* escalation_events[]
+
+---
+
+## 16.7 Contacts
+
+### 16.7.1 POST /contacts
+
+Request:
+
+* display_name
+* phone_e164 (optional)
+* email (optional)
+* preferred_channels
+* priority
+  Response:
+* contact
+
+### 16.7.2 GET /contacts
+
+Response:
+
+* contacts[]
+
+### 16.7.3 PATCH /contacts/:id
+
+Request:
+
+* updatable fields
+  Response:
+* contact
+
+### 16.7.4 DELETE /contacts/:id
+
+Response:
+
+* ok: true
+
+---
+
+## 16.8 Devices (Push Tokens)
+
+### 16.8.1 POST /devices/register
+
+Request:
+
+* platform (ios|android)
+* token
+  Response:
+* ok: true
+
+### 16.8.2 POST /devices/unregister
+
+Request:
+
+* token
+  Response:
+* ok: true
+
+---
+
+## 16.9 Subscription
+
+### 16.9.1 GET /subscription
+
+Response:
+
+* tier, status, current_period_end
+
+### 16.9.2 POST /subscription/verify (iOS/Android receipt validation)
+
+Request:
+
+* platform
+* receipt_or_purchase_token
+  Response:
+* subscription
+
+---
+
+## 16.10 System & Health
+
+### 16.10.1 GET /health (PUBLIC)
+
+Response:
+
+* ok: true
+* timestamp
+
+---
+
+## 16.11 Background Jobs (Internal)
+
+These are not public endpoints; they are worker tasks / cron jobs.
+
+### Job A: schedule_tick
+
+* Runs every minute
+* Generates due checkins based on schedules + timezones
+
+### Job B: escalation_tick
+
+* Runs every minute
+* Advances state machine for pending checkins
+* Sends escalation steps when due
+
+### Job C: cleanup
+
+* Expires pairing codes
+* Deactivates stale device tokens
+
+---
+
+# STEP 17 – CODEX EXECUTION ORDER (RECOMMENDED)
+
+Give Codex one item at a time:
+
+1. STEP 15.1–15.4 (users, loved_one_profiles, relationships, pairing_codes)
+2. STEP 16.1–16.3 (auth + pairing APIs)
+3. STEP 15.5–15.6 (schedules + checkins)
+4. STEP 16.4–16.5 (schedule + checkin APIs)
+5. STEP 5A + STEP 15.7–15.8 (state machine + escalation logs)
+6. STEP 16.6 + internal jobs (escalation plans, ticks)
+7. STEP 16.7–16.9 (contacts, devices, subscriptions)
+
+---
+
+# STEP 18 – SECURITY, RLS & ACCESS CONTROL (CRITICAL)
+
+This step defines security boundaries, Row-Level Security (RLS) rules, and access principles.
+Assumes Postgres/Supabase-style RLS but concepts apply universally.
+
+---
+
+## 18.1 Core Security Principles
+
+1. **Least Privilege** – users can only access records they explicitly own or are linked to.
+2. **Relationship-Scoped Access** – all sensitive data is accessed via relationship ownership.
+3. **No Cross-Family Leakage** – one account cannot infer existence of another family’s data.
+4. **Audit Everything Critical** – pairing, escalation, confirmation, subscription changes.
+
+---
+
+## 18.2 Authentication Assumptions
+
+* Every request carries an authenticated `user_id` (JWT / session)
+* PUBLIC endpoints are explicitly marked and return minimal data
+* Phone-only loved ones have **no direct auth access**
+
+---
+
+## 18.3 RLS POLICIES (TABLE BY TABLE)
+
+### 18.3.1 users
+
+**SELECT / UPDATE**
+
+* Allowed only where `users.id = auth.user_id`
+
+**INSERT**
+
+* Only via auth flows
+
+---
+
+### 18.3.2 loved_one_profiles
+
+**SELECT**
+
+* Allowed if `owner_user_id = auth.user_id`
+* OR `linked_user_id = auth.user_id`
+
+**INSERT**
+
+* Allowed only if `owner_user_id = auth.user_id`
+
+**UPDATE / DELETE**
+
+* Allowed only if `owner_user_id = auth.user_id`
+
+---
+
+### 18.3.3 relationships
+
+**SELECT**
+
+* Allowed if `owner_user_id = auth.user_id`
+* OR relationship is two-way AND linked user = auth.user_id
+
+**INSERT**
+
+* Only system-generated during pairing
+
+**UPDATE**
+
+* Allowed only by `owner_user_id`
+* Mode upgrade (one_way → two_way) requires valid subscription tier
+
+**DELETE**
+
+* Only by `owner_user_id`
+
+---
+
+### 18.3.4 pairing_codes
+
+**SELECT**
+
+* Allowed only by `generated_by_user_id`
+
+**INSERT**
+
+* Allowed only by authenticated users
+
+**UPDATE (accept / revoke)**
+
+* Accept allowed by code holder
+* Revoke allowed by generator
+
+---
+
+### 18.3.5 checkin_schedules
+
+**SELECT**
+
+* Allowed if user participates in the relationship
+
+**INSERT / UPDATE / DELETE**
+
+* Allowed only by `owner_user_id`
+
+---
+
+### 18.3.6 checkins
+
+**SELECT**
+
+* Allowed if user participates in the relationship
+
+**UPDATE (confirm / snooze)**
+
+* Allowed by:
+
+  * Loved one
+  * Linked peer in two-way relationship
+
+**RESOLVE**
+
+* Allowed only by owner or peer
+
+---
+
+### 18.3.7 escalation_plans
+
+**SELECT**
+
+* Allowed by relationship participants
+
+**INSERT / UPDATE / DELETE**
+
+* Allowed only by `owner_user_id`
+
+---
+
+### 18.3.8 escalation_events
+
+**SELECT**
+
+* Allowed by relationship participants
+
+**INSERT**
+
+* System only (service role)
+
+---
+
+### 18.3.9 contact_points
+
+**SELECT / UPDATE / DELETE**
+
+* Allowed only by `owner_user_id`
+
+---
+
+### 18.3.10 subscriptions
+
+**SELECT**
+
+* Allowed only by `user_id = auth.user_id`
+
+**INSERT / UPDATE**
+
+* Service role only (receipt verification)
+
+---
+
+### 18.3.11 device_tokens
+
+**SELECT / INSERT / UPDATE / DELETE**
+
+* Allowed only by `user_id = auth.user_id`
+
+---
+
+### 18.3.12 locations
+
+**SELECT**
+
+* Allowed only by relationship participants
+
+**INSERT**
+
+* Allowed only with explicit user consent flag
+
+---
+
+### 18.3.13 templates
+
+**SELECT**
+
+* Public read
+
+**INSERT / UPDATE / DELETE**
+
+* Admin / service role only
+
+---
+
+### 18.3.14 audit_log
+
+**SELECT**
+
+* Admin only
+
+**INSERT**
+
+* System only
+
+---
+
+## 18.4 Rate Limiting & Abuse Protection
+
+* Pairing code creation: max 5 per hour per user
+* Pairing code verification: max 10 attempts per code
+* Check-in confirmation endpoints: rate-limited
+* Escalation triggers guarded against replay
+
+---
+
+## 18.5 Data Retention & Deletion
+
+* Users can delete account → cascades to owned profiles
+* Escalation logs retained (e.g., 90–180 days) for safety/audit
+* Location data retained minimally (last known only)
+
+---
+
+## 18.6 Compliance & Disclaimers
+
+* Clear disclaimer: *Not an emergency service / not a replacement for local authorities*
+* Explicit consent for:
+
+  * Calls
+  * WhatsApp messages
+  * Location sharing
+
+---
+
+## 18.7 CODEX PROMPT (SECURITY)
+
+"Implement RLS policies as defined in STEP 18. Enforce relationship-scoped access, owner-only writes, and service-role-only system inserts."
+
+---
+
+# STEP 19 – COST MODEL & PROVIDER STRATEGY (GCC-FOCUSED)
+
+This step ensures the product remains profitable while delivering multi-channel escalation in GCC markets.
+All costs are indicative and must be validated with providers.
+
+---
+
+## 19.1 Cost Drivers (Per Active Relationship / Month)
+
+Primary cost drivers:
+
+* WhatsApp messages
+* SMS messages (fallback)
+* Automated voice calls
+* Push notifications (negligible)
+* Background job execution (compute)
+
+Cost exposure depends on:
+
+* Check-in frequency
+* Miss rate (how often escalation triggers)
+* Escalation depth (how many steps fire)
+
+---
+
+## 19.2 Provider Strategy (Recommended)
+
+### 19.2.1 WhatsApp
+
+* Provider: WhatsApp Business API via aggregator (e.g., Twilio, Meta BSPs)
+* Use case: Primary alert and confirmation channel
+* Notes:
+
+  * Conversation-based pricing
+  * Pre-approved templates required
+  * High deliverability and trust in GCC
+
+### 19.2.2 SMS
+
+* Provider: Twilio / local GCC aggregators
+* Use case: Fallback if WhatsApp fails
+* Notes:
+
+  * Higher cost, lower engagement
+  * Avoid as primary channel
+
+### 19.2.3 Voice Calls
+
+* Provider: Twilio / Vonage / local telco SIP
+* Use case: High-severity escalation
+* Notes:
+
+  * Most expensive channel
+  * Should be gated to paid tiers only
+
+### 19.2.4 Push Notifications
+
+* Providers: Apple APNs, Firebase FCM
+* Use case: First-line check-in prompt
+* Cost: Free
+
+---
+
+## 19.3 Indicative Unit Costs (GCC Range)
+
+| Channel    | Approx Cost         | Notes            |
+| ---------- | ------------------- | ---------------- |
+| WhatsApp   | $0.03 – $0.06       | Per conversation |
+| SMS        | $0.05 – $0.10       | Per message      |
+| Voice Call | $0.05 – $0.15 / min | Rounded per call |
+| Push       | $0                  | APNs / FCM       |
+
+---
+
+## 19.4 Escalation Cost Scenarios (Monthly)
+
+Assumptions:
+
+* 1 daily check-in
+* 30 days / month
+* 10% miss rate (3 missed check-ins)
+
+### Scenario A – One-Way Safety
+
+* Push → WhatsApp → SMS
+* Estimated cost per relationship: $1.00 – $1.50
+
+### Scenario B – Two-Way Safety
+
+* Push → WhatsApp → WhatsApp (peer)
+* Occasional SMS fallback
+* Estimated cost per relationship: $1.50 – $2.50
+
+### Scenario C – Pro Family (Calls Enabled)
+
+* Push → WhatsApp → Voice Call → WhatsApp + Call to owner
+* Estimated cost per relationship: $3.00 – $6.00
+
+---
+
+## 19.5 Pricing vs Cost (Margin Check)
+
+| Tier       | Price  | Est Cost | Gross Margin |
+| ---------- | ------ | -------- | ------------ |
+| One-Way    | $9.99  | ~$1.50   | ~85%         |
+| Two-Way    | $14.99 | ~$2.50   | ~83%         |
+| Pro Family | $24.99 | ~$5.00   | ~80%         |
+
+Margins assume normal usage; abuse protection is mandatory.
+
+---
+
+## 19.6 Cost Control Mechanisms (MANDATORY)
+
+1. **Tier Gating**
+
+   * Voice calls only on Pro tiers
+   * SMS limited or capped
+
+2. **Escalation Caps**
+
+   * Max calls per day per relationship
+   * Cool-down window after full escalation
+
+3. **Retry Logic**
+
+   * WhatsApp retries before SMS/Call
+
+4. **Regional Routing**
+
+   * Use local numbers to reduce call cost
+
+5. **Monitoring & Alerts**
+
+   * Flag abnormal escalation volume
+
+---
+
+## 19.7 Abuse & Fraud Scenarios
+
+* Repeated missed check-ins to trigger calls
+* Using app as call-spam tool
+* Invalid phone numbers
+
+Mitigations:
+
+* Rate limits
+* Manual review flags
+* Automatic downgrade or suspension
+
+---
+
+## 19.8 CODEX PROMPT (COST-AWARE LOGIC)
+
+"Implement escalation logic with tier-based channel gating, per-day caps, and cost-aware fallbacks as defined in STEP 19."
+
+---
+
+## END OF BRD
+
+This document is intentionally modular and step‑based for Codex / Claude.
