@@ -13,6 +13,7 @@ export default function SettingsLayout() {
       <Stack.Screen name="billing" />
       <Stack.Screen name="appearance" />
       <Stack.Screen name="language" />
+      <Stack.Screen name="data-privacy" />
     </Stack>
   );
 }
