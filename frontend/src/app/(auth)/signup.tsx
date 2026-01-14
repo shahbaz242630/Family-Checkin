@@ -63,8 +63,8 @@ export default function SignupScreen() {
 
     const success = await signUp(email, password, fullName);
     if (success) {
-      // Go to main app dashboard
-      router.replace('/(main)');
+      // New users go to onboarding
+      router.replace('/(onboarding)/trial-welcome');
     }
   };
 

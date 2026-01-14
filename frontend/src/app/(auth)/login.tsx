@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { SocialButton, TextInput, Button, Divider } from '../../components/auth';
 import { useAuth } from '../../hooks/useAuth';
+import { supabase } from '../../services';
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -52,7 +53,21 @@ export default function LoginScreen() {
 
     const success = await signIn(email, password);
     if (success) {
-      router.replace('/(main)');
+      // Check if user has completed onboarding
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: profile } = await supabase
+          .from('users')
+          .select('onboarding_completed')
+          .eq('id', user.id)
+          .single();
+
+        if (profile?.onboarding_completed) {
+          router.replace('/(main)');
+        } else {
+          router.replace('/(onboarding)/trial-welcome');
+        }
+      }
     }
   };
 
