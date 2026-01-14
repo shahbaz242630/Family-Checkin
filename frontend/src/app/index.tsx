@@ -1,20 +1,35 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors } from '../theme/colors';
+import { supabase } from '../services/supabase';
 
 export default function SplashScreen() {
   const router = useRouter();
+  const [isChecking, setIsChecking] = useState(true);
 
   useEffect(() => {
-    // TODO: Check auth state and redirect accordingly
     const checkAuth = async () => {
-      // Simulate auth check
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      try {
+        // Check if user is logged in
+        const { data: { session } } = await supabase.auth.getSession();
 
-      // For now, always go to auth flow
-      // Later: check if user is logged in -> go to (app)
-      router.replace('/(auth)/welcome');
+        // Small delay for splash effect
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+
+        if (session?.user) {
+          // User is logged in, go to main app
+          router.replace('/(main)');
+        } else {
+          // No session, go to auth flow
+          router.replace('/(auth)/welcome');
+        }
+      } catch (error) {
+        // On error, default to auth flow
+        router.replace('/(auth)/welcome');
+      } finally {
+        setIsChecking(false);
+      }
     };
 
     checkAuth();

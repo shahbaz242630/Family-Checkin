@@ -52,7 +52,7 @@ export default function LoginScreen() {
 
     const success = await signIn(email, password);
     if (success) {
-      router.replace('/(app)/home');
+      router.replace('/(main)');
     }
   };
 

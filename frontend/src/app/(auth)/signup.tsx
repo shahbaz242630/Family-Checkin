@@ -63,8 +63,8 @@ export default function SignupScreen() {
 
     const success = await signUp(email, password, fullName);
     if (success) {
-      // Go to onboarding to set up first loved one
-      router.replace('/(auth)/onboarding');
+      // Go to main app dashboard
+      router.replace('/(main)');
     }
   };
 
