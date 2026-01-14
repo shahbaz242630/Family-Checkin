@@ -34,11 +34,32 @@ export default function AllSetScreen() {
     setIsLoading(true);
 
     try {
+      // Map relationship type to enum value
+      const relationshipTypeMap: Record<string, string> = {
+        parent: 'mother', // or 'father' - we'll use a generic mapping
+        grandparent: 'relative',
+        spouse: 'partner',
+        sibling: 'brother', // or 'sister'
+        child: 'child',
+        aunt_uncle: 'relative',
+        cousin: 'relative',
+        friend: 'other',
+        other: 'other',
+      };
+
+      // Map schedule type
+      const scheduleTypeMap: Record<string, string> = {
+        daily: 'daily',
+        every_2_days: 'daily',
+        weekly: 'daily',
+        custom: 'daily',
+      };
+
       // 1. Update user profile
       const { error: profileError } = await supabase.from('users').upsert({
         id: user.id,
         full_name: data.profile.fullName,
-        phone: `${data.profile.countryCode}${data.profile.phone}`,
+        phone_e164: `${data.profile.countryCode}${data.profile.phone}`,
         timezone: data.profile.timezone,
         onboarding_completed: true,
         updated_at: new Date().toISOString(),
@@ -51,9 +72,17 @@ export default function AllSetScreen() {
         .from('loved_one_profiles')
         .insert({
           owner_user_id: user.id,
-          name: data.lovedOne.name,
-          phone: `${data.lovedOne.countryCode}${data.lovedOne.phone}`,
+          display_name: data.lovedOne.name,
+          relationship_type: relationshipTypeMap[data.lovedOne.relationship] || 'other',
+          phone_e164: `${data.lovedOne.countryCode}${data.lovedOne.phone}`,
           timezone: data.lovedOne.timezone,
+          preferred_channels: {
+            push: data.schedule.method === 'push',
+            whatsapp: data.schedule.method === 'whatsapp',
+            sms: data.schedule.method === 'sms',
+            voice: false,
+            email: false,
+          },
         })
         .select()
         .single();
@@ -65,9 +94,10 @@ export default function AllSetScreen() {
         .from('relationships')
         .insert({
           owner_user_id: user.id,
-          loved_one_id: lovedOne.id,
-          relationship_type: data.lovedOne.relationship,
-          status: 'active',
+          loved_one_profile_id: lovedOne.id,
+          relationship_mode: 'one_way',
+          can_initiate_checkin: true,
+          can_receive_alerts: true,
         })
         .select()
         .single();
@@ -75,24 +105,34 @@ export default function AllSetScreen() {
       if (relationshipError) throw relationshipError;
 
       // 4. Create check-in schedule
+      // Convert days based on frequency
+      const daysOfWeek = data.schedule.frequency === 'weekly' ? [1] : [0, 1, 2, 3, 4, 5, 6]; // Mon only for weekly, all days otherwise
+
       const { error: scheduleError } = await supabase.from('checkin_schedules').insert({
         relationship_id: relationship.id,
-        frequency: data.schedule.frequency,
-        preferred_time: data.schedule.specificTime,
-        notification_method: data.schedule.method,
-        is_active: true,
+        schedule_type: scheduleTypeMap[data.schedule.frequency] || 'daily',
+        time_local: data.schedule.specificTime,
+        days_of_week: daysOfWeek,
+        grace_period_minutes: WAIT_TIMES.find((w) => w.value === data.escalation.waitTime)?.minutes || 60,
+        is_enabled: true,
       });
 
       if (scheduleError) throw scheduleError;
 
-      // 5. Create escalation plan
-      const waitMinutes = WAIT_TIMES.find((w) => w.value === data.escalation.waitTime)?.minutes || 60;
+      // 5. Create escalation plan with steps
+      const escalationSteps = [
+        { channel: 'push', delay_min: 0 },
+        { channel: data.schedule.method === 'whatsapp' ? 'whatsapp' : 'sms', delay_min: 10 },
+      ];
+
+      if (data.escalation.action === 'call_emergency' || data.escalation.action === 'both') {
+        escalationSteps.push({ channel: 'sms', delay_min: 20 });
+      }
 
       const { error: escalationError } = await supabase.from('escalation_plans').insert({
         relationship_id: relationship.id,
-        escalation_delay_minutes: waitMinutes,
-        notify_owner: data.escalation.action === 'notify_me' || data.escalation.action === 'both',
-        notify_emergency_contact: data.escalation.action === 'call_emergency' || data.escalation.action === 'both',
+        plan_name: 'Default Plan',
+        steps: escalationSteps,
         is_active: true,
       });
 
@@ -105,19 +145,22 @@ export default function AllSetScreen() {
       ) {
         await supabase.from('contact_points').insert({
           owner_user_id: user.id,
-          contact_type: 'emergency',
-          contact_name: data.escalation.emergencyContact.name,
-          contact_value: `${data.escalation.emergencyContact.countryCode}${data.escalation.emergencyContact.phone}`,
-          is_primary: true,
+          display_name: data.escalation.emergencyContact.name,
+          phone_e164: `${data.escalation.emergencyContact.countryCode}${data.escalation.emergencyContact.phone}`,
+          preferred_channels: { push: false, whatsapp: true, sms: true, voice: false, email: false },
+          priority: 1,
         });
       }
 
       // 7. Create trial subscription
       await supabase.from('subscriptions').insert({
         user_id: user.id,
-        plan_type: 'trial',
-        status: 'active',
-        trial_ends_at: trialEndDate.toISOString(),
+        platform: 'ios', // Default, will be updated based on actual platform
+        product_id: 'trial_7_day',
+        tier: 'free',
+        status: 'trialing',
+        current_period_start: new Date().toISOString(),
+        current_period_end: trialEndDate.toISOString(),
       });
 
       // Reset onboarding context and navigate to main app
