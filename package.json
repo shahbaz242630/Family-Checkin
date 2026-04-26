@@ -1,0 +1,20 @@
+{
+  "name": "family-checkin-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "mobile": "npm --prefix apps/mobile",
+    "backend": "npm --prefix apps/backend",
+    "backend:test": "npm --prefix apps/backend test",
+    "backend:type-check": "npm --prefix apps/backend run type-check",
+    "backend:build": "npm --prefix apps/backend run build",
+    "backend:prisma:validate": "npm --prefix apps/backend run prisma:validate",
+    "start": "npm --prefix apps/mobile start",
+    "ios": "npm --prefix apps/mobile run ios",
+    "android": "npm --prefix apps/mobile run android"
+  }
+}

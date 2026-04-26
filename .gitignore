@@ -1,0 +1,117 @@
+# Dependencies
+node_modules/
+
+# Expo / React Native
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+.env
+
+# Native builds (generated)
+frontend/ios/
+frontend/android/
+apps/mobile/ios/
+apps/mobile/android/
+*.orig.*
+*.jks
+*.keystore
+*.p8
+*.p12
+*.key
+*.crt
+*.cer
+*.mobileprovision
+.kotlin/
+google-services.json
+GoogleService-Info.plist
+service-account*.json
+firebase-adminsdk*.json
+
+# Metro
+.metro-health-check*
+
+# Debug logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+pnpm-debug.*
+
+# macOS
+.DS_Store
+*.pem
+
+# Environment files (IMPORTANT: never commit secrets)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+*.env
+*.env.*
+!.env.example
+!*.env.example
+frontend/.env
+backend/.env
+apps/mobile/.env
+apps/backend/.env
+apps/*/.env
+apps/*/.env.*
+packages/*/.env
+packages/*/.env.*
+!apps/*/.env.example
+!packages/*/.env.example
+
+# Provider credential dumps (keep channel secrets out of git)
+*twilio*credential*
+*twilio*secret*
+*whatsapp*credential*
+*whatsapp*secret*
+*meta*credential*
+*meta*secret*
+*voice*credential*
+*voice*secret*
+*sms*credential*
+*sms*secret*
+channel-credentials.*
+provider-credentials.*
+
+# TypeScript
+*.tsbuildinfo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Supabase
+backend/supabase/.branches/
+backend/supabase/.temp/
+apps/backend/supabase/.branches/
+apps/backend/supabase/.temp/
+apps/backend/supabase/.env
+apps/backend/supabase/.env.*
+apps/mobile/supabase/.branches/
+apps/mobile/supabase/.temp/
+frontend/supabase/
+supabase/.temp/
+
+# Local tooling/artifacts
+.claude/settings.local.json
+.playwright-mcp/
+nul
+
+# Build outputs
+build/
+*.log
+
+# Test coverage
+coverage/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+secrets/
+private/

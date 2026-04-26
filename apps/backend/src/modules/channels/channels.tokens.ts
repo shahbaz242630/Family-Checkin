@@ -1,0 +1,1 @@
+export const CHANNEL_PROVIDERS = Symbol('CHANNEL_PROVIDERS');

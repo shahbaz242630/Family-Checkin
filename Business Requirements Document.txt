@@ -1,0 +1,1748 @@
+# Business Requirements Document
+## Cross-Border Family Check-In Platform
+### Working name: *Nearby*
+
+**Document version:** 2.1
+**Audience:** Founders, technical implementers, and LLM-driven development tools (Claude Code and similar). This document is the single source of truth for product intent, behavior, security posture, architecture, and engineering philosophy.
+
+---
+
+## Section 1 — How to read this document
+
+This BRD is written so that an LLM-based development tool can build the product directly from it without further explanation. Every feature has a **"Why this exists"** annotation so the implementer understands the reasoning, not just the requirement. When trade-offs arise during build, the implementer should resolve them in favor of the stated reasoning.
+
+The document is organized as follows:
+
+- **Sections 1-3** establish context: what the product is, who it serves, and why it must exist in a specific way.
+- **Sections 4-6** define behavior: full user journeys, feature catalog with reasoning, and edge cases.
+- **Sections 7-9** define architecture and engineering: tech stack, code philosophy, security model.
+- **Sections 10-12** define delivery: phased build plan, gating criteria, and what success looks like.
+- **Section 13** is the appendix: data model, glossary, and open questions.
+
+When an LLM tool is building a specific feature, it should re-read the relevant feature section AND Section 8 (engineering philosophy) AND Section 9 (security) before writing code.
+
+---
+
+## Section 2 — Product narrative
+
+### 2.1 What we are building
+
+A platform that helps people who live abroad keep tabs on loved ones who live in another country, in a way that respects everyone's dignity, costs almost nothing in friction, and reduces the daily anxiety of being far from family.
+
+The platform consists of:
+
+- A polished mobile app for iOS and Android, used by the **sender** (the person who is paying and worrying)
+- A backend service that orchestrates check-ins, manages consent, runs the cascade logic, and handles billing
+- An admin web panel for the operating team to monitor system health and respond to abuse reports
+
+The receiver — the person being checked on — never installs anything. They are reached on channels they already use: WhatsApp if they have it, SMS if they don't, or a phone call in their own language if they don't read.
+
+### 2.2 The core insight
+
+The world has millions of people living far from their parents, partners, children, and siblings. Existing solutions force the receiver to install an app, learn a new behavior, or be tracked by GPS. None of these work for a 70-year-old grandmother in a village in Kerala or rural Egypt or a fishing town in the Philippines.
+
+Our insight is that the sender is tech-savvy and willing to pay. The receiver is not, and shouldn't have to be. So we put all of the technology on the sender's side and reach the receiver where they already live: WhatsApp, SMS, or a phone call.
+
+This **asymmetric connectivity** is the entire reason the product exists.
+
+### 2.3 What success looks like
+
+Success is when a sender opens the app once a week, sees that their mother has been okay every day, feels reassured, and goes back to their life. The product is a quiet utility, not a noisy social app. The best version of this product is one the sender almost forgets about — until the day something is wrong, and the system catches it before it becomes a tragedy.
+
+### 2.4 What this product is NOT
+
+This is not an emergency service. The product must never be marketed as one, must never imply it can replace emergency services, and must always make clear in onboarding, terms, and visible UI that **in emergencies, users must contact local emergency services directly.** This is both a legal requirement (WhatsApp's Business Terms explicitly state their services have no access to emergency services) and an ethical one.
+
+This is not a surveillance tool. The receiver consents explicitly before any check-ins begin and can opt out unilaterally at any time without going through the sender. The product is built to support care, not control.
+
+This is not a medical device. We do not diagnose, treat, or replace healthcare professionals.
+
+---
+
+## Section 3 — Users and personas
+
+### 3.1 Ahmed — the sender (paying customer)
+
+Ahmed is in his late 30s, lives in Dubai, works long hours in a white-collar job. His mother lives alone in Kerala. He calls her on WhatsApp when he can but life gets in the way and three days slip by sometimes. He has felt the cold panic of "what if something happened and I don't know yet" more than once. He has disposable income and pays for streaming services, food delivery, and other subscriptions. He'll pay for peace of mind if the product genuinely delivers it.
+
+What he wants: silent reassurance. He doesn't want a chatty app full of features. He wants to glance at his phone once a week and see that mom is fine.
+
+### 3.2 Salma — the receiver (not the customer)
+
+Salma is in her late 60s, lives alone in a small town outside Kochi. Her son bought her a basic smartphone but she only uses WhatsApp for voice notes from family. She speaks Malayalam primarily. She doesn't want to be a burden. If a stranger called her every morning she'd find it annoying. If her son's daily check-in service called her warmly, in her own language, she'd come to look forward to it.
+
+What she wants: dignity, warmth, and her independence respected.
+
+### 3.3 Fatima — the backup contact
+
+Fatima is Ahmed's cousin in her early 40s. She lives near Salma. She would happily go check on Salma if Ahmed asked, but Ahmed doesn't want to bother her every week. She has WhatsApp. She does not want to install another app.
+
+What she wants: to help when truly needed, not to be pestered.
+
+### 3.4 The operating team (internal users)
+
+The team behind Nearby uses an admin web panel to monitor system health, review consent audit logs, respond to abuse reports, and (in higher tiers) staff the human-agent escalation layer. They are not customers but they are users of the system.
+
+---
+
+## Section 4 — End-to-end user journeys
+
+### 4.1 Journey: Sender signs up and adds first receiver
+
+Ahmed downloads the app from the App Store. He opens it. He sees a clean welcome screen with a one-line value proposition: *"Quiet daily check-ins on the people you love, wherever they are."* He taps "Get started."
+
+He enters his email and phone number. He receives a one-time code via SMS. He enters it and is in.
+
+The app asks: "Who would you like to check on?" He taps "Add someone."
+
+He enters her name (Salma Khan). He enters her phone number with country code (+91...). He picks her relationship from a list: Parent, Grandparent, Sibling, Spouse, Child, Friend, Other.
+
+The app silently checks in the background whether her number is registered on WhatsApp. Based on that signal and the country, it suggests the most likely channel — WhatsApp in this case. Ahmed can change this.
+
+He picks her language from a searchable list (Malayalam). He picks her time zone (auto-suggested as Asia/Kolkata based on country code). He sets the check-in schedule: every day, between 9am and 11am her local time.
+
+He writes a short personal note that she'll see in her messages: *"From Ahmed, just to know you're okay."*
+
+He's offered the chance to add backup contacts now or skip and add later. He adds Fatima with her phone number and relationship.
+
+The app asks Ahmed to choose a tier and enter payment details. He picks Tier 2 and enters his card.
+
+The app shows a confirmation screen: *"We'll send Salma a one-time message asking if she's happy to receive your daily check-ins. Once she agrees, we'll start tomorrow morning."*
+
+Ahmed taps "Send invitation." The system sends Salma a WhatsApp message in Malayalam: *"Hello Salma. Your son Ahmed has set up a daily check-in service to know you're okay each morning. If this is okay with you, please reply YES. If you'd rather not, reply NO. You can stop anytime by replying STOP. Thank you."*
+
+Salma replies YES. Ahmed gets a quiet notification: *"Salma has accepted. First check-in tomorrow."*
+
+The first check-in happens the next morning. Salma taps "I'm fine." Ahmed sees a green dot on her card in his dashboard. He smiles and goes to work.
+
+### 4.2 Journey: Receiver doesn't have a smartphone
+
+Ahmed adds his uncle Karim, who lives in rural Pakistan and only has a basic feature phone. The app's silent check finds Karim's number is not on WhatsApp. The app adapts the setup screen and tells Ahmed: *"Your uncle's number is best reached by SMS or voice call. We'll reach him by SMS first, with a voice call as backup."*
+
+Karim's consent flow is via SMS: *"This is from Ahmed Khan. He has set up a daily check-in to know you're okay. Reply YES to accept, NO to decline, or STOP anytime to end."* Karim replies YES.
+
+The next morning Karim gets an SMS: *"Good morning. Ahmed's daily check-in. Reply 1 if you're fine, 2 if you need help."* He replies 1. Ahmed sees green.
+
+For another receiver who has only a landline, the system uses a short AI voice call instead. The flow is the same in spirit — consent first, then daily check-ins — just delivered via voice.
+
+### 4.3 Journey: Receiver doesn't respond on a normal day
+
+One Tuesday Salma goes to the temple early and forgets her phone. The 9:30am WhatsApp check-in goes unanswered.
+
+Fifteen minutes later the system tries SMS as a backup. Still no response.
+
+Thirty minutes later the system places a short AI voice call in Malayalam. *"Good morning Salma, this is Ahmed's daily check-in. Are you alright? Press 1 if you're okay, or just say I'm fine."* The phone rings out — she's not home.
+
+Thirty more minutes later, Ahmed gets a quiet push notification: *"We haven't heard from Salma yet today. We tried WhatsApp, SMS, and a phone call. What would you like to do?"* He has three options: try again later, alert backup contact, or mark as okay because he just spoke to her himself.
+
+Ahmed is in a meeting and can't deal with it now. He taps "Try again later." The system retries in two hours. By then Salma is home and replies. Ahmed gets a green dot. The day continues normally.
+
+### 4.4 Journey: Real escalation, real concern
+
+Another day Salma genuinely is unwell. She's fallen and can't reach her phone easily. The cascade runs through WhatsApp, SMS, and voice call as before. Ahmed gets the notification, this time he's worried because he tried calling her himself an hour ago and she didn't pick up.
+
+He taps "Alert backup." Fatima receives a WhatsApp message and an SMS simultaneously: *"Ahmed's daily check-in to Salma didn't reach her this morning. He's asking if you could check on her in person. Address: [the address Ahmed provided when he added Fatima]. Please reply DONE when you've checked on her."*
+
+Fatima drives over, finds Salma on the floor, calls an ambulance, and replies DONE to the system. Ahmed gets a notification with whatever Fatima added to her reply. He marks the incident resolved with a note. The system goes back to normal tomorrow.
+
+### 4.5 Journey: Receiver opts out herself
+
+Three weeks in, Salma decides she doesn't want the daily check-in anymore. She replies STOP to a WhatsApp check-in. The system immediately stops all check-ins for her, sends her a confirmation that they've stopped, and notifies Ahmed: *"Salma has chosen to opt out of check-ins. You can talk to her about it if you'd like."* Ahmed cannot re-enable check-ins for her without sending a fresh consent invitation that she has to accept again.
+
+### 4.6 Journey: Sender pauses temporarily
+
+Salma comes to visit Ahmed in Dubai for a month. He doesn't need check-ins while she's with him. He opens the app, taps her card, taps "Pause," and picks an end date. The system silently pauses, sends Salma a one-time SMS to inform her ("Ahmed has paused your daily check-ins until [date]. Have a great visit."), and resumes automatically when she goes home.
+
+### 4.7 Journey: Multiple senders co-monitor (Phase 2)
+
+Ahmed's sister Layla also worries about their mother. Ahmed taps "Invite co-sender" on Salma's card and sends Layla a link via WhatsApp. Layla taps the link, downloads the app, signs in. She now sees Salma on her dashboard with the same status Ahmed sees. Both get notifications on escalation. Only Ahmed (the primary subscriber) can change billing or schedule, but Layla can also choose to alert the backup contact in an emergency. Co-monitoring is included in Tier 2 and above.
+
+---
+
+## Section 5 — Feature catalog
+
+Each feature has an ID, a description, and a "Why this exists" rationale. The implementer should preserve the rationale even when implementation details change.
+
+### 5.1 Authentication and account management
+
+**FR-AUTH-01: Sign up with email and phone number**
+The sender signs up with both email and phone number. Phone is verified via OTP sent through SMS. Email is verified via a magic link.
+*Why this exists:* Phone verification reduces fake accounts and ensures we have a working number for billing receipts and account recovery. Email gives us a durable identifier even if the phone number changes.
+
+**FR-AUTH-02: Social sign-in (Google, Apple)**
+Optional alternative to email/password.
+*Why this exists:* Reduces signup friction, increases conversion. Apple Sign-In is required by App Store guidelines if any other social sign-in is offered.
+
+**FR-AUTH-03: Multi-factor authentication on sensitive actions**
+Changing payment method, deleting account, removing a receiver, and exporting data require an OTP confirmation.
+*Why this exists:* The product holds sensitive data about the sender's family. An attacker who steals a session token shouldn't be able to delete relationships or exfiltrate the audit log without a second factor.
+
+**FR-AUTH-04: Account deletion and data export**
+The sender can delete their account or export all their data at any time from settings. Deletion removes their PII within 30 days; receivers' phone numbers are anonymized.
+*Why this exists:* Required by GDPR, UAE PDPL, and India DPDP Act. Also a trust signal — the easier we make it to leave, the more people will trust us to begin with.
+
+### 5.2 Adding and managing receivers
+
+**FR-REC-01: Add a receiver**
+The sender provides receiver's name, phone number (international format), relationship type, language, time zone, and schedule.
+*Why this exists:* These are the minimum fields needed to deliver a culturally-correct check-in at the right time in the right channel. Each field has a downstream use; no field is optional.
+
+**FR-REC-02: Channel auto-detection at setup**
+When a phone number is entered, the system silently checks whether the number is registered on WhatsApp via the WhatsApp Business API contact-check capability. The result determines the suggested primary channel.
+*Why this exists:* The sender shouldn't need to know whether their mother has WhatsApp — the product should figure it out. This is part of "asymmetric connectivity" being a feature, not a problem the user has to solve.
+
+**FR-REC-03: Three receiver tech profiles**
+The system supports three profiles:
+- *WhatsApp profile:* primary channel WhatsApp, fallback SMS, fallback voice
+- *SMS profile:* primary channel SMS, fallback voice
+- *Voice-only profile:* primary channel voice, no message-based fallback
+The sender can override the auto-detected profile.
+*Why this exists:* The product fails its core promise if it doesn't serve receivers without smartphones. A grandmother in rural Pakistan with only a feature phone is exactly the user this product is for.
+
+**FR-REC-04: Receiver consent flow (mandatory)**
+Before any check-in is scheduled, the system sends the receiver a one-time consent message in their language, on their primary channel. The receiver must affirmatively respond YES before any further messages are sent.
+*Why this exists:* Consent is the legal, ethical, and product foundation. Without it, this product is a coercion tool. The consent transcript is logged immutably.
+
+**FR-REC-05: Personal note from sender**
+The sender writes a short note (50 chars max) shown in the receiver's check-in messages. Example: *"From Ahmed, just to know you're okay."*
+*Why this exists:* This is the difference between feeling like a stranger's call and feeling like your son cares. Warmth at scale.
+
+**FR-REC-06: Schedule per receiver**
+The sender picks frequency (daily, every other day, weekly, custom) and a time-of-day window in the receiver's local time zone.
+*Why this exists:* A 70-year-old in Kerala is awake at different hours than a 30-year-old sister in Berlin. Time zones must be receiver-local, not sender-local. Forcing the sender to do timezone math is unacceptable.
+
+**FR-REC-07: Pause and resume**
+The sender can pause check-ins for a receiver with an optional end date. The receiver is notified that check-ins are paused.
+*Why this exists:* Real life — visits, hospital stays, travel. Without this, senders cancel the whole subscription instead of pausing.
+
+**FR-REC-08: Edit and delete receiver**
+The sender can edit any receiver's settings or remove them entirely. Deleting a receiver triggers a final SMS or call to that receiver letting them know check-ins have ended.
+*Why this exists:* Receivers should never be left wondering why messages stopped. Closing the loop is part of dignity.
+
+### 5.3 Backup contacts
+
+**FR-BAK-01: Add backup contacts per receiver**
+Each receiver can have up to 5 backup contacts. The sender provides each backup's name, phone number, and relationship to the receiver. Optionally, the sender adds the receiver's address or specific instructions for how to find them.
+*Why this exists:* When something goes wrong, the right response is usually "someone nearby physically goes to check." Backup contacts are that someone.
+
+**FR-BAK-02: Backup contacts need no app**
+Backup contacts are reached via SMS and WhatsApp message individually. They do not install anything.
+*Why this exists:* Backup contacts are extended family or neighbors. Asking them to install an app would mean most senders couldn't enroll the people they actually trust to help.
+
+**FR-BAK-03: Backup contacts are alerted only on escalation, never routinely**
+Backup contacts only receive a message after a full cascade has failed AND the sender has chosen to escalate.
+*Why this exists:* Crying wolf is the fastest way to make backups stop responding. Their attention is precious.
+
+### 5.4 Smart cascade
+
+**FR-CSC-01: Cascade triggers at scheduled time**
+At the receiver's scheduled time, the system sends a check-in via the primary channel.
+*Why this exists:* Predictability builds trust. The receiver knows roughly when to expect contact.
+
+**FR-CSC-02: Successful response closes the loop silently**
+A timely positive response marks the day as OK. The sender is NOT notified. The dashboard updates quietly.
+*Why this exists:* If we notify the sender on every successful check-in, the app becomes noise and gets muted or deleted. Silent success is the goal. The sender only hears from us when something needs attention.
+
+**FR-CSC-03: Cascade timing**
+Default cascade timing: WhatsApp at scheduled time → wait 15 minutes → SMS → wait 30 minutes → voice call → wait 30 minutes → notify sender. All durations should be configurable per receiver.
+*Why this exists:* The single biggest complaint about competitors is false alarms. A 75-minute cascade across three channels gives the receiver every reasonable chance to respond before bothering the sender.
+
+**FR-CSC-04: Sender choice on escalation**
+After the cascade fails, the sender receives one notification with three options: try again later, alert backup contact, or mark as OK manually.
+*Why this exists:* The sender knows their family. The product shouldn't autonomously alert family — it should give the sender the decision and the tools to act.
+
+**FR-CSC-05: Backup alert (sender-initiated)**
+If the sender chooses "Alert backup," the system sends a single message via SMS and WhatsApp simultaneously to each backup contact, with context about who to check on, where, and what's been tried.
+*Why this exists:* Multi-channel ensures the backup gets the message even if one channel is delayed. Context lets them act without calling the sender for details.
+
+**FR-CSC-06: Resolution and closure**
+The sender or any responding backup contact can mark the incident "resolved" with an optional note. The audit log captures the full incident.
+*Why this exists:* Every incident teaches us something — false alarm rate, response time, cascade tuning. The closure note also helps the family move on emotionally.
+
+**FR-CSC-07: Maximum cascade per day**
+A receiver only experiences one cascade per day. If they don't respond all day, the system does not retry from scratch the next day; it just runs the next day's scheduled check-in.
+*Why this exists:* Avoids a 75-year-old being battered by 12 messages because she went to a wedding for the weekend.
+
+### 5.5 Channels
+
+**FR-CHN-01: WhatsApp channel via Business API**
+Check-ins are sent as approved Utility-category templates with quick-reply buttons ("I'm fine" / "Need help"). Replies inside the 24-hour customer service window are free.
+*Why this exists:* WhatsApp has 95%+ penetration in India and other major receiver corridors. Utility templates are the cheapest message category. The 24-hour window means most check-ins effectively cost zero in WhatsApp fees.
+
+**FR-CHN-02: SMS channel**
+Check-ins are sent as short text with reply keywords (1 = OK, 2 = HELP, STOP = opt out). Works globally.
+*Why this exists:* SMS is the universal fallback. Every phone in the world can receive SMS. It's our floor of reach.
+
+**FR-CHN-03: Voice channel — short confirmation call (Phase 1)**
+A short AI voice call (under 30 seconds) in the receiver's language asking "Press 1 if you're okay, press 2 if you need help."
+*Why this exists:* Voice is the ONLY channel that reaches voice-only receivers and the most reliable way to break through to a non-responsive receiver. Phase 1 keeps it short and functional, not conversational.
+
+**FR-CHN-04: Voice channel — conversational AI (Phase 2)**
+Phase 2 introduces conversational AI calls (ElevenLabs Conversational AI or equivalent) that can chat warmly, detect mood, and report back to the sender.
+*Why this exists:* Conversational AI shifts the product from "insurance" to "relationship." Receivers come to enjoy the calls, which dramatically reduces opt-out rates.
+
+**FR-CHN-05: Channel-level per-receiver override**
+The sender can override the suggested channel order per receiver.
+*Why this exists:* Some 80-year-olds prefer voice even though they have WhatsApp. The sender knows their family.
+
+### 5.6 Sender dashboard
+
+**FR-DSB-01: Receiver cards**
+The home screen shows each receiver as a card with name, relationship, today's check-in status (green/amber/red), and time since last contact.
+*Why this exists:* The dashboard is the single most-viewed screen. It must be glanceable, calm, and dense without being cluttered.
+
+**FR-DSB-02: Receiver detail view**
+Tapping a card opens a detail view: 30-day history of check-ins, any escalations, current schedule, channel, backup contacts, and quick actions (pause, edit, message manually).
+*Why this exists:* When the sender does want context, they want all of it in one place.
+
+**FR-DSB-03: Notifications**
+The app sends push notifications ONLY on escalation events. Successful check-ins generate no notifications.
+*Why this exists:* Notification fatigue is the death of safety apps. Silent success is sacred.
+
+**FR-DSB-04: Settings**
+Standard settings: profile, payment method, notification preferences, language, account deletion, data export, terms, privacy.
+*Why this exists:* Standard but must be findable in two taps maximum.
+
+### 5.7 Consent and abuse safeguards
+
+**FR-SAF-01: Mandatory consent before first check-in**
+No check-in is sent until the receiver has affirmatively responded YES to the consent invitation.
+*Why this exists:* Legal requirement under GDPR, UAE PDPL, India DPDP Act, KSA PDPL. Also ethical foundation of the product.
+
+**FR-SAF-02: Receiver unilateral opt-out**
+The receiver can opt out at any time by replying STOP (text) or saying "stop calling" / pressing 9 (voice). Opt-out is immediate and cannot be reversed by the sender without a new fresh consent flow.
+*Why this exists:* The receiver's autonomy is non-negotiable. If we don't honor opt-outs immediately, we are a stalking platform.
+
+**FR-SAF-03: Mutual consent for spouse monitoring**
+Adding a spouse as a receiver requires an additional verification step where the spouse confirms via voice call that they understand they are being monitored and consent.
+*Why this exists:* Spouse-monitoring is the highest abuse-risk relationship type. The verified call creates a record that protects both parties and us.
+
+**FR-SAF-04: Audit log**
+Every action — adding a receiver, sending a consent invitation, receiving a response, escalating, paying — is recorded in an immutable append-only log with timestamp, actor, and metadata.
+*Why this exists:* Audit trails are the difference between defending an abuse claim and losing one. Also essential for debugging when things go wrong.
+
+**FR-SAF-05: Abuse reporting**
+Receivers can reply REPORT to any message to flag the sender for manual review. Reports go to the operating team's admin panel and trigger an automatic pause of all check-ins for that receiver pending review.
+*Why this exists:* Some senders will misuse this product. We need a frictionless way for receivers to flag it.
+
+**FR-SAF-06: NO EMERGENCY SERVICES disclaimer**
+The app shows a clear disclaimer in onboarding, terms, settings, and at the bottom of the dashboard: *"This is not an emergency service. In an emergency, please contact local emergency services directly."*
+*Why this exists:* WhatsApp Business Terms forbid claiming emergency capability. Liability protection. Ethical clarity.
+
+**FR-SAF-07: Cooldown on re-adding a receiver who opted out**
+If a receiver opts out, the sender must wait 7 days before sending a new consent invitation. The system rate-limits invitations per receiver to one per week max.
+*Why this exists:* Prevents a coercive sender from spamming a receiver who wants to be left alone.
+
+### 5.8 Payments and billing
+
+**FR-BIL-01: Tiered subscriptions (tier definitions are pricing-dependent and finalized separately)**
+Three tiers exist with progressively richer feature sets. Tier definitions live in a config that the product owner can update without redeploying.
+*Why this exists:* Pricing experimentation is essential early. Hard-coding tier definitions in the codebase makes A/B testing painful.
+
+**FR-BIL-02: Multiple payment gateways**
+Stripe is the primary global processor. Telr is the secondary processor for UAE-issued cards. Failed Stripe transactions for UAE cards retry automatically through Telr.
+*Why this exists:* Stripe has documented higher decline rates on UAE-issued debit cards. A local processor materially improves conversion.
+
+**FR-BIL-03: Trial period**
+A trial period (length configurable) requires payment method on file but charges nothing until the trial ends.
+*Why this exists:* Reduces signup friction without attracting low-intent users who never plan to pay.
+
+**FR-BIL-04: Cancel anytime, frictionless**
+Cancellation is one tap from settings, with no retention dark patterns. The user retains access until the end of the paid period.
+*Why this exists:* Trust. Ethical. Required by some app store guidelines. Users who can leave easily are also users who recommend the product.
+
+**FR-BIL-05: VAT handling**
+The system collects VAT for UAE (5%) and KSA (15%) per the user's billing country and produces compliant invoices.
+*Why this exists:* Legal requirement. Stripe Tax can handle this.
+
+### 5.9 Languages
+
+**FR-LNG-01: Sender app languages**
+The sender app is available in English at launch, with additional sender languages added per market priority.
+*Why this exists:* English is sufficient for the GCC expat sender base at launch. Adding sender languages should be data-driven.
+
+**FR-LNG-02: Receiver-facing languages**
+Receiver-facing messages and voice calls support a defined set of languages. Each language requires:
+- Translated message templates approved by Meta
+- Voice recordings or AI voice profile in the appropriate dialect
+- Native-speaker review of warmth and tone
+*Why this exists:* Mechanical translation is unacceptable for messages a 70-year-old will receive every morning. Quality matters more than coverage.
+
+**FR-LNG-03: Per-receiver language**
+Each receiver has their own language, set when they're added. The sender can have receivers in different languages simultaneously.
+*Why this exists:* A Lebanese sender in Dubai might have a parent in Beirut (Arabic), an aunt in Montreal (French/English), and a daughter at university in London (English). One sender, three languages, no problem.
+
+### 5.10 Admin panel (operating team)
+
+**FR-ADM-01: System health dashboard**
+Internal admin web panel shows: active receivers, today's cascade events, error rates per channel, abuse reports, payment failures.
+*Why this exists:* The operating team needs to know when something is broken before customers tell them.
+
+**FR-ADM-02: Abuse review queue**
+Reports flagged by receivers appear in a queue. The team reviews each one, can pause an account, contact the sender, or close the report.
+*Why this exists:* Trust and safety is an operational function, not just a product feature.
+
+**FR-ADM-03: Manual escalation override**
+For Tier 3 (Phase 3), trained operators can take over a cascade and personally call the receiver before escalating to family.
+*Why this exists:* Human judgment is the premium offering. Some scenarios benefit from a human voice that an AI can't match.
+
+**FR-ADM-04: Customer support tools**
+Read-only access to user accounts (with audit logging of every access) for support staff.
+*Why this exists:* Customer support that can't see the user's situation is useless. Audit logging access prevents abuse.
+
+---
+
+## Section 6 — Edge cases (must be handled explicitly)
+
+The implementer must address each of these. They are not optional.
+
+### 6.1 Receiver shares a phone with a spouse
+The check-in goes to one number but two people might answer. The first response counts. If the spouse answers and it wasn't directed at them, the receiver gets a brief follow-up: *"Just to confirm — Salma, are you okay?"*
+
+### 6.2 Receiver is hospitalized
+The sender pauses check-ins manually. If they forget to pause, the receiver may not respond for days. The system continues to escalate but is rate-limited (max one cascade per day). After 5 consecutive failed days, the system pauses automatically and notifies the sender.
+
+### 6.3 Receiver travels to visit the sender
+The sender pauses or the system detects the receiver's number is roaming on a different country's network and asks the sender if they want to pause.
+
+### 6.4 Sender's payment fails
+The system retries the payment 3 times over 7 days. During this period, check-ins continue. After the third failure, check-ins pause and the sender is notified to update payment. After 14 days unpaid, the account is suspended.
+*Why this exists:* Pausing immediately on first failed payment punishes users for transient bank issues.
+
+### 6.5 Sender deletes their account
+All receivers receive a final message that check-ins have ended. The audit log is retained for legal compliance for the period required (typically 6 years), then deleted.
+
+### 6.6 WhatsApp Business API outage
+The system falls back to SMS automatically. The cascade continues. Operations dashboard alerts the team.
+
+### 6.7 Voice AI service outage
+The system falls back to a pre-recorded voice message in the receiver's language. The cascade continues.
+
+### 6.8 Receiver replies in unexpected language
+The system uses the receiver's configured language for outbound messages but accepts replies in any language. Common positive/negative phrases in 30+ languages are recognized. Unrecognized replies trigger the cascade as if no response.
+
+### 6.9 Receiver replies sarcastically or ambiguously
+"Yeah I'm dying lol" — the system recognizes "dying" as a danger keyword and treats it as a flag for sender attention, not a positive confirmation. Better to over-flag than miss.
+
+### 6.10 Receiver has cognitive decline and forgets to respond often
+Over time the system flags this pattern to the sender: "Your mother's response rate has dropped from 95% to 60% over the last 30 days. Would you like to add a backup contact or change the schedule?" Non-judgmental observation, not a diagnosis.
+
+### 6.11 Receiver is in a country where WhatsApp calling/messaging is restricted (e.g., parts of MENA at times)
+The system detects delivery failures and switches to SMS automatically.
+
+### 6.12 Multiple senders adding the same receiver
+The system detects when a phone number already has an active check-in from another sender and asks both parties if they want to merge into co-monitoring or keep separate.
+
+---
+
+## Section 7 — Technology stack
+
+### 7.1 Architecture overview
+
+The system is a **modular monolith** for the backend, paired with separate frontends, all in a single monorepo. The frontends and backend communicate via a single typed API contract.
+
+```
+nearby/
+├── apps/
+│   ├── mobile/          React Native + Expo (sender app)
+│   ├── admin/           Next.js (internal admin panel)
+│   └── backend/         NestJS API (the brain)
+├── packages/
+│   ├── shared-types/    TypeScript types shared between front and back
+│   ├── shared-utils/    Pure functions used in multiple places
+│   └── ui-kit/          Shared design system (added in Phase 2)
+├── turbo.json           Turborepo config
+├── pnpm-workspace.yaml  pnpm workspaces config
+└── package.json
+```
+
+### 7.2 Mobile app
+
+**Framework:** React Native with Expo (managed workflow)
+**Language:** TypeScript, strict mode
+**State:** Zustand for client state, TanStack Query for server state
+**Navigation:** Expo Router
+**Styling:** NativeWind (Tailwind for React Native)
+**Forms:** React Hook Form + Zod for validation
+**Testing:** Vitest for unit, Maestro for E2E
+
+*Why this stack:* React Native + Expo is the fastest path to a polished iOS and Android app from a single codebase. TypeScript everywhere lets us share types with the backend. Zustand and TanStack Query are the modern, simple, well-supported choices. Avoid Redux. Avoid MobX. Avoid older state libraries.
+
+### 7.3 Backend
+
+**Framework:** NestJS
+**Runtime:** Node.js 22 LTS
+**Language:** TypeScript, strict mode
+**Database:** PostgreSQL 16 via Supabase (managed)
+**ORM:** Prisma
+**Authentication:** Supabase Auth (JWT-based, integrates with our DB)
+**Job queue:** BullMQ on Redis (Upstash)
+**Caching:** Redis (Upstash)
+**Background workflows:** BullMQ for MVP. Migrate to Trigger.dev or Temporal if cascade complexity demands it.
+**API style:** REST (OpenAPI documented), with TypeScript SDK auto-generated for the mobile app
+**Validation:** Zod schemas shared with mobile via packages/shared-types
+
+*Why this stack:* NestJS provides clean module boundaries (essential for a modular monolith). Prisma is the most LLM-fluent ORM, making AI-assisted development faster. BullMQ is industry standard, simple, and Redis-backed. Supabase consolidates auth and DB into one managed service that's free to start and scales fine.
+
+### 7.4 Admin panel
+
+**Framework:** Next.js 15 (App Router) with TypeScript
+**UI:** shadcn/ui components on Tailwind
+**Authentication:** Supabase Auth (operator role)
+
+*Why this stack:* Internal tool — speed of build > flexibility. Next.js + shadcn gets us a beautiful admin in days.
+
+### 7.5 Channel integrations
+
+**WhatsApp Business API:** Twilio (primary, easier MVP). Migrate to Meta Cloud API direct or 360dialog when message volume justifies it.
+**SMS:** Telnyx (primary, cheaper international), Twilio (fallback)
+**Voice telephony (SIP):** Telnyx (primary), Twilio (fallback)
+**Voice AI (Phase 2):** ElevenLabs Conversational AI for premium voice quality. Backup providers evaluated per language.
+**LLM (for AI voice scripts and abuse-detection text classification):** OpenAI GPT-4o-mini for cost, with the option to swap to Anthropic Claude or Google Gemini via abstraction layer.
+
+*Why this stack:* Each provider chosen for a specific reason. We do not put all eggs in Twilio's basket — Telnyx is meaningfully cheaper for international voice and SMS, which directly improves Tier 2 unit economics.
+
+### 7.6 Payments
+
+**Primary:** Stripe (subscriptions, invoicing, VAT via Stripe Tax)
+**Secondary for UAE:** Telr (UAE-card fallback)
+**Backup option:** Paddle (merchant of record) if VAT and merchant complexity becomes too costly
+
+*Why this stack:* Stripe for global. Telr for the documented UAE-card decline issue.
+
+### 7.7 Infrastructure and hosting
+
+**Backend:** Railway or Fly.io for MVP (modern PaaS, fast deploys). Migrate to AWS me-central-1 for UAE data residency once that becomes legally required.
+**Database:** Supabase managed Postgres (free tier sufficient at start)
+**Redis:** Upstash (serverless, generous free tier)
+**Mobile build/deploy:** EAS Build (Expo's managed build service)
+**Admin web:** Vercel
+**File/image storage:** Supabase Storage (S3-compatible, integrated)
+
+*Why this stack:* Modern managed services that minimize ops burden. We can self-host later if economics demand. Don't optimize for AWS sophistication early.
+
+### 7.8 Supporting services
+
+| Function | Service | Free alternative if cost matters |
+|---|---|---|
+| Error monitoring | Sentry | GlitchTip (self-host) |
+| Product analytics | PostHog | Plausible (self-host) |
+| Email transactional | Resend | Amazon SES |
+| Customer support chat | Crisp | Chatwoot (self-host) |
+| CDN | Cloudflare | BunnyCDN |
+
+### 7.9 Local development tooling
+
+- **Package manager:** pnpm (faster, more disk-efficient than npm)
+- **Build orchestration:** Turborepo (caches builds across packages, parallelizes tasks)
+- **Linter:** ESLint with strict TypeScript rules
+- **Formatter:** Prettier
+- **Pre-commit hooks:** lint-staged + husky
+- **Type checking:** tsc in CI for every PR
+- **Containerization:** Docker for backend and Postgres in dev parity
+
+---
+
+## Section 8 — Engineering philosophy and code style
+
+This section is non-negotiable. Every line of code in this project must follow these principles. When the LLM building this product faces a decision, this section is the tiebreaker.
+
+### 8.1 The five principles
+
+**Principle 1: Boring, modern, simple.**
+Use boring, well-supported technologies that the broader community knows how to debug. Modern means current best practices, not bleeding-edge experiments. Simple means the next developer can read it and understand it without asking.
+
+**Principle 2: Small modules, sharp boundaries.**
+A file should do one thing. A function should do one thing. A module should expose a small public interface and hide everything else. If a file is over 300 lines, ask whether it should be split. If a function is over 40 lines, the same question.
+
+**Principle 3: Loose coupling.**
+Modules talk through interfaces, not by reaching into each other's internals. The cascade module doesn't directly query the receivers table — it asks the receivers module. Changing the receivers module's implementation doesn't break the cascade.
+
+**Principle 4: Explicit over clever.**
+Code that's slightly more verbose but instantly understandable beats code that's clever and dense. The LLM should prefer clarity over compression. If a one-liner is hard to read, write it as three lines.
+
+**Principle 5: Test the behavior, not the implementation.**
+Tests describe what the code does, not how. Refactoring shouldn't break tests. Tests catch real regressions, not formatting changes.
+
+### 8.2 What "good code" looks like — concrete examples
+
+**Good — small focused function with single responsibility:**
+```typescript
+async function sendConsentInvitation(receiver: Receiver): Promise<ConsentResult> {
+  const message = buildConsentMessage(receiver.language, receiver.senderName);
+  const result = await channelService.send(receiver.primaryChannel, receiver.phone, message);
+  await auditLog.record('consent_invitation_sent', { receiverId: receiver.id, channel: receiver.primaryChannel });
+  return { sent: result.success, channel: receiver.primaryChannel };
+}
+```
+
+**Bad — same code, but doing too much, hard to test, hard to change:**
+```typescript
+async function setupReceiver(data: any): Promise<any> {
+  const receiver = await db.query('INSERT INTO receivers...');
+  let message = '';
+  if (data.lang === 'ml') message = 'Hello...';
+  else if (data.lang === 'en') message = 'Hi...';
+  // ... 30 more languages inline
+  if (data.channel === 'whatsapp') {
+    await fetch('https://graph.facebook.com/...', { /* inline credentials, raw API call */ });
+  } else if (data.channel === 'sms') {
+    await fetch('https://api.twilio.com/...', { /* same */ });
+  }
+  // ... and so on
+  console.log('done');
+  return { ok: true };
+}
+```
+
+The good version separates concerns. The bad version does five things, has hardcoded language data, calls external APIs directly, and uses `any`. We never write code like that.
+
+### 8.3 Folder structure within the backend
+
+Each domain area is its own NestJS module. Modules expose services through clear interfaces. Internal implementation details stay private.
+
+```
+apps/backend/src/
+├── modules/
+│   ├── auth/
+│   ├── senders/
+│   ├── receivers/
+│   ├── checkins/        (the cascade orchestrator)
+│   ├── channels/        (WhatsApp, SMS, Voice abstractions)
+│   ├── consent/         (consent flow + audit)
+│   ├── billing/
+│   ├── notifications/
+│   └── admin/
+├── shared/              (truly shared utilities, not a dumping ground)
+├── prisma/              (schema and migrations)
+└── main.ts
+```
+
+### 8.4 Database access — Prisma patterns
+
+Every module that touches the database has a repository layer that wraps Prisma. The repository is the only place Prisma queries live. Services call repositories. Controllers call services. Controllers never touch Prisma directly.
+
+This means when we change from Prisma to something else (we won't, but we should be able to), we change the repository implementations and nothing else.
+
+### 8.5 Channel abstraction — the single most important interface
+
+The Channel module exposes one interface:
+```typescript
+interface ChannelProvider {
+  sendMessage(to: PhoneNumber, message: TemplatedMessage): Promise<SendResult>;
+  makeVoiceCall(to: PhoneNumber, script: VoiceScript): Promise<CallResult>;
+  isAvailableForNumber(phone: PhoneNumber): Promise<boolean>;
+}
+```
+
+There are concrete implementations: `WhatsAppProvider`, `SmsProvider`, `VoiceProvider`. The cascade orchestrator only knows about the interface. Adding Telegram or Viber later means adding one more implementation, not rewriting the cascade.
+
+This is the most-likely-to-decay part of the codebase if not designed cleanly. We over-invest here because the cost of getting it wrong is high.
+
+### 8.6 Async work — BullMQ patterns
+
+All check-ins, cascades, and notifications run as BullMQ jobs. Synchronous request handlers should never call external APIs directly. The pattern:
+
+1. HTTP request hits the API
+2. API validates input, persists state to DB, enqueues a job
+3. API returns immediately (under 200ms target)
+4. Job runs in background, calls external services, updates state, retries on failure
+
+Why: external services fail. Synchronous calls to them block the user. Job queues let us retry intelligently and isolate failures.
+
+### 8.7 What the LLM must never do
+
+- Use `any` in TypeScript. If the type is genuinely unknown, use `unknown` and narrow it.
+- Write a function over 50 lines without a clear reason.
+- Mix business logic into route handlers.
+- Make external API calls from request handlers. Always queue.
+- Hardcode credentials, URLs, or environment-specific values. Use a config service.
+- Create circular dependencies between modules.
+- Skip tests for "small" features. Small features have bugs too.
+- Use `console.log`. Use the logger.
+- Write its own retry logic when the framework provides retry.
+- Catch errors and swallow them silently. Always log or rethrow.
+- Use callbacks. Use async/await.
+- Add comments that describe what the code does. Comments should describe **why**, not **what**.
+
+### 8.8 What the LLM should always do
+
+- Use TypeScript strict mode. No exceptions.
+- Add a test alongside any new function with non-trivial logic.
+- Run `pnpm typecheck` and `pnpm lint` before declaring a task done.
+- Use Zod schemas for any data crossing a trust boundary (API input, external API output).
+- Log with structured fields: `logger.info('checkin_sent', { receiverId, channel, durationMs })`.
+- Write commit messages that explain why, not what.
+- Update the README of the affected module if behavior changes.
+- Ask for clarification if a requirement is ambiguous, rather than guessing.
+
+### 8.9 Testing strategy
+
+- **Unit tests** for pure functions, validators, and service methods with non-trivial logic.
+- **Integration tests** for repository methods (using a test database).
+- **End-to-end tests** for critical user journeys (Maestro on mobile, Playwright on web).
+- **Coverage target:** 70% line coverage on backend, 50% on mobile (mobile is harder to test cheaply, so coverage matters less than focus).
+- Tests must run in under 60 seconds total for the unit + integration suite.
+
+### 8.10 Performance budgets
+
+- API endpoints respond in under 200ms p95 (excluding queued background work).
+- Mobile app cold start under 2 seconds on a midrange Android device.
+- Mobile app screen transitions under 100ms.
+- Database queries audited monthly for slow queries.
+
+### 8.11 Observability
+
+Every important business event emits a structured log: signup, receiver added, consent requested, consent received, check-in sent, response received, escalation triggered, payment processed, account deleted. These logs feed PostHog and Sentry. The product owner should be able to answer "how many check-ins were sent yesterday" without writing SQL.
+
+---
+
+## Section 9 — Security
+
+Security is treated as a feature, not a checklist. This section defines the threats we protect against and the controls we use.
+
+### 9.1 Threat model
+
+The realistic threats this product faces, in order of likelihood:
+
+1. **Account takeover.** Attacker gets sender credentials, accesses receiver phone numbers and audit log, removes receivers without consent.
+2. **Coercive misuse.** A controlling family member uses the product to monitor someone without genuine consent.
+3. **Data breach.** Receiver phone numbers are exfiltrated.
+4. **Channel abuse.** Someone uses the platform to spam strangers under the guise of "check-ins."
+5. **Payment fraud.** Stolen cards used to set up monitoring of unrelated people.
+6. **API abuse.** Attacker hammers the API to run up our channel costs.
+
+We design controls for each.
+
+### 9.2 Authentication and session controls
+
+- Passwords (where used) hashed with Argon2id with appropriate parameters.
+- Sessions are JWT with short expiry (15 minutes) and refresh tokens (30 days, rotating on use).
+- Refresh tokens are bound to device and IP; major IP changes trigger re-authentication.
+- Failed login attempts rate-limited per account (5/hour) and per IP (20/hour).
+- Sensitive operations require step-up authentication via OTP: changing payment, deleting account, exporting data, removing receivers.
+
+### 9.3 Authorization
+
+- Every API endpoint declares required permissions. The default is "deny."
+- Senders can only access their own data. Row-level security enforced at the database via Postgres policies AND at the application layer (defense in depth).
+- Admin operators have role-based access. Read-only support staff can view but not modify. Audit-log access requires elevated permissions.
+
+### 9.4 Data protection
+
+- All PII (sender email, sender phone, receiver phone, backup contacts) is encrypted at rest at the database column level using AES-256-GCM.
+- Encryption keys managed via a KMS (AWS KMS or equivalent). Application code never sees raw key material.
+- All data in transit over TLS 1.3 with HSTS.
+- Voice call recordings, if enabled, are encrypted at rest and retained for a maximum of 30 days.
+- Audit log entries are append-only — no UPDATE or DELETE permissions on the audit table for application users.
+
+### 9.5 Coercion safeguards (product-level security)
+
+- Mandatory consent flow before any check-ins (FR-SAF-01).
+- Receiver unilateral opt-out always available (FR-SAF-02).
+- Spouse-monitoring requires verified mutual consent (FR-SAF-03).
+- Abuse reporting flow visible to every receiver in every message (FR-SAF-05).
+- Cooldown on re-adding opted-out receivers (FR-SAF-07).
+- Audit trail of every relationship change (FR-SAF-04).
+
+### 9.6 Channel security
+
+- WhatsApp templates pre-approved by Meta as Utility category.
+- All outbound messages are templated; no raw user-supplied content goes outbound.
+- Replies parsed safely; no code execution from message contents.
+- Phone numbers validated and normalized via libphonenumber before any send.
+- Per-sender daily limits on receivers added and messages sent to prevent platform-abuse-as-a-service patterns.
+
+### 9.7 Rate limiting and abuse
+
+- API rate limits per user (e.g., 100 requests/minute) and per IP (e.g., 200 requests/minute).
+- Stricter limits on expensive operations: receiver invitations capped at 10/day per sender, voice calls capped at 5/hour per sender.
+- Captcha (hCaptcha or Turnstile) on signup and on add-receiver flow.
+- WAF (Cloudflare) in front of the API to block known bad actors.
+
+### 9.8 Payment security
+
+- PCI scope minimized: no card numbers ever touch our servers. Stripe Elements / Telr's hosted page handle card collection.
+- Webhook signatures verified on every Stripe and Telr webhook.
+- Idempotency keys on all charge attempts to prevent double-charging.
+
+### 9.9 Vulnerability management
+
+- Dependencies audited weekly via `pnpm audit` and Snyk.
+- Critical CVEs patched within 7 days, high within 30.
+- Penetration test before public launch.
+- Bug bounty program post-launch.
+
+### 9.10 Compliance
+
+- GDPR (EU receivers).
+- UAE PDPL (Federal Decree-Law No. 45 of 2021).
+- KSA PDPL (operational and adjusted requirements).
+- India DPDP Act (2023) for receivers in India.
+- Data residency: receiver data for users in UAE stored in UAE-region infrastructure once user count justifies migration off Supabase's default region.
+- Data Processing Agreements with all subprocessors (Twilio, Telnyx, Stripe, Telr, ElevenLabs, etc.).
+- Designated DPO once user count surpasses thresholds in each jurisdiction.
+
+### 9.11 Incident response
+
+- On suspected breach: incident response plan documented, on-call rotation, customer notification within 72 hours per GDPR.
+- Backup restoration tested quarterly.
+- Disaster recovery: RPO 1 hour, RTO 4 hours.
+
+### 9.12 What the LLM must do for every feature
+
+When building any feature, the LLM should ask:
+- What user input does this take, and is it validated?
+- What does this expose, and who can access it?
+- What logs does this generate, and do they leak PII?
+- What happens if this fails or is called maliciously?
+- Is this idempotent if called twice?
+
+If any answer is unclear, stop and clarify before writing code.
+
+---
+
+## Section 10 — Phased build plan
+
+The product is built in three sequential phases. Each phase is launched and validated before the next begins. The phasing is not about cost — it's about building the right thing, learning from real users, and avoiding committing to features the market doesn't actually want.
+
+### Phase 1 — The launch product
+
+**Scope:** A complete, polished, professional sender app that delivers the core value proposition for the most common receiver profile.
+
+**Features included:**
+- Sender app on iOS and Android (full design polish, App Store quality)
+- Sender authentication (FR-AUTH-01, 02, 03, 04)
+- Add and manage receivers (FR-REC-01 through 08)
+- Three receiver tech profiles (FR-REC-03)
+- Backup contacts (FR-BAK-01, 02, 03)
+- Smart cascade with WhatsApp, SMS, and short voice confirmation calls (FR-CSC-01 through 07, FR-CHN-01, 02, 03, 05)
+- Sender dashboard (FR-DSB-01, 02, 03, 04)
+- Full consent and abuse safeguards (FR-SAF-01 through 07)
+- Payments and billing (FR-BIL-01 through 05)
+- Initial language set: English, Malayalam, Tamil, Hindi, Urdu, Bengali, Arabic
+- Admin panel basics (FR-ADM-01, 02, 04)
+
+**Features explicitly NOT included:**
+- Conversational voice AI (only short confirmation calls)
+- Multi-sender co-monitoring
+- Mood/wellbeing summaries
+- Voice biomarker analysis
+- Tier 3 human-agent escalation
+- Passive WhatsApp signals
+- Tagalog / Cebuano (Philippines corridor — Phase 2)
+- Sender app in Arabic UI (Phase 2)
+
+**Entry criteria:**
+- Brand and visual design system finalized
+- Legal review of consent flow and ToS complete
+- WhatsApp Business API utility template pre-approved by Meta
+- Voice quality validated in all 7 launch languages
+- Stripe and Telr accounts active
+
+**Exit criteria (must all be true before Phase 2 starts):**
+- 100+ paying users
+- Month-on-month retention above 60% at month 3
+- Receiver opt-out rate below 15% at 30 days
+- False alarm rate (cascades that escalated for non-emergencies) below 10%
+- WhatsApp template approval stable, no recategorization risks
+- Zero unresolved critical security incidents
+- Customer support load is manageable (< 5% of users contacting support per month)
+
+**What we learn in Phase 1:**
+- Which corridor converts best
+- What's the real false-alarm rate
+- Which channels actually get used
+- What feature requests come up repeatedly
+- What price point converts and retains
+
+### Phase 2 — Voice intelligence and scale
+
+**Scope:** Add the features that turn this from a utility into a relationship product, based on Phase 1 learning.
+
+**Features added:**
+- Conversational voice AI (FR-CHN-04) using ElevenLabs Conversational AI
+- Mood and wellbeing summaries from voice calls
+- Multi-sender co-monitoring (FR-MUL family of features)
+- Passive WhatsApp signals (FR-PSV family)
+- Additional languages: Tagalog, Cebuano, Sinhala, Amharic, Mandarin, Cantonese, French, Spanish, Portuguese
+- Sender app available in Arabic
+- Expanded admin tools
+
+**Entry criteria:**
+- All Phase 1 exit criteria met
+- Voice AI quality validated in all new languages
+- Pricing for Tier 2 confirmed by data
+
+**Exit criteria:**
+- 1,000+ paying users
+- Tier 2 conversion rate above 25%
+- Tier 2 churn below 5% monthly
+- Voice call completion rate above 85%
+
+### Phase 3 — Premium and expansion
+
+**Scope:** Add Tier 3 premium features and expand beyond GCC.
+
+**Features added:**
+- Tier 3 human-agent escalation (FR-ADM-03)
+- Voice biomarker health trend analysis (partner integration or in-house ML)
+- B2B / API access for senior living facilities
+- Insurance partnerships
+- Expansion markets: UK, EU, US senders
+
+**Entry criteria:**
+- Phase 2 exit criteria met
+- Operations team capable of staffing 24/7 human-agent layer
+- Legal review of healthcare-adjacent claims complete
+
+**Exit criteria:**
+- Defined per business needs at the time
+
+### Phase 4 — Platform
+
+**Scope:** Open the platform to third parties.
+
+**Features:**
+- Public API and SDK
+- Partner program
+- White-label options for community organizations and corporate wellness
+
+This phase is intentionally underspecified. It is shaped by what Phase 3 reveals.
+
+---
+
+## Section 11 — How an LLM should approach this build
+
+This section is specifically for Claude Code or any LLM-driven build tool.
+
+### 11.1 Before writing any code
+
+1. Read this entire BRD once.
+2. Re-read Section 8 (engineering philosophy) and Section 9 (security).
+3. Confirm which phase is being built (start with Phase 1).
+4. Set up the monorepo structure as defined in Section 7.1.
+5. Set up TypeScript strict mode, ESLint, Prettier, and pre-commit hooks before writing any feature code.
+6. Set up the Prisma schema from Section 13.1.2 exactly. Run initial migration.
+7. Apply the Supabase setup from Section 13.1.3 (extensions, audit log triggers, RLS policies, additional indexes).
+8. Implement the `CryptoService` from Section 13.1.4 as one of the very first modules — many other modules depend on it.
+9. Set up the channel abstraction (Section 8.5) as the next foundational module.
+10. Only then begin building feature modules.
+
+### 11.2 When building a feature
+
+1. Locate the feature's FR-ID in Section 5.
+2. Read the "Why this exists" annotation.
+3. Check Section 6 for related edge cases.
+4. Check Section 9 for related security concerns.
+5. Plan the smallest possible implementation that meets the requirement.
+6. Write the test first. Write code to pass the test.
+7. Run typecheck and lint before declaring done.
+8. Ask for clarification if anything is unclear.
+
+### 11.3 When in doubt
+
+- Default to **less code**, not more.
+- Default to **more tests**, not fewer.
+- Default to **boring choices**, not novel ones.
+- Default to **explicit**, not clever.
+- Default to **asking**, not assuming.
+
+### 11.4 The single most important rule
+
+If something feels like it's getting complicated, stop. The BRD should always be the source of truth. If the implementation is fighting the BRD, the BRD is right and the implementation is wrong.
+
+If the BRD is genuinely unclear, ask. Do not invent answers.
+
+---
+
+## Section 12 — Definition of done for the platform
+
+The platform is "done enough to launch Phase 1" when:
+
+- A new sender can sign up, add a receiver, complete the consent flow, and receive their first successful check-in within 10 minutes of opening the app.
+- All three receiver tech profiles work end to end with real test users in three different countries.
+- The cascade has been verified to handle all edge cases in Section 6.
+- Security review is complete with no unresolved critical or high findings.
+- Both apps are submitted to and approved by App Store and Play Store.
+- WhatsApp Business API is verified and templates are approved.
+- Stripe and Telr are live with successful test transactions.
+- The admin panel allows the operating team to monitor the system and respond to abuse reports.
+- Documentation exists for: support staff, operations runbook, incident response.
+- Privacy policy, terms of service, and data processing agreements are in place.
+
+---
+
+## Section 13 — Appendix
+
+### 13.1 Data model (core entities)
+
+The Prisma schema models the following entities. The implementer should generate the full schema based on these definitions.
+
+**User (sender):**
+- id (UUID)
+- email (encrypted, unique)
+- phone (encrypted, unique)
+- country
+- preferredLanguage
+- timezone
+- createdAt
+- subscriptionTier
+- stripeCustomerId
+
+**Receiver:**
+- id (UUID)
+- userId (FK to User)
+- name (encrypted)
+- phone (encrypted, indexed by hashed lookup)
+- relationshipType (enum: parent, grandparent, sibling, spouse, child, friend, other)
+- language
+- timezone
+- techProfile (enum: whatsapp, sms, voice_only)
+- primaryChannel
+- fallbackChannels (ordered array)
+- schedule (JSON: frequency, timeWindow)
+- personalNote
+- consentStatus (enum: pending, granted, declined, revoked)
+- consentGrantedAt
+- consentTranscript (encrypted)
+- pausedUntil (nullable)
+- createdAt
+
+**BackupContact:**
+- id (UUID)
+- receiverId (FK)
+- name (encrypted)
+- phone (encrypted)
+- relationshipToReceiver
+- locationOrInstructions (encrypted, nullable)
+- createdAt
+
+**CheckIn:**
+- id (UUID)
+- receiverId (FK)
+- scheduledAt
+- status (enum: pending, sent, responded_ok, responded_help, escalated, resolved, failed, skipped)
+- channelUsed
+- responseAt (nullable)
+- responseTranscript (encrypted, nullable)
+- createdAt
+
+**EscalationEvent:**
+- id (UUID)
+- checkInId (FK)
+- attemptNumber
+- channel
+- result (enum: success, no_response, error)
+- senderNotifiedAt (nullable)
+- backupAlertedAt (nullable)
+- resolvedAt (nullable)
+- resolutionNote (encrypted, nullable)
+
+**Subscription:**
+- id (UUID)
+- userId (FK)
+- tier
+- status (enum: active, past_due, canceled, suspended)
+- stripeSubscriptionId
+- currentPeriodEnd
+
+**AuditLog (append-only, immutable):**
+- id (UUID)
+- entityType
+- entityId
+- action
+- actorType (enum: user, system, admin)
+- actorId
+- timestamp
+- metadata (JSON)
+
+**AbuseReport:**
+- id (UUID)
+- reporterPhone (encrypted, the receiver who flagged)
+- receiverId (FK)
+- reportedAt
+- reviewStatus (enum: pending, reviewed_safe, reviewed_action_taken)
+- reviewerId (admin user)
+- reviewNote (encrypted, nullable)
+
+### 13.1.1 Encryption strategy
+
+This product holds sensitive PII across multiple jurisdictions with strict data protection laws (UAE PDPL, KSA PDPL, India DPDP, GDPR). Encryption strategy decisions made:
+
+**Application-layer encryption** for all PII columns. The backend encrypts before writing to Postgres; Postgres only ever sees ciphertext.
+
+*Why this exists:* Application-layer encryption gives us portability (can migrate off Supabase any time), control over key rotation, and clean audit trails of every decryption. Database-layer alternatives (Supabase Vault, pgsodium) tie us to the platform and put the keys outside our direct control.
+
+**Encryption scheme:** AES-256-GCM with per-record IVs. Master key in AWS KMS (or Supabase Vault as a temporary alternative until KMS is set up). Data Encryption Keys (DEKs) derived per-record so a single key compromise doesn't expose the entire database.
+
+**Hashed lookup pattern:** When we need to query by an encrypted column (e.g., "find receiver by phone number"), we store a separate `phoneHash` column containing a deterministic SHA-256 hash of the normalized phone number. We can query on `phoneHash` without decrypting; we only decrypt the actual phone when we need to send a message to it.
+
+**Indexing:** Encrypted columns are not indexed (the ciphertext is non-deterministic). Hashed lookup columns are indexed. Searches that must work on plaintext (very rare in this app) require fetching all rows and decrypting in application memory — which is why we keep those queries to a minimum.
+
+### 13.1.2 Full Prisma schema
+
+This schema lives at `apps/backend/prisma/schema.prisma`. The implementer should generate migrations from this. Encrypted fields are typed as `String` at the Prisma level — encryption/decryption happens in the repository layer via a `CryptoService`.
+
+```prisma
+// apps/backend/prisma/schema.prisma
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto, uuidOssp(map: "uuid-ossp")]
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum SubscriptionTier {
+  TIER_1
+  TIER_2
+  TIER_3
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  SUSPENDED
+}
+
+enum RelationshipType {
+  PARENT
+  GRANDPARENT
+  SIBLING
+  SPOUSE
+  CHILD
+  FRIEND
+  OTHER
+}
+
+enum TechProfile {
+  WHATSAPP
+  SMS
+  VOICE_ONLY
+}
+
+enum Channel {
+  WHATSAPP
+  SMS
+  VOICE
+}
+
+enum ConsentStatus {
+  PENDING
+  GRANTED
+  DECLINED
+  REVOKED
+}
+
+enum CheckInStatus {
+  PENDING
+  SENT
+  RESPONDED_OK
+  RESPONDED_HELP
+  ESCALATED
+  RESOLVED
+  FAILED
+  SKIPPED
+}
+
+enum EscalationResult {
+  SUCCESS
+  NO_RESPONSE
+  ERROR
+}
+
+enum AbuseReportStatus {
+  PENDING
+  REVIEWED_SAFE
+  REVIEWED_ACTION_TAKEN
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  ADMIN
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  OPERATOR
+  SUPPORT_READONLY
+}
+
+// ============================================================================
+// USER (sender)
+// ============================================================================
+
+model User {
+  id                  String   @id @default(uuid()) @db.Uuid
+  emailEncrypted      String   // AES-256-GCM ciphertext (base64)
+  emailHash           String   @unique // SHA-256 for lookup
+  phoneEncrypted      String
+  phoneHash           String   @unique
+  country             String   @db.Char(2) // ISO 3166-1 alpha-2
+  preferredLanguage   String   @db.Char(5) // BCP 47, e.g. "en-US"
+  timezone            String   // IANA, e.g. "Asia/Dubai"
+  authProviderId      String?  @unique // Supabase Auth user id (sub claim)
+  stripeCustomerId    String?  @unique
+  telrCustomerId      String?  @unique
+  emailVerifiedAt     DateTime?
+  phoneVerifiedAt     DateTime?
+  deletedAt           DateTime? // soft delete; hard delete after retention window
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  receivers           Receiver[]
+  subscriptions       Subscription[]
+  coMonitorships      CoMonitor[]    @relation("CoMonitorUser")
+
+  @@index([emailHash])
+  @@index([phoneHash])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+// ============================================================================
+// RECEIVER
+// ============================================================================
+
+model Receiver {
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String   @db.Uuid
+  nameEncrypted         String
+  phoneEncrypted        String
+  phoneHash             String   // not unique — same number can be receiver under multiple senders
+  countryCode           String   @db.Char(2) // derived from phone, plain — used for routing
+  relationshipType      RelationshipType
+  language              String   @db.Char(5)
+  timezone              String
+  techProfile           TechProfile
+  primaryChannel        Channel
+  fallbackChannels      Channel[]
+  scheduleFrequency     String   // "daily" | "every_other_day" | "weekly" | "custom"
+  scheduleTimeWindow    Json     // { startHour: 9, endHour: 11 }
+  scheduleCustomCron    String?  // optional cron for custom schedules
+  personalNoteEncrypted String?  // shown to receiver in messages
+  consentStatus         ConsentStatus @default(PENDING)
+  consentRequestedAt    DateTime?
+  consentGrantedAt      DateTime?
+  consentRevokedAt      DateTime?
+  consentTranscript     String?  // encrypted JSON of full consent exchange
+  pausedUntil           DateTime?
+  pausedReason          String?
+  deletedAt             DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user                  User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  backupContacts        BackupContact[]
+  checkIns              CheckIn[]
+  abuseReports          AbuseReport[]
+  coMonitors            CoMonitor[]
+  optOutCooldown        OptOutCooldown?
+
+  @@index([userId])
+  @@index([phoneHash])
+  @@index([consentStatus])
+  @@index([deletedAt])
+  @@map("receivers")
+}
+
+// ============================================================================
+// BACKUP CONTACT
+// ============================================================================
+
+model BackupContact {
+  id                          String   @id @default(uuid()) @db.Uuid
+  receiverId                  String   @db.Uuid
+  nameEncrypted               String
+  phoneEncrypted              String
+  phoneHash                   String
+  relationshipToReceiver      String
+  locationInstructionsEncrypted String?
+  priorityOrder               Int      @default(0) // lower = contact first
+  deletedAt                   DateTime?
+  createdAt                   DateTime @default(now())
+
+  receiver                    Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([receiverId])
+  @@map("backup_contacts")
+}
+
+// ============================================================================
+// CO-MONITOR (Phase 2)
+// ============================================================================
+
+model CoMonitor {
+  id              String   @id @default(uuid()) @db.Uuid
+  receiverId      String   @db.Uuid
+  userId          String   @db.Uuid // the co-monitoring user
+  invitedByUserId String   @db.Uuid // primary subscriber who invited
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime @default(now())
+
+  receiver        Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+  user            User     @relation("CoMonitorUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([receiverId, userId])
+  @@index([userId])
+  @@map("co_monitors")
+}
+
+// ============================================================================
+// CHECK-IN
+// ============================================================================
+
+model CheckIn {
+  id                    String   @id @default(uuid()) @db.Uuid
+  receiverId            String   @db.Uuid
+  scheduledAt           DateTime
+  status                CheckInStatus @default(PENDING)
+  channelUsed           Channel?
+  sentAt                DateTime?
+  respondedAt           DateTime?
+  responseTranscript    String?  // encrypted
+  responseDetectedAs    String?  // "ok" | "help" | "ambiguous" | "danger_keyword"
+  resolvedAt            DateTime?
+  resolutionNote        String?  // encrypted
+  resolutionByUserId    String?  @db.Uuid
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  receiver              Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+  escalations           EscalationEvent[]
+
+  @@index([receiverId, scheduledAt])
+  @@index([status])
+  @@index([scheduledAt])
+  @@map("check_ins")
+}
+
+// ============================================================================
+// ESCALATION EVENT
+// ============================================================================
+
+model EscalationEvent {
+  id                String   @id @default(uuid()) @db.Uuid
+  checkInId         String   @db.Uuid
+  attemptNumber     Int
+  channel           Channel
+  startedAt         DateTime @default(now())
+  completedAt       DateTime?
+  result            EscalationResult?
+  errorDetails      String?  // sanitized error info
+  senderNotifiedAt  DateTime?
+  backupAlertedAt   DateTime?
+
+  checkIn           CheckIn  @relation(fields: [checkInId], references: [id], onDelete: Cascade)
+
+  @@index([checkInId])
+  @@map("escalation_events")
+}
+
+// ============================================================================
+// SUBSCRIPTION
+// ============================================================================
+
+model Subscription {
+  id                       String   @id @default(uuid()) @db.Uuid
+  userId                   String   @db.Uuid
+  tier                     SubscriptionTier
+  status                   SubscriptionStatus
+  paymentProvider          String   // "stripe" | "telr"
+  externalSubscriptionId   String   @unique
+  trialEndsAt              DateTime?
+  currentPeriodStart       DateTime
+  currentPeriodEnd         DateTime
+  canceledAt               DateTime?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+
+  user                     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@map("subscriptions")
+}
+
+// ============================================================================
+// AUDIT LOG (append-only, immutable)
+// ============================================================================
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  entityType  String   // "user" | "receiver" | "check_in" | "subscription" | etc.
+  entityId    String   @db.Uuid
+  action      String   // "created" | "consent_granted" | "escalated" | etc.
+  actorType   ActorType
+  actorId     String?  @db.Uuid
+  metadata    Json?    // structured event data, NEVER raw PII
+  ipAddress   String?  // for user actions
+  userAgent   String?
+  createdAt   DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([actorId])
+  @@map("audit_logs")
+  // No @@unique constraints; appends only.
+  // Postgres triggers (see 13.1.3) prevent UPDATE/DELETE.
+}
+
+// ============================================================================
+// ABUSE REPORT
+// ============================================================================
+
+model AbuseReport {
+  id                  String   @id @default(uuid()) @db.Uuid
+  receiverId          String   @db.Uuid
+  reporterPhoneHash   String   // verified to match receiver phone
+  reportContent       String?  // encrypted, optional message from reporter
+  reportedAt          DateTime @default(now())
+  reviewStatus        AbuseReportStatus @default(PENDING)
+  reviewerAdminId     String?  @db.Uuid
+  reviewNote          String?  // encrypted
+  reviewedAt          DateTime?
+
+  receiver            Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([reviewStatus])
+  @@index([receiverId])
+  @@map("abuse_reports")
+}
+
+// ============================================================================
+// OPT-OUT COOLDOWN
+// Tracks receivers who opted out, preventing re-add for 7 days (FR-SAF-07)
+// ============================================================================
+
+model OptOutCooldown {
+  id              String   @id @default(uuid()) @db.Uuid
+  receiverId      String   @unique @db.Uuid
+  optOutAt        DateTime
+  cooldownUntil   DateTime
+  optOutChannel   Channel
+  optOutKeyword   String?  // "STOP", spoken phrase, etc.
+
+  receiver        Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([cooldownUntil])
+  @@map("opt_out_cooldowns")
+}
+
+// ============================================================================
+// ADMIN USER
+// ============================================================================
+
+model AdminUser {
+  id                String   @id @default(uuid()) @db.Uuid
+  authProviderId    String   @unique // Supabase Auth user id
+  emailEncrypted    String
+  emailHash         String   @unique
+  role              AdminRole
+  active            Boolean  @default(true)
+  lastLoginAt       DateTime?
+  createdAt         DateTime @default(now())
+
+  @@map("admin_users")
+}
+
+// ============================================================================
+// CHANNEL TEMPLATE
+// Catalog of approved WhatsApp/SMS templates per language
+// ============================================================================
+
+model ChannelTemplate {
+  id              String   @id @default(uuid()) @db.Uuid
+  templateKey     String   // "checkin_daily" | "consent_request" | "backup_alert" | etc.
+  language        String   @db.Char(5)
+  channel         Channel
+  externalId      String?  // Meta-approved template ID
+  bodyText        String
+  variables       String[] // ["receiverName", "senderName"]
+  approvedAt      DateTime?
+  active          Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([templateKey, language, channel])
+  @@map("channel_templates")
+}
+
+// ============================================================================
+// IDEMPOTENCY KEY
+// Prevents duplicate operations on retried requests
+// ============================================================================
+
+model IdempotencyKey {
+  key         String   @id
+  userId      String?  @db.Uuid
+  scope       String   // "create_receiver" | "send_consent" | "charge" | etc.
+  responseBody Json?
+  statusCode  Int?
+  expiresAt   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+```
+
+### 13.1.3 Supabase / Postgres setup
+
+Beyond the Prisma migrations, several pieces of infrastructure live directly in Supabase. These are run once during initial setup and after each schema migration.
+
+**Required extensions:**
+```sql
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";  -- for future fuzzy search
+```
+
+**Audit log immutability trigger:**
+The audit log is append-only at the database level. Even if application code is buggy or an attacker gets DB write access, audit records cannot be modified or deleted.
+
+```sql
+CREATE OR REPLACE FUNCTION prevent_audit_log_modification()
+RETURNS TRIGGER AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_logs is append-only; UPDATE and DELETE are forbidden';
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER audit_logs_no_update
+  BEFORE UPDATE ON audit_logs
+  FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_modification();
+
+CREATE TRIGGER audit_logs_no_delete
+  BEFORE DELETE ON audit_logs
+  FOR EACH ROW EXECUTE FUNCTION prevent_audit_log_modification();
+```
+
+**Row Level Security (RLS):**
+Supabase Auth integrates with Postgres RLS. Even though application code enforces authorization, RLS provides defense in depth — if app code has a bug, the database still refuses unauthorized access.
+
+Enable RLS on every user-facing table:
+```sql
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE receivers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE backup_contacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE check_ins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE escalation_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE co_monitors ENABLE ROW LEVEL SECURITY;
+ALTER TABLE abuse_reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE opt_out_cooldowns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+```
+
+Example policies (sender can only see their own data):
+```sql
+-- Users can read their own row
+CREATE POLICY users_read_own ON users
+  FOR SELECT USING (auth_provider_id = auth.uid()::text);
+
+-- Senders see their own receivers
+CREATE POLICY receivers_read_own ON receivers
+  FOR SELECT USING (
+    user_id IN (
+      SELECT id FROM users WHERE auth_provider_id = auth.uid()::text
+    )
+  );
+
+CREATE POLICY receivers_modify_own ON receivers
+  FOR ALL USING (
+    user_id IN (
+      SELECT id FROM users WHERE auth_provider_id = auth.uid()::text
+    )
+  );
+
+-- Co-monitors can read receivers they were invited to
+CREATE POLICY receivers_read_co_monitor ON receivers
+  FOR SELECT USING (
+    id IN (
+      SELECT receiver_id FROM co_monitors
+      WHERE user_id IN (SELECT id FROM users WHERE auth_provider_id = auth.uid()::text)
+        AND accepted_at IS NOT NULL
+        AND revoked_at IS NULL
+    )
+  );
+
+-- Audit logs: users can read entries about themselves
+CREATE POLICY audit_logs_read_own ON audit_logs
+  FOR SELECT USING (
+    actor_id IN (SELECT id FROM users WHERE auth_provider_id = auth.uid()::text)
+    OR (entity_type = 'user' AND entity_id IN (SELECT id FROM users WHERE auth_provider_id = auth.uid()::text))
+  );
+-- No INSERT/UPDATE/DELETE policies on audit_logs for users; only the service role can write.
+```
+
+The backend connects using a **service role key** for system operations (which bypasses RLS) and a **user-scoped JWT** for any operation initiated by an end user. The service role key never leaves the backend.
+
+**Indexes for performance:**
+The Prisma `@@index` directives generate most needed indexes. Two additional ones to add manually:
+
+```sql
+-- Find pending check-ins ready to fire (heavy query, runs every minute)
+CREATE INDEX idx_checkins_pending_scheduled
+  ON check_ins (scheduled_at)
+  WHERE status = 'PENDING';
+
+-- Find active subscriptions (frequent join)
+CREATE INDEX idx_subscriptions_active
+  ON subscriptions (user_id)
+  WHERE status IN ('TRIALING', 'ACTIVE');
+```
+
+**Backup and retention:**
+- Supabase performs daily backups by default. Configure point-in-time recovery on the paid tier when launching publicly.
+- Soft-deleted users (`deleted_at IS NOT NULL`) are hard-deleted by a scheduled job after 30 days.
+- Audit logs are retained for 6 years per UAE/KSA requirements, then archived to cold storage and removed from primary DB.
+
+### 13.1.4 The CryptoService — application-layer encryption
+
+Encryption/decryption never happens in random places in the codebase. It happens in one place: the `CryptoService`. Every repository that touches encrypted columns calls this service.
+
+```typescript
+// apps/backend/src/shared/crypto/crypto.service.ts
+
+import { Injectable, Inject } from '@nestjs/common';
+import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
+
+@Injectable()
+export class CryptoService {
+  // Master key loaded from KMS at startup; never written to logs
+  private readonly masterKey: Buffer;
+
+  constructor(@Inject('KMS_MASTER_KEY') masterKey: Buffer) {
+    this.masterKey = masterKey;
+  }
+
+  /**
+   * Encrypts a plaintext string.
+   * Returns base64-encoded ciphertext containing IV, auth tag, and encrypted data.
+   */
+  encrypt(plaintext: string): string {
+    const iv = randomBytes(12); // 96-bit IV for GCM
+    const cipher = createCipheriv('aes-256-gcm', this.masterKey, iv);
+    const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    return Buffer.concat([iv, authTag, encrypted]).toString('base64');
+  }
+
+  /**
+   * Decrypts a base64-encoded ciphertext.
+   */
+  decrypt(ciphertext: string): string {
+    const buffer = Buffer.from(ciphertext, 'base64');
+    const iv = buffer.subarray(0, 12);
+    const authTag = buffer.subarray(12, 28);
+    const encrypted = buffer.subarray(28);
+    const decipher = createDecipheriv('aes-256-gcm', this.masterKey, iv);
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString('utf8');
+  }
+
+  /**
+   * Deterministic hash for lookup. Use ONLY on normalized values.
+   * Never use for passwords (use Argon2id for those).
+   */
+  hashForLookup(value: string): string {
+    return createHash('sha256').update(value).digest('hex');
+  }
+}
+```
+
+Phone number normalization (always before hashing or storing):
+```typescript
+import { parsePhoneNumber } from 'libphonenumber-js';
+
+function normalizePhone(input: string, defaultCountry?: string): string {
+  const parsed = parsePhoneNumber(input, defaultCountry as any);
+  if (!parsed?.isValid()) throw new Error('Invalid phone number');
+  return parsed.format('E.164'); // e.g., "+919876543210"
+}
+```
+
+Then in a repository:
+```typescript
+async createReceiver(input: CreateReceiverInput): Promise<Receiver> {
+  const normalizedPhone = normalizePhone(input.phone, input.countryCode);
+  return this.prisma.receiver.create({
+    data: {
+      userId: input.userId,
+      nameEncrypted: this.crypto.encrypt(input.name),
+      phoneEncrypted: this.crypto.encrypt(normalizedPhone),
+      phoneHash: this.crypto.hashForLookup(normalizedPhone),
+      // ... other fields
+    },
+  });
+}
+```
+
+The `Receiver` entity returned from the repository has decrypted values — decryption happens transparently in a Prisma middleware or in an explicit mapper, depending on the implementer's preference. The implementer should choose one approach and apply it consistently.
+
+### 13.1.5 Key management
+
+- **Development:** Master key stored in `.env.local` as base64. Never committed. Different per developer.
+- **Staging/Production:** Master key in AWS KMS (or Supabase Vault temporarily). Backend fetches the decryption key on startup using IAM role-based authentication.
+- **Rotation:** Plan for key rotation in Phase 2. The `IdempotencyKey` table includes a `keyVersion` field (to be added) so we can decrypt old data with old keys while encrypting new data with new keys.
+
+### 13.1.6 Migration strategy
+
+- All schema changes happen via Prisma migrations.
+- Migrations are reviewed and applied to staging before production.
+- Destructive migrations (DROP COLUMN, etc.) are forbidden in single-step migrations. Always use a two-phase rollout: deploy code that no longer reads the column, run a separate migration to drop it.
+- Every migration is tested by restoring the previous day's backup, applying the migration, and running the test suite.
+
+### 13.2 Glossary
+
+- **Sender:** The paying customer. Adds receivers, manages schedules.
+- **Receiver:** The person being checked on. Consents but does not pay or install.
+- **Backup contact:** Trusted person near the receiver who will physically check in if needed.
+- **Cascade:** The sequence of channel attempts when a check-in doesn't get a response.
+- **Tech profile:** WhatsApp, SMS, or voice-only — determines which channels reach a given receiver.
+- **Consent transcript:** The full record of how a receiver gave consent (channel, message, response).
+- **BSP:** Business Solution Provider for WhatsApp Business API (Twilio, 360dialog, etc.).
+- **TDRA:** UAE Telecommunications and Digital Government Regulatory Authority.
+- **CITC:** Saudi Arabia's Communications, Space and Technology Commission.
+- **DPDP:** India's Digital Personal Data Protection Act.
+- **PDPL:** Personal Data Protection Law (UAE has one, KSA has one).
+
+### 13.3 Open questions
+
+The following are questions that should be resolved during implementation but don't block the start of Phase 1:
+
+1. Should the consent flow include a brief audio explanation for voice-only receivers, or is the AI-spoken consent ask sufficient?
+2. What's the exact wording of the "REPORT" abuse flow in each language?
+3. Should backup contacts also have an opt-out mechanism, or are they presumed to have implicit consent because the sender knows them?
+4. What happens to the receiver's data when a sender's account is deleted? Anonymize, or full delete?
+5. What's the SLA for human-agent escalation in Phase 3? 5 minutes? 15? Affects staffing.
+6. Should we ever allow the receiver to *initiate* a check-in to the sender? (E.g., "I'm fine, you don't need to check today.") This would be a Phase 2 consideration.
+
+### 13.4 What is intentionally not in scope
+
+This BRD does not specify:
+- Pricing of any tier (handled separately by the product owner).
+- Marketing copy or growth strategy (handled separately).
+- Specific brand, logo, or visual design (handled by design team).
+- Detailed UI mockups (handled by design team; this BRD describes behavior, not pixels).
+- Hiring plan, organizational structure, or operations staffing.
+- Investor pitch material.
+
+These exclusions are deliberate. They keep this document focused on what must be built, why, and how — and only that.
+
+---
+
+*End of document. Total length: ~50 pages. This BRD should be read in full once before any code is written, then re-read by section as features are implemented. Updates to this BRD must be versioned, with the rationale for each change captured.*

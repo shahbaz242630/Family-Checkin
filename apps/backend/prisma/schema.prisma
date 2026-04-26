@@ -1,0 +1,346 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SubscriptionTier {
+  TIER_1
+  TIER_2
+  TIER_3
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  SUSPENDED
+}
+
+enum RelationshipType {
+  PARENT
+  GRANDPARENT
+  SIBLING
+  SPOUSE
+  CHILD
+  FRIEND
+  OTHER
+}
+
+enum TechProfile {
+  WHATSAPP
+  SMS
+  VOICE_ONLY
+}
+
+enum Channel {
+  WHATSAPP
+  SMS
+  VOICE
+}
+
+enum ConsentStatus {
+  PENDING
+  GRANTED
+  DECLINED
+  REVOKED
+}
+
+enum CheckInStatus {
+  PENDING
+  SENT
+  RESPONDED_OK
+  RESPONDED_HELP
+  ESCALATED
+  RESOLVED
+  FAILED
+  SKIPPED
+}
+
+enum EscalationResult {
+  SUCCESS
+  NO_RESPONSE
+  ERROR
+}
+
+enum AbuseReportStatus {
+  PENDING
+  REVIEWED_SAFE
+  REVIEWED_ACTION_TAKEN
+}
+
+enum ActorType {
+  USER
+  SYSTEM
+  ADMIN
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  OPERATOR
+  SUPPORT_READONLY
+}
+
+model User {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  emailEncrypted    String
+  emailHash         String    @unique
+  phoneEncrypted    String
+  phoneHash         String    @unique
+  country           String    @db.Char(2)
+  preferredLanguage String    @db.Char(5)
+  timezone          String
+  authProviderId    String?   @unique
+  stripeCustomerId  String?   @unique
+  telrCustomerId    String?   @unique
+  emailVerifiedAt   DateTime?
+  phoneVerifiedAt   DateTime?
+  deletedAt         DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  receivers      Receiver[]
+  subscriptions  Subscription[]
+  coMonitorships CoMonitor[]  @relation("CoMonitorUser")
+
+  @@index([emailHash])
+  @@index([phoneHash])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model Receiver {
+  id                    String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                String        @db.Uuid
+  nameEncrypted         String
+  phoneEncrypted        String
+  phoneHash             String
+  countryCode           String        @db.Char(2)
+  relationshipType      RelationshipType
+  language              String        @db.Char(5)
+  timezone              String
+  techProfile           TechProfile
+  primaryChannel        Channel
+  fallbackChannels      Channel[]
+  scheduleFrequency     String
+  scheduleTimeWindow    Json
+  scheduleCustomCron    String?
+  personalNoteEncrypted String?
+  consentStatus         ConsentStatus @default(PENDING)
+  consentRequestedAt    DateTime?
+  consentGrantedAt      DateTime?
+  consentRevokedAt      DateTime?
+  consentTranscript     String?
+  pausedUntil           DateTime?
+  pausedReason          String?
+  deletedAt             DateTime?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  backupContacts BackupContact[]
+  checkIns       CheckIn[]
+  abuseReports   AbuseReport[]
+  coMonitors     CoMonitor[]
+  optOutCooldown OptOutCooldown?
+
+  @@index([userId])
+  @@index([phoneHash])
+  @@index([consentStatus])
+  @@index([deletedAt])
+  @@map("receivers")
+}
+
+model BackupContact {
+  id                            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiverId                    String   @db.Uuid
+  nameEncrypted                 String
+  phoneEncrypted                String
+  phoneHash                     String
+  relationshipToReceiver        String
+  locationInstructionsEncrypted String?
+  priorityOrder                 Int      @default(0)
+  deletedAt                     DateTime?
+  createdAt                     DateTime @default(now())
+
+  receiver Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([receiverId])
+  @@map("backup_contacts")
+}
+
+model CoMonitor {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiverId      String    @db.Uuid
+  userId          String    @db.Uuid
+  invitedByUserId String    @db.Uuid
+  acceptedAt      DateTime?
+  revokedAt       DateTime?
+  createdAt       DateTime  @default(now())
+
+  receiver Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+  user     User     @relation("CoMonitorUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([receiverId, userId])
+  @@index([userId])
+  @@map("co_monitors")
+}
+
+model CheckIn {
+  id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiverId         String        @db.Uuid
+  scheduledAt        DateTime
+  status             CheckInStatus @default(PENDING)
+  channelUsed        Channel?
+  sentAt             DateTime?
+  respondedAt        DateTime?
+  responseTranscript String?
+  responseDetectedAs String?
+  resolvedAt         DateTime?
+  resolutionNote     String?
+  resolutionByUserId String?       @db.Uuid
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  receiver    Receiver          @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+  escalations EscalationEvent[]
+
+  @@index([receiverId, scheduledAt])
+  @@index([status])
+  @@index([scheduledAt])
+  @@map("check_ins")
+}
+
+model EscalationEvent {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkInId        String            @db.Uuid
+  attemptNumber    Int
+  channel          Channel
+  startedAt        DateTime          @default(now())
+  completedAt      DateTime?
+  result           EscalationResult?
+  errorDetails     String?
+  senderNotifiedAt DateTime?
+  backupAlertedAt  DateTime?
+
+  checkIn CheckIn @relation(fields: [checkInId], references: [id], onDelete: Cascade)
+
+  @@index([checkInId])
+  @@map("escalation_events")
+}
+
+model Subscription {
+  id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                 String             @db.Uuid
+  tier                   SubscriptionTier
+  status                 SubscriptionStatus
+  paymentProvider        String
+  externalSubscriptionId String             @unique
+  trialEndsAt            DateTime?
+  currentPeriodStart     DateTime
+  currentPeriodEnd       DateTime
+  canceledAt             DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@map("subscriptions")
+}
+
+model AuditLog {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  entityType String
+  entityId   String    @db.Uuid
+  action     String
+  actorType  ActorType
+  actorId    String?   @db.Uuid
+  metadata   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime  @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@index([actorId])
+  @@map("audit_logs")
+}
+
+model AbuseReport {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiverId        String            @db.Uuid
+  reporterPhoneHash String
+  reportContent     String?
+  reportedAt        DateTime          @default(now())
+  reviewStatus      AbuseReportStatus @default(PENDING)
+  reviewerAdminId   String?           @db.Uuid
+  reviewNote        String?
+  reviewedAt        DateTime?
+
+  receiver Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([reviewStatus])
+  @@index([receiverId])
+  @@map("abuse_reports")
+}
+
+model OptOutCooldown {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiverId    String   @unique @db.Uuid
+  optOutAt      DateTime
+  cooldownUntil DateTime
+  optOutChannel Channel
+  optOutKeyword String?
+
+  receiver Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([cooldownUntil])
+  @@map("opt_out_cooldowns")
+}
+
+model AdminUser {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  authProviderId String    @unique
+  emailEncrypted String
+  emailHash      String    @unique
+  role           AdminRole
+  active         Boolean   @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@map("admin_users")
+}
+
+model ChannelTemplate {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  templateKey String
+  language    String   @db.Char(5)
+  channel     Channel
+  externalId  String?
+  bodyText    String
+  variables   String[]
+  approvedAt  DateTime?
+  active      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([templateKey, language, channel])
+  @@map("channel_templates")
+}
+
+model IdempotencyKey {
+  key          String   @id
+  userId       String?  @db.Uuid
+  scope        String
+  responseBody Json?
+  statusCode   Int?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
