@@ -485,6 +485,12 @@ Generated build output:
 
 ## Git / Working Tree Notes
 
+Project git workflow:
+
+- This is a solo project; commit directly to `master` unless the user explicitly asks for a separate branch.
+- After completing a task and updating this handoff, commit the intended changes and push `master` to GitHub.
+- Still inspect `git status`, avoid committing ignored/local secret files, and keep generated `apps/backend/dist` out of source control.
+
 Pre-existing user/local changes before restructure:
 
 - `.claude/settings.local.json`
