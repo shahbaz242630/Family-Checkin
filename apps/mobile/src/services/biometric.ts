@@ -1,9 +1,11 @@
 // Biometric authentication service (Face ID / Fingerprint)
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 
 const BIOMETRIC_ENABLED_KEY = 'biometric_enabled';
 const BIOMETRIC_USER_ID_KEY = 'biometric_user_id';
+const isWebRuntime = Platform.OS === 'web' || typeof window !== 'undefined';
 
 export type BiometricType = 'fingerprint' | 'facial' | 'iris' | 'none';
 
@@ -19,6 +21,9 @@ export interface BiometricStatus {
  */
 export async function isBiometricAvailable(): Promise<boolean> {
   try {
+    if (isWebRuntime) {
+      return false;
+    }
     const compatible = await LocalAuthentication.hasHardwareAsync();
     return compatible;
   } catch (error) {
@@ -32,6 +37,9 @@ export async function isBiometricAvailable(): Promise<boolean> {
  */
 export async function isBiometricEnrolled(): Promise<boolean> {
   try {
+    if (isWebRuntime) {
+      return false;
+    }
     const enrolled = await LocalAuthentication.isEnrolledAsync();
     return enrolled;
   } catch (error) {
@@ -45,6 +53,9 @@ export async function isBiometricEnrolled(): Promise<boolean> {
  */
 export async function getBiometricType(): Promise<BiometricType> {
   try {
+    if (isWebRuntime) {
+      return 'none';
+    }
     const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
 
     if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
@@ -84,6 +95,9 @@ export function getBiometricName(type: BiometricType): string {
  */
 export async function isBiometricEnabled(): Promise<boolean> {
   try {
+    if (isWebRuntime) {
+      return false;
+    }
     const enabled = await SecureStore.getItemAsync(BIOMETRIC_ENABLED_KEY);
     return enabled === 'true';
   } catch (error) {
@@ -97,6 +111,9 @@ export async function isBiometricEnabled(): Promise<boolean> {
  */
 export async function enableBiometric(userId: string): Promise<boolean> {
   try {
+    if (isWebRuntime) {
+      return false;
+    }
     await SecureStore.setItemAsync(BIOMETRIC_ENABLED_KEY, 'true');
     await SecureStore.setItemAsync(BIOMETRIC_USER_ID_KEY, userId);
     return true;
@@ -111,6 +128,9 @@ export async function enableBiometric(userId: string): Promise<boolean> {
  */
 export async function disableBiometric(): Promise<boolean> {
   try {
+    if (isWebRuntime) {
+      return true;
+    }
     await SecureStore.deleteItemAsync(BIOMETRIC_ENABLED_KEY);
     await SecureStore.deleteItemAsync(BIOMETRIC_USER_ID_KEY);
     return true;
@@ -125,6 +145,9 @@ export async function disableBiometric(): Promise<boolean> {
  */
 export async function getBiometricUserId(): Promise<string | null> {
   try {
+    if (isWebRuntime) {
+      return null;
+    }
     return await SecureStore.getItemAsync(BIOMETRIC_USER_ID_KEY);
   } catch (error) {
     console.error('Error getting biometric user ID:', error);

@@ -7,6 +7,7 @@ import type { Database } from './database.types';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+const isWebRuntime = Platform.OS === 'web' || typeof window !== 'undefined';
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
@@ -33,20 +34,20 @@ function removeWebStorageItem(key: string): void {
 
 const authStorage = {
   async getItem(key: string) {
-    if (Platform.OS === 'web') {
+    if (isWebRuntime) {
       return getWebStorageItem(key);
     }
     return await SecureStore.getItemAsync(key);
   },
   async setItem(key: string, value: string) {
-    if (Platform.OS === 'web') {
+    if (isWebRuntime) {
       setWebStorageItem(key, value);
       return;
     }
     await SecureStore.setItemAsync(key, value);
   },
   async removeItem(key: string) {
-    if (Platform.OS === 'web') {
+    if (isWebRuntime) {
       removeWebStorageItem(key);
       return;
     }

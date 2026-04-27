@@ -905,6 +905,18 @@ Backend full suite passed: 20 test files, 65 tests.
 
 `apps/backend/dist` was removed after build verification to keep the working tree clean.
 
+Hotfix - 2026-04-27:
+
+- Fixed Expo Web crash:
+  - error was `ExpoSecureStore.default.getValueWithKeyAsync is not a function`
+  - root cause was Supabase auth storage falling through to native `expo-secure-store` in the web runtime
+  - `apps/mobile/src/services/supabase.ts` now treats browser runtime as web storage even when `Platform.OS` is not enough
+  - `apps/mobile/src/services/biometric.ts` now returns unavailable/no-op results on web instead of calling native SecureStore or LocalAuthentication
+- Verification:
+  - `npm.cmd --prefix apps/mobile run type-check` passed
+  - reloaded `http://localhost:8081/` in the in-app browser
+  - fresh browser error log after reload had `0` SecureStore / `getValueWithKeyAsync` errors
+
 - Receiver cards:
   - pending consent
   - accepted / active
