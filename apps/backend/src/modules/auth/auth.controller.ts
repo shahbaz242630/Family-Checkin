@@ -1,11 +1,13 @@
-import { Controller, Headers, Post, UnauthorizedException } from '@nestjs/common';
+import { Controller, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
 import { SupabaseAuthService } from './supabase-auth.service';
 
 @Controller('auth')
 export class AuthController {
   constructor(
+    @Inject(SupabaseAuthService)
     private readonly supabaseAuthService: SupabaseAuthService,
+    @Inject(UsersService)
     private readonly usersService: UsersService,
   ) {}
 

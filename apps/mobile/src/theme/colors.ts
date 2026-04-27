@@ -34,6 +34,7 @@ export const colors = {
   // Semantic
   success: '#4CAF50',
   warning: '#FF9800',
+  warningLight: '#FFF3E0',
   error: '#F44336',
   info: '#2196F3',
 

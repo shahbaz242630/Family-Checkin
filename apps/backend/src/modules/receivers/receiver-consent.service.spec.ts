@@ -1,11 +1,11 @@
-import { ActorType, Channel, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
+import { AbuseReportStatus, ActorType, Channel, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import { FakeChannelProvider } from '../channels/fake-channel.provider';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
-import type { CreateReceiverRecordInput, ReceiverRecord, ReceiversRepository } from './receivers.repository';
+import type { CreateReceiverRecordInput, ReceiverRecord, ReceiversRepository, UpdateReceiverRecordInput } from './receivers.repository';
 import { ReceiverConsentService } from './receiver-consent.service';
 
 const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
@@ -15,6 +15,35 @@ class InMemoryReceiversRepository implements ReceiversRepository {
 
   async create(input: CreateReceiverRecordInput): Promise<ReceiverRecord> {
     return this.record(input);
+  }
+
+  async findActiveByPhoneHash(_phoneHash: string): Promise<ReceiverRecord | null> {
+    return null;
+  }
+
+  async findManyForUser(_userId: string): Promise<ReceiverRecord[]> {
+    return [];
+  }
+
+  async findForUserById(_input: { userId: string; receiverId: string }): Promise<ReceiverRecord | null> {
+    return null;
+  }
+
+  async updateForUserById(_input: UpdateReceiverRecordInput): Promise<ReceiverRecord | null> {
+    return null;
+  }
+
+  async pauseForUserById(_input: {
+    userId: string;
+    receiverId: string;
+    pausedUntil: Date;
+    pausedReason: string;
+  }): Promise<ReceiverRecord | null> {
+    return null;
+  }
+
+  async resumeForUserById(_input: { userId: string; receiverId: string }): Promise<ReceiverRecord | null> {
+    return null;
   }
 
   async markConsentRequested(input: {
@@ -27,6 +56,53 @@ class InMemoryReceiversRepository implements ReceiversRepository {
       ...receiverFixture(new CryptoService(masterKey)),
       consentRequestedAt: input.consentRequestedAt,
       consentTranscript: input.consentTranscript,
+    };
+  }
+
+  async updateConsentResponse(input: {
+    receiverId: string;
+    consentStatus: ConsentStatus;
+    consentTranscript: string;
+    consentGrantedAt?: Date;
+    consentRevokedAt?: Date;
+  }): Promise<ReceiverRecord> {
+    return {
+      ...receiverFixture(new CryptoService(masterKey)),
+      id: input.receiverId,
+      consentStatus: input.consentStatus,
+      consentTranscript: input.consentTranscript,
+      consentGrantedAt: input.consentGrantedAt,
+      consentRevokedAt: input.consentRevokedAt,
+    };
+  }
+
+  async upsertOptOutCooldown(_input: {
+    receiverId: string;
+    optOutAt: Date;
+    cooldownUntil: Date;
+    optOutChannel: Channel;
+    optOutKeyword?: string;
+  }): Promise<void> {}
+
+  async createAbuseReport(input: {
+    receiverId: string;
+    reporterPhoneHash: string;
+    reportContent?: string;
+    reportedAt: Date;
+  }): Promise<{ id: string; receiverId: string; reviewStatus: AbuseReportStatus; reportedAt: Date }> {
+    return {
+      id: 'abuse-report-1',
+      receiverId: input.receiverId,
+      reviewStatus: AbuseReportStatus.PENDING,
+      reportedAt: input.reportedAt,
+    };
+  }
+
+  async pauseForAbuseReview(input: { receiverId: string; pausedReason: string }): Promise<ReceiverRecord> {
+    return {
+      ...receiverFixture(new CryptoService(masterKey)),
+      id: input.receiverId,
+      pausedReason: input.pausedReason,
     };
   }
 

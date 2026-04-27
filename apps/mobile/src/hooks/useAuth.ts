@@ -25,6 +25,7 @@ interface UseAuthReturn {
   signInApple: () => Promise<boolean>;
   signOut: () => Promise<void>;
   forgotPassword: (email: string) => Promise<boolean>;
+  resetPassword: (email: string) => Promise<boolean>;
   clearError: () => void;
 }
 
@@ -179,6 +180,7 @@ export function useAuth(): UseAuthReturn {
     signInApple,
     signOut,
     forgotPassword,
+    resetPassword: forgotPassword,
     clearError,
   };
 }

@@ -55,6 +55,27 @@ CREATE POLICY receivers_read_co_monitor ON receivers
     )
   );
 
+CREATE POLICY check_ins_read_own ON check_ins
+  FOR SELECT USING (
+    "receiverId" IN (
+      SELECT receivers.id
+      FROM receivers
+      WHERE receivers."userId" IN (
+        SELECT users.id FROM users WHERE users."authProviderId" = auth.uid()::text
+      )
+    )
+  );
+
+CREATE POLICY check_ins_read_co_monitor ON check_ins
+  FOR SELECT USING (
+    "receiverId" IN (
+      SELECT "receiverId" FROM co_monitors
+      WHERE "userId" IN (SELECT id FROM users WHERE "authProviderId" = auth.uid()::text)
+        AND "acceptedAt" IS NOT NULL
+        AND "revokedAt" IS NULL
+    )
+  );
+
 CREATE POLICY audit_logs_read_own ON audit_logs
   FOR SELECT USING (
     "actorId" IN (SELECT id FROM users WHERE "authProviderId" = auth.uid()::text)

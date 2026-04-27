@@ -1,7 +1,7 @@
 // User data service - export, delete data, delete account
 // Uses Edge Functions for server-side operations
 import { supabase } from './supabase';
-import * as FileSystem from 'expo-file-system';
+import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 
 export interface UserDataExport {
@@ -47,15 +47,15 @@ export async function downloadUserData(): Promise<boolean> {
     if (!data) return false;
 
     const fileName = `family-checkin-data-${new Date().toISOString().split('T')[0]}.json`;
-    const filePath = `${FileSystem.documentDirectory}${fileName}`;
+    const file = new File(Paths.document, fileName);
 
-    // Write JSON to file
-    await FileSystem.writeAsStringAsync(filePath, JSON.stringify(data, null, 2));
+    file.create({ overwrite: true });
+    file.write(JSON.stringify(data, null, 2));
 
     // Check if sharing is available
     const isAvailable = await Sharing.isAvailableAsync();
     if (isAvailable) {
-      await Sharing.shareAsync(filePath, {
+      await Sharing.shareAsync(file.uri, {
         mimeType: 'application/json',
         dialogTitle: 'Export Your Data',
       });

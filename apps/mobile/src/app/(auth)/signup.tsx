@@ -15,6 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { SocialButton, TextInput, Button, Divider } from '../../components/auth';
 import { useAuth } from '../../hooks/useAuth';
+import { syncAuthenticatedUser } from '../../services';
 
 export default function SignupScreen() {
   const router = useRouter();
@@ -63,8 +64,12 @@ export default function SignupScreen() {
 
     const success = await signUp(email, password, fullName);
     if (success) {
-      // New users go to onboarding
-      router.replace('/(onboarding)/trial-welcome');
+      try {
+        await syncAuthenticatedUser();
+      } catch {
+        // Email confirmation flows may not return a session immediately.
+      }
+      router.replace('/onboarding');
     }
   };
 

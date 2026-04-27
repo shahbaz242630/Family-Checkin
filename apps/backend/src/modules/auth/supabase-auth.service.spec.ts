@@ -59,4 +59,26 @@ describe('SupabaseAuthService', () => {
 
     await expect(service.verifyAccessToken('bad-token')).rejects.toThrow('Invalid Supabase access token');
   });
+
+  it('uses phone metadata when Supabase Auth phone is empty for email-password users', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'supabase-user-123',
+        email: 'sender@example.com',
+        phone: '',
+        user_metadata: {
+          phone: '+971501234567',
+          country: 'AE',
+          preferred_language: 'en',
+          timezone: 'Asia/Dubai',
+        },
+      }),
+    });
+    const service = new SupabaseAuthService(config, fetchMock);
+
+    const identity = await service.verifyAccessToken('access-token');
+
+    expect(identity.phone).toBe('+971501234567');
+  });
 });

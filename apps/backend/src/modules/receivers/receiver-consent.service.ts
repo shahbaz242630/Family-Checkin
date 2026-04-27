@@ -18,8 +18,11 @@ export interface RequestReceiverConsentInput {
 export class ReceiverConsentService {
   constructor(
     @Inject(RECEIVERS_REPOSITORY) private readonly receiversRepository: ReceiversRepository,
+    @Inject(CryptoService)
     private readonly cryptoService: CryptoService,
+    @Inject(ChannelRouterService)
     private readonly channelRouter: ChannelRouterService,
+    @Inject(AuditService)
     private readonly auditService: AuditService,
     private readonly now: () => Date = () => new Date(),
   ) {}

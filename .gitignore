@@ -75,6 +75,11 @@ packages/*/.env.*
 *sms*secret*
 channel-credentials.*
 provider-credentials.*
+*Credentials*.xlsx
+Credentials
+Credentials.*
+*Credentials*
+~$*
 
 # TypeScript
 *.tsbuildinfo

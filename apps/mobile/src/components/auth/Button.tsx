@@ -1,5 +1,5 @@
 // Primary button component for auth forms
-import { Pressable, Text, StyleSheet, ActivityIndicator } from 'react-native';
+import { Pressable, Text, StyleSheet, ActivityIndicator, type StyleProp, type ViewStyle } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 
 interface ButtonProps {
@@ -8,6 +8,7 @@ interface ButtonProps {
   loading?: boolean;
   disabled?: boolean;
   variant?: 'primary' | 'secondary' | 'text';
+  style?: StyleProp<ViewStyle>;
 }
 
 export function Button({
@@ -16,6 +17,7 @@ export function Button({
   loading = false,
   disabled = false,
   variant = 'primary',
+  style,
 }: ButtonProps) {
   const isDisabled = disabled || loading;
 
@@ -28,6 +30,7 @@ export function Button({
         variant === 'text' && styles.textButton,
         isDisabled && variant === 'primary' && styles.primaryDisabled,
         isDisabled && variant === 'secondary' && styles.secondaryDisabled,
+        style,
       ]}
       onPress={onPress}
       disabled={isDisabled}

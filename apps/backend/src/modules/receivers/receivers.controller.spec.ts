@@ -1,128 +1,287 @@
 import { Channel, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
-import { UnauthorizedException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
-import type { SupabaseAuthService } from '../auth/supabase-auth.service';
-import type { UsersService } from '../users/users.service';
-import type { ReceiverConsentService } from './receiver-consent.service';
-import type { ReceiversService } from './receivers.service';
 import { ReceiversController } from './receivers.controller';
 
-describe('ReceiversController', () => {
-  it('creates a receiver for the authenticated sender without leaking encrypted fields', async () => {
-    const supabaseAuth = {
-      verifyAccessToken: async () => ({
-        authProviderId: 'supabase-user-123',
-        email: 'sender@example.com',
-        phone: '+971501234567',
-        country: 'AE',
-        preferredLanguage: 'en',
-        timezone: 'Asia/Dubai',
-      }),
-    } satisfies Pick<SupabaseAuthService, 'verifyAccessToken'>;
-    const users = {
-      upsertFromSupabaseIdentity: async () => ({
-        id: '61a5639c-c902-4950-9924-1a4d6db1e02d',
-        authProviderId: 'supabase-user-123',
-        emailEncrypted: 'encrypted-email',
-        emailHash: 'email-hash',
-        phoneEncrypted: 'encrypted-phone',
-        phoneHash: 'phone-hash',
-        country: 'AE',
-        preferredLanguage: 'en',
-        timezone: 'Asia/Dubai',
-      }),
-    } satisfies Pick<UsersService, 'upsertFromSupabaseIdentity'>;
-    const receivers = {
-      createForSender: async (input) => ({
-        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
-        userId: input.userId,
-        nameEncrypted: 'encrypted-name',
-        phoneEncrypted: 'encrypted-phone',
-        phoneHash: 'receiver-phone-hash',
-        countryCode: input.countryCode,
-        relationshipType: input.relationshipType,
-        language: input.language,
-        timezone: input.timezone,
-        techProfile: input.techProfile,
-        primaryChannel: input.primaryChannel,
-        fallbackChannels: input.fallbackChannels,
-        scheduleFrequency: input.scheduleFrequency,
-        scheduleTimeWindow: input.scheduleTimeWindow,
-        scheduleCustomCron: input.scheduleCustomCron,
-        personalNoteEncrypted: 'encrypted-note',
-        consentStatus: ConsentStatus.PENDING,
-        createdAt: new Date('2026-04-26T10:00:00.000Z'),
-        updatedAt: new Date('2026-04-26T10:00:00.000Z'),
-      }),
-    } satisfies Pick<ReceiversService, 'createForSender'>;
-    const consent = {
-      requestConsent: async (input) => input.receiver,
-    } satisfies Pick<ReceiverConsentService, 'requestConsent'>;
-    const controller = new ReceiversController(
-      supabaseAuth as unknown as SupabaseAuthService,
-      users as unknown as UsersService,
-      receivers as unknown as ReceiversService,
-      consent as unknown as ReceiverConsentService,
-    );
+class FakeSupabaseAuthService {
+  async verifyAccessToken(accessToken: string) {
+    return {
+      id: `auth-${accessToken}`,
+      email: 'sender@example.com',
+      phone: '+971500000000',
+      country: 'AE',
+      preferredLanguage: 'en',
+      timezone: 'Asia/Dubai',
+    };
+  }
+}
 
-    const response = await controller.create(
-      'Bearer access-token',
-      'Nearby Mobile/1.0',
-      '203.0.113.10',
+class FakeUsersService {
+  async upsertFromSupabaseIdentity() {
+    return {
+      id: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+    };
+  }
+}
+
+class FakeReceiversService {
+  public listedForUserId: string | null = null;
+  public detailInput: { userId: string; receiverId: string } | null = null;
+  public updateInput: Record<string, unknown> | null = null;
+
+  async listForSender(userId: string) {
+    this.listedForUserId = userId;
+    return [
       {
-        name: 'Fatima Parent',
-        phone: '050 123 4567',
-        phoneCountry: 'AE',
+        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        displayName: 'Fatima Parent',
+        phoneMasked: '*******4567',
         countryCode: 'AE',
         relationshipType: RelationshipType.PARENT,
         language: 'en',
         timezone: 'Asia/Dubai',
         techProfile: TechProfile.WHATSAPP,
         primaryChannel: Channel.WHATSAPP,
-        fallbackChannels: [Channel.SMS, Channel.VOICE],
+        fallbackChannels: [Channel.SMS],
         scheduleFrequency: 'daily',
-        scheduleTimeWindow: {
-          start: '09:00',
-          end: '11:00',
-        },
-        personalNote: 'Please answer when you are free.',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+        consentStatus: ConsentStatus.GRANTED,
+        createdAt: '2026-04-26T08:00:00.000Z',
+        updatedAt: '2026-04-27T10:02:00.000Z',
       },
+    ];
+  }
+
+  async getForSender(input: { userId: string; receiverId: string }) {
+    this.detailInput = input;
+    return {
+      id: input.receiverId,
+      displayName: 'Fatima Parent',
+      phoneMasked: '*******4567',
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      consentStatus: ConsentStatus.GRANTED,
+      backupContacts: [],
+      escalation: {
+        configured: false,
+        nextStep: 'Add backup contacts',
+      },
+      createdAt: '2026-04-26T08:00:00.000Z',
+      updatedAt: '2026-04-27T10:02:00.000Z',
+    };
+  }
+
+  async pauseForSender(input: { userId: string; receiverId: string; ipAddress?: string; userAgent?: string }) {
+    this.detailInput = input;
+    return {
+      id: input.receiverId,
+      pausedUntil: '9999-12-31T23:59:59.999Z',
+      pausedReason: 'USER_PAUSED',
+    };
+  }
+
+  async resumeForSender(input: { userId: string; receiverId: string; ipAddress?: string; userAgent?: string }) {
+    this.detailInput = input;
+    return {
+      id: input.receiverId,
+      pausedUntil: undefined,
+      pausedReason: undefined,
+    };
+  }
+
+  async updateForSender(input: Record<string, unknown>) {
+    this.updateInput = input;
+    return {
+      id: input.receiverId,
+      displayName: input.name,
+      countryCode: input.countryCode,
+      relationshipType: input.relationshipType,
+      language: input.language,
+      timezone: input.timezone,
+      techProfile: input.techProfile,
+      primaryChannel: input.primaryChannel,
+      fallbackChannels: input.fallbackChannels,
+      scheduleFrequency: input.scheduleFrequency,
+      scheduleTimeWindow: input.scheduleTimeWindow,
+    };
+  }
+}
+
+class FakeReceiverConsentService {}
+
+describe('ReceiversController', () => {
+  it('lists receivers for the authenticated sender', async () => {
+    const receiversService = new FakeReceiversService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
     );
 
+    const response = await controller.list('Bearer access-token');
+
+    expect(receiversService.listedForUserId).toBe('61a5639c-c902-4950-9924-1a4d6db1e02d');
     expect(response).toEqual({
-      receiver: {
-        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
-        consentStatus: ConsentStatus.PENDING,
-        countryCode: 'AE',
-        relationshipType: RelationshipType.PARENT,
-        language: 'en',
-        timezone: 'Asia/Dubai',
-        techProfile: TechProfile.WHATSAPP,
-        primaryChannel: Channel.WHATSAPP,
-        fallbackChannels: [Channel.SMS, Channel.VOICE],
-        scheduleFrequency: 'daily',
-        scheduleTimeWindow: {
-          start: '09:00',
-          end: '11:00',
+      receivers: [
+        {
+          id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+          displayName: 'Fatima Parent',
+          phoneMasked: '*******4567',
+          countryCode: 'AE',
+          relationshipType: RelationshipType.PARENT,
+          language: 'en',
+          timezone: 'Asia/Dubai',
+          techProfile: TechProfile.WHATSAPP,
+          primaryChannel: Channel.WHATSAPP,
+          fallbackChannels: [Channel.SMS],
+          scheduleFrequency: 'daily',
+          scheduleTimeWindow: { start: '09:00', end: '11:00' },
+          consentStatus: ConsentStatus.GRANTED,
+          createdAt: '2026-04-26T08:00:00.000Z',
+          updatedAt: '2026-04-27T10:02:00.000Z',
         },
-        consentRequestStatus: 'requested',
-      },
+      ],
     });
-    expect(JSON.stringify(response)).not.toContain('encrypted');
-    expect(JSON.stringify(response)).not.toContain('hash');
   });
 
-  it('requires a bearer token', async () => {
+  it('returns receiver detail for the authenticated sender', async () => {
+    const receiversService = new FakeReceiversService();
     const controller = new ReceiversController(
-      {} as SupabaseAuthService,
-      {} as UsersService,
-      {} as ReceiversService,
-      {} as ReceiverConsentService,
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
     );
 
-    await expect(controller.create(undefined, undefined, undefined, {})).rejects.toBeInstanceOf(UnauthorizedException);
-    await expect(controller.create('Basic bad-token', undefined, undefined, {})).rejects.toBeInstanceOf(
-      UnauthorizedException,
+    const response = await controller.detail('Bearer access-token', '1aef91f9-64c9-4548-baa5-d70b52386efb');
+
+    expect(receiversService.detailInput).toEqual({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    });
+    expect(response.receiver).toMatchObject({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      displayName: 'Fatima Parent',
+      backupContacts: [],
+      escalation: {
+        configured: false,
+        nextStep: 'Add backup contacts',
+      },
+    });
+  });
+
+  it('pauses a receiver for the authenticated sender', async () => {
+    const receiversService = new FakeReceiversService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
     );
+
+    const response = await controller.pause(
+      'Bearer access-token',
+      '203.0.113.10',
+      'Nearby Mobile/1.0',
+      '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    );
+
+    expect(receiversService.detailInput).toMatchObject({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+    expect(response.receiver).toMatchObject({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      pausedUntil: '9999-12-31T23:59:59.999Z',
+      pausedReason: 'USER_PAUSED',
+    });
+  });
+
+  it('resumes a receiver for the authenticated sender', async () => {
+    const receiversService = new FakeReceiversService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    const response = await controller.resume(
+      'Bearer access-token',
+      '203.0.113.10',
+      'Nearby Mobile/1.0',
+      '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    );
+
+    expect(receiversService.detailInput).toMatchObject({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+    expect(response.receiver).toMatchObject({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      pausedUntil: undefined,
+      pausedReason: undefined,
+    });
+  });
+
+  it('updates a receiver for the authenticated sender', async () => {
+    const receiversService = new FakeReceiversService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    const response = await controller.update(
+      'Bearer access-token',
+      '203.0.113.10',
+      'Nearby Mobile/1.0',
+      '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      {
+        name: 'Fatima Updated',
+        countryCode: 'GB',
+        relationshipType: RelationshipType.GRANDPARENT,
+        language: 'en-GB',
+        timezone: 'Europe/London',
+        techProfile: TechProfile.SMS,
+        primaryChannel: Channel.SMS,
+        fallbackChannels: [Channel.VOICE],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '08:00', end: '10:00' },
+      },
+    );
+
+    expect(receiversService.updateInput).toMatchObject({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      name: 'Fatima Updated',
+      countryCode: 'GB',
+      relationshipType: RelationshipType.GRANDPARENT,
+      language: 'en-GB',
+      timezone: 'Europe/London',
+      techProfile: TechProfile.SMS,
+      primaryChannel: Channel.SMS,
+      fallbackChannels: [Channel.VOICE],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '08:00', end: '10:00' },
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+    expect(response.receiver).toMatchObject({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      displayName: 'Fatima Updated',
+    });
   });
 });

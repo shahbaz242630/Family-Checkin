@@ -1,85 +1,187 @@
 import { useState } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView } from 'react-native';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Button, TextInput } from '../../components/auth';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
-import type { RelationshipType } from '@shared/types';
+import {
+  createReceiver,
+  type BackendChannel,
+  type BackendRelationshipType,
+  type BackendTechProfile,
+  type ReceiverSetupInput,
+} from '../../services';
 
-const RELATIONSHIP_OPTIONS: { type: RelationshipType; label: string; icon: string }[] = [
-  { type: 'mother', label: 'Mother', icon: '👩' },
-  { type: 'father', label: 'Father', icon: '👨' },
-  { type: 'partner', label: 'Partner', icon: '💑' },
-  { type: 'child', label: 'Child', icon: '👶' },
-  { type: 'brother', label: 'Brother', icon: '👦' },
-  { type: 'sister', label: 'Sister', icon: '👧' },
-  { type: 'relative', label: 'Relative', icon: '👪' },
-  { type: 'other', label: 'Other', icon: '👤' },
+const relationshipOptions: Array<{ value: BackendRelationshipType; label: string }> = [
+  { value: 'PARENT', label: 'Parent' },
+  { value: 'GRANDPARENT', label: 'Grandparent' },
+  { value: 'SIBLING', label: 'Sibling' },
+  { value: 'SPOUSE', label: 'Spouse' },
+  { value: 'CHILD', label: 'Child' },
+  { value: 'FRIEND', label: 'Friend' },
+  { value: 'OTHER', label: 'Other' },
+];
+
+const profileOptions: Array<{
+  value: BackendTechProfile;
+  label: string;
+  primaryChannel: BackendChannel;
+  fallbackChannels: BackendChannel[];
+}> = [
+  { value: 'WHATSAPP', label: 'WhatsApp first', primaryChannel: 'WHATSAPP', fallbackChannels: ['SMS', 'VOICE'] },
+  { value: 'SMS', label: 'SMS first', primaryChannel: 'SMS', fallbackChannels: ['VOICE'] },
+  { value: 'VOICE_ONLY', label: 'Voice only', primaryChannel: 'VOICE', fallbackChannels: [] },
 ];
 
 export default function OnboardingScreen() {
   const router = useRouter();
-  const [selectedRelationship, setSelectedRelationship] = useState<RelationshipType | null>(null);
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [countryCode, setCountryCode] = useState('AE');
+  const [phoneCountry, setPhoneCountry] = useState('AE');
+  const [relationshipType, setRelationshipType] = useState<BackendRelationshipType>('PARENT');
+  const [language, setLanguage] = useState('en');
+  const [timezone, setTimezone] = useState('Asia/Dubai');
+  const [techProfile, setTechProfile] = useState<BackendTechProfile>('WHATSAPP');
+  const [windowStart, setWindowStart] = useState('09:00');
+  const [windowEnd, setWindowEnd] = useState('11:00');
+  const [personalNote, setPersonalNote] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleContinue = () => {
-    if (!selectedRelationship) return;
+  const selectedProfile = profileOptions.find((option) => option.value === techProfile) ?? profileOptions[0];
 
-    // TODO: Store selection and proceed to next step
-    console.log('Selected relationship:', selectedRelationship);
+  const handleSubmit = async () => {
+    if (!name.trim() || !phone.trim()) {
+      Alert.alert('Missing details', 'Receiver name and phone are required.');
+      return;
+    }
 
-    // For now, go to main app
-    router.replace('/(app)/home');
+    if (!selectedProfile) {
+      Alert.alert('Missing channel', 'Choose how we should reach this receiver.');
+      return;
+    }
+
+    const payload: ReceiverSetupInput = {
+      name: name.trim(),
+      phone: phone.trim(),
+      phoneCountry: phoneCountry.trim().toUpperCase(),
+      countryCode: countryCode.trim().toUpperCase(),
+      relationshipType,
+      language: language.trim(),
+      timezone: timezone.trim(),
+      techProfile,
+      primaryChannel: selectedProfile.primaryChannel,
+      fallbackChannels: selectedProfile.fallbackChannels,
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: {
+        start: windowStart.trim(),
+        end: windowEnd.trim(),
+      },
+      personalNote: personalNote.trim() || undefined,
+    };
+
+    setIsSubmitting(true);
+    try {
+      await createReceiver(payload);
+      router.replace('/(main)');
+    } catch (err) {
+      Alert.alert('Unable to add receiver', err instanceof Error ? err.message : 'Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Who do you want to check in on?</Text>
-          <Text style={styles.subtitle}>
-            Select the relationship type. You can add more people later.
-          </Text>
-        </View>
+      <KeyboardAvoidingView style={styles.keyboardView} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+          <View style={styles.header}>
+            <Text style={styles.title}>Add receiver</Text>
+            <Text style={styles.subtitle}>Consent will be requested before any check-ins begin.</Text>
+          </View>
 
-        <View style={styles.grid}>
-          {RELATIONSHIP_OPTIONS.map((option) => (
-            <Pressable
-              key={option.type}
-              style={[
-                styles.option,
-                selectedRelationship === option.type && styles.optionSelected,
-              ]}
-              onPress={() => setSelectedRelationship(option.type)}
-            >
-              <Text style={styles.optionIcon}>{option.icon}</Text>
-              <Text
-                style={[
-                  styles.optionLabel,
-                  selectedRelationship === option.type && styles.optionLabelSelected,
-                ]}
-              >
-                {option.label}
-              </Text>
-            </Pressable>
-          ))}
-        </View>
-      </ScrollView>
+          <View style={styles.form}>
+            <TextInput label="Receiver name" placeholder="Fatima Parent" value={name} onChangeText={setName} />
+            <TextInput
+              label="Receiver phone"
+              placeholder="+971501234567"
+              keyboardType="phone-pad"
+              value={phone}
+              onChangeText={setPhone}
+            />
 
-      <View style={styles.footer}>
-        <Pressable
-          style={[styles.button, !selectedRelationship && styles.buttonDisabled]}
-          onPress={handleContinue}
-          disabled={!selectedRelationship}
-        >
-          <Text style={styles.buttonText}>Continue</Text>
-        </Pressable>
+            <View style={styles.row}>
+              <View style={styles.rowItem}>
+                <TextInput label="Phone country" placeholder="AE" value={phoneCountry} onChangeText={setPhoneCountry} />
+              </View>
+              <View style={styles.rowItem}>
+                <TextInput label="Receiver country" placeholder="AE" value={countryCode} onChangeText={setCountryCode} />
+              </View>
+            </View>
 
-        <Pressable
-          style={styles.skipButton}
-          onPress={() => router.replace('/(app)/home')}
-        >
-          <Text style={styles.skipButtonText}>Skip for now</Text>
-        </Pressable>
-      </View>
+            <View>
+              <Text style={styles.fieldLabel}>Relationship</Text>
+              <View style={styles.optionGrid}>
+                {relationshipOptions.map((option) => (
+                  <Pressable
+                    key={option.value}
+                    style={[styles.option, relationshipType === option.value && styles.optionSelected]}
+                    onPress={() => setRelationshipType(option.value)}
+                  >
+                    <Text style={[styles.optionText, relationshipType === option.value && styles.optionTextSelected]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View>
+              <Text style={styles.fieldLabel}>Best channel</Text>
+              <View style={styles.optionStack}>
+                {profileOptions.map((option) => (
+                  <Pressable
+                    key={option.value}
+                    style={[styles.optionWide, techProfile === option.value && styles.optionSelected]}
+                    onPress={() => setTechProfile(option.value)}
+                  >
+                    <Text style={[styles.optionText, techProfile === option.value && styles.optionTextSelected]}>
+                      {option.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.row}>
+              <View style={styles.rowItem}>
+                <TextInput label="Language" placeholder="en" value={language} onChangeText={setLanguage} />
+              </View>
+              <View style={styles.rowItem}>
+                <TextInput label="Timezone" placeholder="Asia/Dubai" value={timezone} onChangeText={setTimezone} />
+              </View>
+            </View>
+
+            <View style={styles.row}>
+              <View style={styles.rowItem}>
+                <TextInput label="From" placeholder="09:00" value={windowStart} onChangeText={setWindowStart} />
+              </View>
+              <View style={styles.rowItem}>
+                <TextInput label="To" placeholder="11:00" value={windowEnd} onChangeText={setWindowEnd} />
+              </View>
+            </View>
+
+            <TextInput
+              label="Personal note"
+              placeholder="Optional message for the consent request"
+              value={personalNote}
+              onChangeText={setPersonalNote}
+            />
+
+            <Button title="Send consent request" onPress={handleSubmit} loading={isSubmitting} disabled={isSubmitting} />
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -89,77 +191,73 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  keyboardView: {
+    flex: 1,
+  },
   content: {
-    paddingHorizontal: spacing.lg,
-    paddingTop: spacing.xl,
+    padding: spacing.lg,
+    paddingBottom: spacing.xl,
   },
   header: {
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
   },
   title: {
-    fontSize: fontSize.xl,
-    fontWeight: 'bold',
     color: colors.text,
-    marginBottom: spacing.sm,
+    fontSize: fontSize.xl,
+    fontWeight: '700',
+    marginBottom: spacing.xs,
   },
   subtitle: {
-    fontSize: fontSize.md,
     color: colors.textSecondary,
+    fontSize: fontSize.md,
   },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
+  form: {
     gap: spacing.md,
   },
-  option: {
-    width: '47%',
-    backgroundColor: colors.backgroundSecondary,
-    borderRadius: borderRadius.lg,
-    padding: spacing.lg,
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
+  row: {
+    flexDirection: 'row',
+    gap: spacing.md,
   },
-  optionSelected: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryLight + '20',
+  rowItem: {
+    flex: 1,
   },
-  optionIcon: {
-    fontSize: 40,
+  fieldLabel: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
     marginBottom: spacing.sm,
   },
-  optionLabel: {
-    fontSize: fontSize.md,
-    fontWeight: '500',
-    color: colors.text,
+  optionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
   },
-  optionLabelSelected: {
-    color: colors.primary,
+  optionStack: {
+    gap: spacing.sm,
   },
-  footer: {
-    padding: spacing.lg,
-    gap: spacing.md,
-  },
-  button: {
-    backgroundColor: colors.primary,
-    paddingVertical: spacing.md,
-    borderRadius: borderRadius.lg,
-    alignItems: 'center',
-  },
-  buttonDisabled: {
-    backgroundColor: colors.disabled,
-  },
-  buttonText: {
-    color: colors.textOnPrimary,
-    fontSize: fontSize.lg,
-    fontWeight: '600',
-  },
-  skipButton: {
+  option: {
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
-    alignItems: 'center',
   },
-  skipButtonText: {
-    color: colors.textSecondary,
-    fontSize: fontSize.md,
+  optionWide: {
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    padding: spacing.md,
+  },
+  optionSelected: {
+    backgroundColor: colors.primaryLight + '20',
+    borderColor: colors.primary,
+  },
+  optionText: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: '500',
+  },
+  optionTextSelected: {
+    color: colors.primary,
   },
 });

@@ -39,14 +39,20 @@ export function useProfile(): UseProfileReturn {
       setLoading(true);
       setError(null);
 
-      const { data, error: fetchError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', user.id)
-        .single();
-
+      const { data, error: fetchError } = await supabase.auth.getUser();
       if (fetchError) throw fetchError;
-      setProfile(data);
+
+      const authUser = data.user;
+      setProfile({
+        id: authUser.id,
+        full_name: typeof authUser.user_metadata?.full_name === 'string' ? authUser.user_metadata.full_name : null,
+        avatar_url: typeof authUser.user_metadata?.avatar_url === 'string' ? authUser.user_metadata.avatar_url : null,
+        phone: authUser.phone ?? null,
+        timezone: typeof authUser.user_metadata?.timezone === 'string' ? authUser.user_metadata.timezone : 'Asia/Dubai',
+        language: typeof authUser.user_metadata?.language === 'string' ? authUser.user_metadata.language : 'en',
+        created_at: authUser.created_at,
+        updated_at: authUser.updated_at ?? authUser.created_at,
+      });
     } catch (err) {
       setError(err instanceof Error ? err : new Error('Failed to fetch profile'));
     } finally {
@@ -60,10 +66,15 @@ export function useProfile(): UseProfileReturn {
     try {
       setError(null);
 
-      const { error: updateError } = await supabase
-        .from('users')
-        .update({ ...updates, updated_at: new Date().toISOString() })
-        .eq('id', user.id);
+      const { error: updateError } = await supabase.auth.updateUser({
+        phone: updates.phone ?? undefined,
+        data: {
+          full_name: updates.full_name ?? profile?.full_name ?? undefined,
+          avatar_url: updates.avatar_url ?? profile?.avatar_url ?? undefined,
+          timezone: updates.timezone ?? profile?.timezone ?? undefined,
+          language: updates.language ?? profile?.language ?? undefined,
+        },
+      });
 
       if (updateError) throw updateError;
 

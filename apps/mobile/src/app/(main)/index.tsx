@@ -44,7 +44,7 @@ export default function DashboardScreen() {
             icon="👨‍👩‍👧‍👦"
             title="Add Loved One"
             subtitle="Connect with family"
-            onPress={() => router.push('/(main)/pairing')}
+            onPress={() => router.push('/(main)/receiver-setup')}
           />
           <QuickActionCard
             icon="✓"
@@ -80,7 +80,7 @@ export default function DashboardScreen() {
             </Text>
             <Pressable
               style={styles.statusButton}
-              onPress={() => router.push('/(main)/pairing')}
+              onPress={() => router.push('/(main)/receiver-setup')}
             >
               <Text style={styles.statusButtonText}>Get Started</Text>
             </Pressable>
@@ -103,6 +103,9 @@ function LovedOneCard({ lovedOne }: LovedOneCardProps) {
   const scheduleText = lovedOne.schedule
     ? `Daily at ${formatTime(lovedOne.schedule.time_local)}`
     : 'No schedule set';
+  const isPaused = Boolean(lovedOne.paused_reason || lovedOne.paused_until);
+  const statusText = formatReceiverStatus(lovedOne.consent_status, lovedOne.latest_check_in_status, isPaused);
+  const statusColor = receiverStatusColor(lovedOne.consent_status, lovedOne.latest_check_in_status, isPaused);
 
   // Get preferred channel
   const channels = lovedOne.preferred_channels;
@@ -117,7 +120,7 @@ function LovedOneCard({ lovedOne }: LovedOneCardProps) {
   return (
     <Pressable
       style={styles.lovedOneCard}
-      onPress={() => router.push('/(main)/loved-ones')}
+      onPress={() => router.push(`/(main)/receivers/${lovedOne.id}` as never)}
     >
       <View style={styles.lovedOneHeader}>
         <View style={styles.lovedOneAvatar}>
@@ -132,8 +135,8 @@ function LovedOneCard({ lovedOne }: LovedOneCardProps) {
           </Text>
         </View>
         <View style={styles.lovedOneStatus}>
-          <View style={[styles.statusDot, { backgroundColor: colors.success }]} />
-          <Text style={styles.statusText}>Active</Text>
+          <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
+          <Text style={styles.statusText}>{statusText}</Text>
         </View>
       </View>
 
@@ -187,6 +190,13 @@ function formatTime(time: string): string {
 
 function formatRelationship(type: string): string {
   const labels: Record<string, string> = {
+    PARENT: 'Parent',
+    GRANDPARENT: 'Grandparent',
+    SIBLING: 'Sibling',
+    SPOUSE: 'Spouse',
+    CHILD: 'Child',
+    FRIEND: 'Friend',
+    OTHER: 'Other',
     mother: 'Mother',
     father: 'Father',
     child: 'Child',
@@ -197,6 +207,25 @@ function formatRelationship(type: string): string {
     other: 'Other',
   };
   return labels[type] || type;
+}
+
+function formatReceiverStatus(consentStatus: string, latestCheckInStatus?: string, isPaused = false): string {
+  if (isPaused) return 'Paused';
+  if (consentStatus === 'PENDING') return 'Pending';
+  if (consentStatus === 'DECLINED') return 'Declined';
+  if (consentStatus === 'REVOKED') return 'Opted out';
+  if (latestCheckInStatus === 'RESPONDED_OK') return 'OK';
+  if (latestCheckInStatus === 'RESPONDED_HELP') return 'Needs help';
+  if (latestCheckInStatus === 'SENT') return 'Awaiting reply';
+  return 'Active';
+}
+
+function receiverStatusColor(consentStatus: string, latestCheckInStatus?: string, isPaused = false): string {
+  if (isPaused) return colors.warning;
+  if (latestCheckInStatus === 'RESPONDED_HELP') return colors.error;
+  if (consentStatus === 'PENDING' || latestCheckInStatus === 'SENT') return colors.warning;
+  if (consentStatus === 'DECLINED' || consentStatus === 'REVOKED') return colors.textLight;
+  return colors.success;
 }
 
 const styles = StyleSheet.create({

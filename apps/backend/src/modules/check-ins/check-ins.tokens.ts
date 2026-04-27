@@ -1,0 +1,1 @@
+export const CHECK_INS_REPOSITORY = Symbol('CHECK_INS_REPOSITORY');

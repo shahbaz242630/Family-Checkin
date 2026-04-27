@@ -2,6 +2,7 @@ import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
 import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
 import type { Database } from './database.types';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
@@ -11,14 +12,44 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
-const secureStorage = {
+function getWebStorageItem(key: string): string | null {
+  if (typeof localStorage === 'undefined') {
+    return null;
+  }
+  return localStorage.getItem(key);
+}
+
+function setWebStorageItem(key: string, value: string): void {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(key, value);
+  }
+}
+
+function removeWebStorageItem(key: string): void {
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem(key);
+  }
+}
+
+const authStorage = {
   async getItem(key: string) {
+    if (Platform.OS === 'web') {
+      return getWebStorageItem(key);
+    }
     return await SecureStore.getItemAsync(key);
   },
   async setItem(key: string, value: string) {
+    if (Platform.OS === 'web') {
+      setWebStorageItem(key, value);
+      return;
+    }
     await SecureStore.setItemAsync(key, value);
   },
   async removeItem(key: string) {
+    if (Platform.OS === 'web') {
+      removeWebStorageItem(key);
+      return;
+    }
     await SecureStore.deleteItemAsync(key);
   },
 };
@@ -26,17 +57,17 @@ const secureStorage = {
 const OAUTH_STATE_KEY = 'oauth_state';
 
 export async function setExpectedOAuthState(state: string): Promise<void> {
-  await SecureStore.setItemAsync(OAUTH_STATE_KEY, state);
+  await authStorage.setItem(OAUTH_STATE_KEY, state);
 }
 
 export async function clearExpectedOAuthState(): Promise<void> {
-  await SecureStore.deleteItemAsync(OAUTH_STATE_KEY);
+  await authStorage.removeItem(OAUTH_STATE_KEY);
 }
 
 async function consumeExpectedOAuthState(): Promise<string | null> {
-  const state = await SecureStore.getItemAsync(OAUTH_STATE_KEY);
+  const state = await authStorage.getItem(OAUTH_STATE_KEY);
   if (state) {
-    await SecureStore.deleteItemAsync(OAUTH_STATE_KEY);
+    await authStorage.removeItem(OAUTH_STATE_KEY);
   }
   return state;
 }
@@ -51,7 +82,7 @@ function isAllowedAuthRedirect(url: string): boolean {
 
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: secureStorage,
+    storage: authStorage,
     autoRefreshToken: true,
     persistSession: true,
     flowType: 'pkce',

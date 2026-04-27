@@ -1,11 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import type { SenderRecord, UpsertSenderRecordInput, UsersRepository } from './users.repository';
 
 @Injectable()
 export class PrismaUsersRepository implements UsersRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async upsertSenderByAuthProviderId(input: UpsertSenderRecordInput): Promise<SenderRecord> {
     const user = await this.prisma.user.upsert({

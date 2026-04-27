@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
 import { AppConfigService } from '../../shared/config/app-config.service';
 
 export interface SupabaseSenderIdentity {
@@ -15,6 +15,7 @@ interface SupabaseUserResponse {
   email?: unknown;
   phone?: unknown;
   user_metadata?: {
+    phone?: unknown;
     country?: unknown;
     preferred_language?: unknown;
     timezone?: unknown;
@@ -26,6 +27,7 @@ type Fetch = typeof fetch;
 @Injectable()
 export class SupabaseAuthService {
   constructor(
+    @Inject(AppConfigService)
     private readonly config: AppConfigService,
     private readonly fetchFn: Fetch = fetch,
   ) {}
@@ -53,14 +55,15 @@ export class SupabaseAuthService {
     if (typeof user.email !== 'string' || !user.email) {
       throw new UnauthorizedException('Supabase user is missing an email');
     }
-    if (typeof user.phone !== 'string' || !user.phone) {
+    const phone = this.stringMetadata(user.phone, this.stringMetadata(user.user_metadata?.phone, ''));
+    if (!phone) {
       throw new UnauthorizedException('Supabase user is missing a phone number');
     }
 
     return {
       authProviderId: user.id,
       email: user.email,
-      phone: user.phone,
+      phone,
       country: this.stringMetadata(user.user_metadata?.country, 'AE'),
       preferredLanguage: this.stringMetadata(user.user_metadata?.preferred_language, 'en'),
       timezone: this.stringMetadata(user.user_metadata?.timezone, 'Asia/Dubai'),

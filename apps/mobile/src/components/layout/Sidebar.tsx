@@ -12,7 +12,7 @@ const MENU_ITEMS = [
   { icon: '👨‍👩‍👧‍👦', label: 'Loved Ones', path: '/(main)/loved-ones' },
   { icon: '✓', label: 'Check-ins', path: '/(main)/check-ins' },
   { icon: '🔔', label: 'Escalations', path: '/(main)/escalations' },
-  { icon: '🔗', label: 'Add Loved One', path: '/(main)/pairing' },
+  { icon: '🔗', label: 'Add Loved One', path: '/(main)/receiver-setup' },
 ];
 
 export function Sidebar() {
