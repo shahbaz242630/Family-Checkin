@@ -54,6 +54,7 @@ interface ReceiversPrismaClient {
         scheduleCustomCron: string;
         pausedUntil: Date | null;
         pausedReason: string | null;
+        deletedAt: Date;
       }>;
     }): Promise<{ count: number }>;
   };
@@ -224,6 +225,26 @@ export class PrismaReceiversRepository implements ReceiversRepository {
     return result.count > 0 ? await this.findForUserById(input) : null;
   }
 
+  async deleteForUserById(input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverWithLatestCheckInRecord | null> {
+    const receiver = await this.findForUserById(input);
+    if (!receiver) {
+      return null;
+    }
+
+    const result = await this.prisma.receiver.updateMany({
+      where: {
+        id: input.receiverId,
+        userId: input.userId,
+        deletedAt: null,
+      },
+      data: {
+        deletedAt: input.deletedAt,
+      },
+    });
+
+    return result.count > 0 ? { ...receiver, deletedAt: input.deletedAt } : null;
+  }
+
   async findActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord | null> {
     const receiver = await this.prisma.receiver.findFirst({
       where: {
@@ -337,6 +358,7 @@ export class PrismaReceiversRepository implements ReceiversRepository {
       consentTranscript: receiver.consentTranscript ?? undefined,
       pausedUntil: receiver.pausedUntil ?? undefined,
       pausedReason: receiver.pausedReason ?? undefined,
+      deletedAt: receiver.deletedAt ?? undefined,
       createdAt: receiver.createdAt,
       updatedAt: receiver.updatedAt,
     };

@@ -44,6 +44,7 @@ export interface ReceiverRecord extends CreateReceiverRecordInput {
   consentTranscript?: string;
   pausedUntil?: Date;
   pausedReason?: string;
+  deletedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -74,6 +75,7 @@ export interface ReceiversRepository {
     pausedReason: string;
   }): Promise<ReceiverWithLatestCheckInRecord | null>;
   resumeForUserById(input: { userId: string; receiverId: string }): Promise<ReceiverWithLatestCheckInRecord | null>;
+  deleteForUserById(input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverWithLatestCheckInRecord | null>;
   findActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord | null>;
   markConsentRequested(input: {
     receiverId: string;

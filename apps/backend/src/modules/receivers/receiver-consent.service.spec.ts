@@ -46,6 +46,10 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     return null;
   }
 
+  async deleteForUserById(_input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverRecord | null> {
+    return null;
+  }
+
   async markConsentRequested(input: {
     receiverId: string;
     consentRequestedAt: Date;

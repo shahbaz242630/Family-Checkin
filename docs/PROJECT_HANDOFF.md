@@ -1,6 +1,6 @@
 # Nearby Project Handoff
 
-Last updated: 2026-04-26
+Last updated: 2026-04-29
 
 ## Current Product Direction
 
@@ -932,33 +932,307 @@ Hotfix - 2026-04-27:
   - pause and edit actions are backend-backed
   - remove action is still a placeholder
 
-### 6. Next Planned Slice
+### 6. Receiver remove soft-delete flow - completed 2026-04-28
 
-Implement the receiver `Remove` flow as a soft delete:
+Completed receiver management slice:
 
-- Backend:
-  - add authenticated `DELETE /receivers/:receiverId`
-  - verify Supabase bearer token and sync sender profile
-  - scope soft delete by `userId + receiverId + deletedAt: null`
-  - set `deletedAt` instead of hard-deleting rows
-  - return `404` when missing or not owned
-  - append `receiver.deleted` audit event with safe metadata only
-  - ensure deleted receivers disappear from `GET /receivers` and `GET /receivers/:receiverId`
-- Expo:
-  - wire receiver detail `Remove` button
-  - show a confirmation prompt before deleting
-  - call backend delete endpoint
-  - navigate back to dashboard/list after success
-  - keep pause/edit state unaffected
-- Verification:
-  - TDD red/green backend controller, service, and Prisma repository tests
-  - backend full test suite
-  - backend type-check
-  - mobile type-check
-  - browser smoke test from receiver detail
-  - update this handoff after completion
+- Added authenticated backend soft delete:
+  - `DELETE /receivers/:receiverId`
+  - verifies Supabase bearer token
+  - syncs sender profile through `UsersService`
+  - scopes delete by `userId + receiverId + deletedAt: null`
+  - sets `deletedAt` instead of hard-deleting rows
+  - returns `404` when missing, already deleted, or not owned by the sender
+- Added audit event:
+  - `receiver.deleted`
+  - metadata is intentionally empty to avoid raw PII
+- Added Prisma repository support:
+  - `deleteForUserById`
+  - preloads the active receiver before setting `deletedAt`, because normal detail lookup intentionally excludes deleted receivers
+  - uses ownership-scoped `updateMany` with `deletedAt: null`
+- Updated Expo:
+  - `deleteReceiver(receiverId)`
+  - receiver detail `Remove` button now shows a confirmation prompt
+  - Expo Web uses `window.confirm` for the confirmation prompt because React Native `Alert.alert` did not render a visible prompt in the web smoke test
+  - after confirmation, the delete handler calls the backend and navigates back to dashboard
+  - pause/edit behavior remains separate
 
-### 7. Later, after local fake flow is proven
+Files changed for this slice:
+
+- `apps/backend/src/modules/receivers/receivers.controller.ts`
+- `apps/backend/src/modules/receivers/receivers.controller.spec.ts`
+- `apps/backend/src/modules/receivers/receivers.service.ts`
+- `apps/backend/src/modules/receivers/receivers.service.spec.ts`
+- `apps/backend/src/modules/receivers/receivers.repository.ts`
+- `apps/backend/src/modules/receivers/prisma-receivers.repository.ts`
+- `apps/backend/src/modules/receivers/prisma-receivers.repository.spec.ts`
+- `apps/mobile/src/services/backendApi.ts`
+- `apps/mobile/src/services/index.ts`
+- `apps/mobile/src/app/(main)/receivers/[id].tsx`
+- `docs/PROJECT_HANDOFF.md`
+
+Focused TDD verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- receivers.service.spec.ts receivers.controller.spec.ts prisma-receivers.repository.spec.ts
+```
+
+Full verification completed after implementation:
+
+```powershell
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+npm.cmd --prefix apps/mobile run type-check
+```
+
+Browser smoke completed with Browser Use and Expo Web:
+
+- Started backend dev server on port `3000`.
+- Started Expo Web on port `8081`.
+- Opened `http://localhost:8081` in the in-app browser.
+- Confirmed authenticated dashboard loaded backend receivers.
+- Opened `Expo Smoke Edited` receiver detail at `/receivers/aae5f5ea-dd86-459f-9b7b-be6b07b2c08c`.
+- Confirmed receiver detail rendered status, schedule, channels, backup contacts placeholder, and `Pause` / `Edit` / `Remove` actions.
+- First smoke showed the web `Remove` click focused the button but did not show a visible React Native `Alert.alert`; fixed by using `window.confirm` on web and `Alert.alert` on native.
+- Re-ran Expo Web smoke after reload; clicking `Remove` opened a blocking browser confirmation dialog.
+- The destructive confirmation was not accepted, so the receiver was not deleted during this smoke test.
+
+Android emulator smoke completed with Expo Go:
+
+- Started Pixel 7 AVD as `emulator-5554`.
+- Installed/launched Expo Go through `npm.cmd --prefix apps/mobile run android -- --port 8082`.
+- Loaded the local Android bundle successfully.
+- Verified the app reached the unauthenticated welcome screen.
+- After manual sign-in, verified the Android app reached the authenticated dashboard.
+- The signed-in Android test account had no receivers, so receiver detail/remove could not be smoke-tested on Android without creating a disposable receiver.
+
+`apps/backend/dist` was removed after build verification.
+
+### 7. Backup contacts foundation - completed 2026-04-28
+
+Completed backend slice:
+
+- Added `BackupContactsModule`.
+- Added authenticated nested APIs:
+  - `GET /receivers/:receiverId/backup-contacts`
+  - `POST /receivers/:receiverId/backup-contacts`
+- Both endpoints:
+  - verify Supabase bearer token
+  - sync sender profile through `UsersService`
+  - scope access by `userId + receiverId + receiver.deletedAt: null`
+  - return `404` when receiver is missing, deleted, or not owned
+- Backup contact creation:
+  - trims name, phone, relationship, and optional location instructions
+  - normalizes phone to E.164 before hashing/encryption
+  - encrypts backup contact name, phone, and optional location instructions
+  - stores deterministic phone hash for future lookup
+  - assigns `priorityOrder` from active contact count
+  - limits each receiver to 5 active backup contacts
+  - appends `backup_contact.created` audit event with safe metadata only
+- Backup contact list response:
+  - returns display name, masked phone, relationship, priority order, location-instructions presence, and created timestamp
+  - does not expose raw phone, phone hash, encrypted values, or location instructions
+
+Completed Expo slice:
+
+- Added `listBackupContacts(receiverId)`.
+- Added `createBackupContact(receiverId, input)`.
+- Receiver detail now loads backup contacts alongside receiver detail.
+- Replaced the backup-contact placeholder with:
+  - existing backup contact list
+  - `Add` action when fewer than 5 contacts exist
+  - inline add form for name, phone, country, relationship, and location instructions
+  - local list update after successful create
+- Backup contacts remain app-free; no invite or backup-contact login flow was added.
+
+Files changed for this slice:
+
+- `apps/backend/src/app.module.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.controller.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.controller.spec.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.module.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.repository.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.service.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.service.spec.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.tokens.ts`
+- `apps/backend/src/modules/backup-contacts/index.ts`
+- `apps/backend/src/modules/backup-contacts/prisma-backup-contacts.repository.ts`
+- `apps/backend/src/modules/backup-contacts/prisma-backup-contacts.repository.spec.ts`
+- `apps/mobile/src/app/(main)/receivers/[id].tsx`
+- `apps/mobile/src/services/backendApi.ts`
+- `apps/mobile/src/services/index.ts`
+- `docs/PROJECT_HANDOFF.md`
+
+Verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- backup-contacts.service.spec.ts backup-contacts.controller.spec.ts prisma-backup-contacts.repository.spec.ts
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/mobile run type-check
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+```
+
+Backend full suite passed: 23 test files, 80 tests.
+
+Runtime notes:
+
+- Existing backend dev server restarted through `tsx watch`; logs confirmed:
+  - `BackupContactsModule dependencies initialized`
+  - `Mapped {/receivers/:receiverId/backup-contacts, GET} route`
+  - `Mapped {/receivers/:receiverId/backup-contacts, POST} route`
+- `apps/backend/dist` was removed after build verification.
+- A fresh Expo Web server on port `8083` loaded the app cleanly, but it was unauthenticated because browser storage is per-port. Receiver-detail backup-contact UI was therefore not browser-smoked in this slice without another login.
+
+### 8. Backup contact management - completed 2026-04-28
+
+Completed backend slice:
+
+- Added authenticated nested management APIs:
+  - `PATCH /receivers/:receiverId/backup-contacts/:backupContactId`
+  - `DELETE /receivers/:receiverId/backup-contacts/:backupContactId`
+- Both endpoints:
+  - verify Supabase bearer token
+  - sync sender profile through `UsersService`
+  - scope access through sender-owned, non-deleted receivers
+  - return `404` when the receiver/contact is missing, deleted, or not owned
+- Backup contact update:
+  - trims name, optional phone, relationship, and optional location instructions
+  - encrypts updated name and location instructions
+  - normalizes/encrypts/hashes a new phone only when one is supplied
+  - preserves the existing phone when the edit request omits phone
+  - clears stored location instructions when the field is blank
+  - appends `backup_contact.updated` audit events with safe metadata only
+- Backup contact delete:
+  - soft deletes by setting `deletedAt`
+  - does not hard-delete rows or expose raw PII
+  - appends `backup_contact.deleted` audit events with safe metadata only
+
+Completed Expo slice:
+
+- Added `updateBackupContact(receiverId, backupContactId, input)`.
+- Added `deleteBackupContact(receiverId, backupContactId)`.
+- Receiver detail backup-contact list now includes `Edit` and `Remove` actions.
+- Edit opens the inline backup-contact form prefilled with display name and relationship.
+- Because raw phone is not returned by the backend, edit leaves phone blank and preserves the current stored phone unless the sender enters a replacement.
+- Remove uses the same confirmation approach as receiver remove: `window.confirm` on Expo Web, `Alert.alert` on native.
+- Local backup-contact state updates after successful edit/remove.
+
+Files changed for this slice:
+
+- `apps/backend/src/modules/backup-contacts/backup-contacts.controller.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.controller.spec.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.repository.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.service.ts`
+- `apps/backend/src/modules/backup-contacts/backup-contacts.service.spec.ts`
+- `apps/backend/src/modules/backup-contacts/prisma-backup-contacts.repository.ts`
+- `apps/backend/src/modules/backup-contacts/prisma-backup-contacts.repository.spec.ts`
+- `apps/mobile/src/app/(main)/receivers/[id].tsx`
+- `apps/mobile/src/services/backendApi.ts`
+- `apps/mobile/src/services/index.ts`
+- `docs/PROJECT_HANDOFF.md`
+
+Verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- backup-contacts.service.spec.ts backup-contacts.controller.spec.ts prisma-backup-contacts.repository.spec.ts
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/mobile run type-check
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+```
+
+Backend full suite passed: 23 test files, 87 tests.
+
+Runtime notes:
+
+- Browser/Android smoke was deferred immediately after implementation because the user asked to test both together in the next step.
+- `apps/backend/dist` was removed after build verification.
+
+### 9. Backup contact smoke test pass - partial 2026-04-28
+
+Completed during smoke setup:
+
+- Fixed local backend CORS for Expo dev ports:
+  - `apps/backend/src/main.ts`
+  - previous CORS allowed only `http://localhost:8081` and `http://127.0.0.1:8081`
+  - Expo Web was running on `http://localhost:8083`, so browser requests failed with `TypeError: Failed to fetch`
+  - CORS now allows local Expo origins matching `http://localhost:80xx` and `http://127.0.0.1:80xx`
+- Fixed Android emulator backend URL resolution:
+  - `apps/mobile/src/services/backendApi.ts`
+  - Expo Web can use `http://localhost:3000`
+  - Android emulator must use `http://10.0.2.2:3000` to reach the host machine
+  - `backendRequest` now rewrites localhost/127.0.0.1 backend URLs to `10.0.2.2` when `Platform.OS === 'android'`
+
+Browser Use smoke against `http://localhost:8083`:
+
+- Logged in with the test account provided by the user.
+- Created disposable receiver `Backup Smoke Receiver`.
+- Reloaded dashboard and confirmed receiver appeared.
+- Opened receiver detail at `/receivers/df1e4b98-61c4-4472-a940-dd30a55ba16b`.
+- Added backup contact:
+  - name: `Backup Smoke Contact`
+  - phone masked as `*******0199`
+  - relationship: `Neighbor`
+  - location instructions present
+- Edited backup contact:
+  - name changed to `Backup Smoke Contact Edited`
+  - relationship changed to `Building Manager`
+  - phone left blank in edit form, confirming existing phone was preserved
+  - location instructions updated
+- Reloaded receiver detail and confirmed edited backup contact persisted as:
+  - `Backup Smoke Contact Edited`
+  - `Building Manager - *******0199`
+  - `Instructions saved`
+- Destructive backup-contact removal was not executed because delete actions require action-time confirmation.
+
+Android emulator smoke:
+
+- Booted `Pixel_7` AVD as `emulator-5554`.
+- Launched Expo Go through `exp://10.0.2.2:8082/--/`.
+- Confirmed the app loads on Android.
+- Signed in manually through the native login screen after correcting an adb text-entry issue where the password initially became `Iloveyou123@g`.
+- Android then loaded the app shell and Add Receiver screen.
+- Direct navigation to the receiver detail route loaded the screen, but receiver API calls reported `You need to sign in again`.
+- Current Android blocker is native Supabase session availability for backend API calls, not the backup-contact backend routes. The Android localhost backend URL issue was fixed, but the native session still needs a focused auth/session smoke or repair before backup-contact detail can be fully tested on Android.
+
+Verification after smoke fixes:
+
+```powershell
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/mobile run type-check
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+```
+
+Backend full suite passed: 23 test files, 87 tests.
+
+`apps/backend/dist` was removed after build verification.
+
+Files changed during smoke:
+
+- `apps/backend/src/main.ts`
+- `apps/mobile/src/services/backendApi.ts`
+- `docs/PROJECT_HANDOFF.md`
+
+### 10. Next Planned Slice
+
+Finish smoke-test cleanup before moving into new product behavior:
+
+- Resolve Android native auth/session persistence so `getSession()` returns a valid access token after email/password login in Expo Go.
+- Re-run Android receiver detail backup-contact create/edit smoke after auth is fixed.
+- Execute backup-contact remove on web/native only after explicit action-time approval.
+- After smoke is clean, move into escalation cascade behavior:
+  - escalate `RESPONDED_HELP` and no-response check-ins to active backup contacts in priority order
+  - keep provider sends behind the channel-router abstraction
+  - audit escalation events without raw PII
+
+### 11. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

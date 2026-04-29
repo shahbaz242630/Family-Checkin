@@ -1,13 +1,21 @@
 export { supabase, getCurrentUser, getSession } from './supabase';
 export type { Database } from './database.types';
 export {
+  createBackupContact,
   createReceiver,
+  deleteBackupContact,
+  deleteReceiver,
   getReceiver,
+  listBackupContacts,
   listReceivers,
   pauseReceiver,
   resumeReceiver,
   syncAuthenticatedUser,
+  updateBackupContact,
   updateReceiver,
+  type BackupContactSetupInput,
+  type BackupContactUpdateInput,
+  type BackendBackupContact,
   type BackendChannel,
   type BackendCheckInStatus,
   type BackendConsentStatus,

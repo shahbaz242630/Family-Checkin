@@ -3,10 +3,18 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { TextInput } from '../../../components/auth';
 import {
+  createBackupContact,
+  deleteBackupContact,
+  deleteReceiver,
   getReceiver,
+  listBackupContacts,
   pauseReceiver,
   resumeReceiver,
+  updateBackupContact,
   updateReceiver,
+  type BackupContactSetupInput,
+  type BackupContactUpdateInput,
+  type BackendBackupContact,
   type BackendChannel,
   type BackendReceiverDetail,
   type BackendRelationshipType,
@@ -40,10 +48,20 @@ export default function ReceiverDetailScreen() {
   const router = useRouter();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [receiver, setReceiver] = useState<BackendReceiverDetail | null>(null);
+  const [backupContacts, setBackupContacts] = useState<BackendBackupContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isAddingBackupContact, setIsAddingBackupContact] = useState(false);
+  const [editingBackupContactId, setEditingBackupContactId] = useState<string | null>(null);
   const [draft, setDraft] = useState<ReceiverUpdateInput | null>(null);
+  const [backupDraft, setBackupDraft] = useState<BackupContactSetupInput>({
+    name: '',
+    phone: '',
+    phoneCountry: 'AE',
+    relationshipToReceiver: '',
+    locationInstructions: '',
+  });
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -58,7 +76,9 @@ export default function ReceiverDetailScreen() {
       setLoading(true);
       setError(null);
       setActionError(null);
-      setReceiver(await getReceiver(id));
+      const [receiverDetail, receiverBackupContacts] = await Promise.all([getReceiver(id), listBackupContacts(id)]);
+      setReceiver(receiverDetail);
+      setBackupContacts(receiverBackupContacts);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load receiver');
     } finally {
@@ -163,6 +183,164 @@ export default function ReceiverDetailScreen() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const startAddingBackupContact = () => {
+    setBackupDraft({
+      name: '',
+      phone: '',
+      phoneCountry: receiver.countryCode || 'AE',
+      relationshipToReceiver: '',
+      locationInstructions: '',
+    });
+    setActionError(null);
+    setEditingBackupContactId(null);
+    setIsAddingBackupContact(true);
+  };
+
+  const cancelAddingBackupContact = () => {
+    setIsAddingBackupContact(false);
+    setEditingBackupContactId(null);
+    setActionError(null);
+  };
+
+  const startEditingBackupContact = (contact: BackendBackupContact) => {
+    setBackupDraft({
+      name: contact.displayName,
+      phone: '',
+      phoneCountry: receiver.countryCode || 'AE',
+      relationshipToReceiver: contact.relationshipToReceiver,
+      locationInstructions: '',
+    });
+    setActionError(null);
+    setEditingBackupContactId(contact.id);
+    setIsAddingBackupContact(true);
+  };
+
+  const saveBackupContact = async () => {
+    if (!id) return;
+
+    if (!backupDraft.name.trim() || (!editingBackupContactId && !backupDraft.phone.trim()) || !backupDraft.relationshipToReceiver.trim()) {
+      Alert.alert('Missing details', editingBackupContactId ? 'Name and relationship are required.' : 'Name, phone, and relationship are required.');
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setActionError(null);
+      const backupContactInput: BackupContactSetupInput | BackupContactUpdateInput = {
+        name: backupDraft.name.trim(),
+        phoneCountry: backupDraft.phoneCountry?.trim().toUpperCase() || undefined,
+        relationshipToReceiver: backupDraft.relationshipToReceiver.trim(),
+        locationInstructions: backupDraft.locationInstructions?.trim() || undefined,
+      };
+      if (backupDraft.phone.trim()) {
+        backupContactInput.phone = backupDraft.phone.trim();
+      }
+
+      if (editingBackupContactId) {
+        const updated = await updateBackupContact(id, editingBackupContactId, backupContactInput);
+        setBackupContacts((current) =>
+          current.map((contact) => (contact.id === updated.id ? updated : contact)).sort((a, b) => a.priorityOrder - b.priorityOrder),
+        );
+      } else {
+        const created = await createBackupContact(id, backupContactInput as BackupContactSetupInput);
+        setBackupContacts((current) => [...current, created].sort((a, b) => a.priorityOrder - b.priorityOrder));
+      }
+      setIsAddingBackupContact(false);
+      setEditingBackupContactId(null);
+      setBackupDraft({
+        name: '',
+        phone: '',
+        phoneCountry: receiver.countryCode || 'AE',
+        relationshipToReceiver: '',
+        locationInstructions: '',
+      });
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to add backup contact');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const removeBackupContact = async (contact: BackendBackupContact) => {
+    if (!id) return;
+
+    const removeMessage = `Remove ${contact.displayName} from backup contacts?`;
+    const performRemove = async () => {
+      try {
+        setIsSaving(true);
+        setActionError(null);
+        await deleteBackupContact(id, contact.id);
+        setBackupContacts((current) => current.filter((item) => item.id !== contact.id));
+        if (editingBackupContactId === contact.id) {
+          setIsAddingBackupContact(false);
+          setEditingBackupContactId(null);
+        }
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : 'Unable to remove backup contact');
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      if (window.confirm(removeMessage)) {
+        await performRemove();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Remove backup contact',
+      removeMessage,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: performRemove,
+        },
+      ],
+    );
+  };
+
+  const removeReceiver = async () => {
+    if (!id || !receiver) return;
+
+    const removeMessage = `Stop check-ins for ${receiver.displayName} and remove them from your dashboard?`;
+    const performRemove = async () => {
+      try {
+        setIsSaving(true);
+        setActionError(null);
+        await deleteReceiver(id);
+        router.replace('/(main)');
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : 'Unable to remove receiver');
+      } finally {
+        setIsSaving(false);
+      }
+    };
+
+    if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+      if (window.confirm(removeMessage)) {
+        await performRemove();
+      }
+      return;
+    }
+
+    Alert.alert(
+      'Remove receiver',
+      removeMessage,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: performRemove,
+        },
+      ],
+    );
   };
 
   const selectProfile = (profile: (typeof profileOptions)[number]) => {
@@ -311,8 +489,86 @@ export default function ReceiverDetailScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Backup Contacts</Text>
-        <Text style={styles.placeholderText}>{receiver.escalation.nextStep}</Text>
+        <View style={styles.sectionHeaderRow}>
+          <Text style={styles.sectionTitle}>Backup Contacts</Text>
+          {!isAddingBackupContact && backupContacts.length < 5 ? (
+            <Pressable style={styles.smallButton} onPress={startAddingBackupContact} disabled={isSaving}>
+              <Text style={styles.smallButtonText}>Add</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        {backupContacts.length > 0 ? (
+          <View style={styles.backupContactList}>
+            {backupContacts.map((contact) => (
+              <View key={contact.id} style={styles.backupContactItem}>
+                <View>
+                  <Text style={styles.backupContactName}>{contact.displayName}</Text>
+                  <Text style={styles.backupContactMeta}>
+                    {contact.relationshipToReceiver} - {contact.phoneMasked}
+                  </Text>
+                </View>
+                <Text style={styles.backupContactMeta}>{contact.hasLocationInstructions ? 'Instructions saved' : 'No instructions'}</Text>
+                <View style={styles.backupContactActions}>
+                  <Pressable style={styles.smallButton} onPress={() => startEditingBackupContact(contact)} disabled={isSaving}>
+                    <Text style={styles.smallButtonText}>Edit</Text>
+                  </Pressable>
+                  <Pressable style={styles.smallButton} onPress={() => removeBackupContact(contact)} disabled={isSaving}>
+                    <Text style={styles.smallButtonText}>Remove</Text>
+                  </Pressable>
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.placeholderText}>{receiver.escalation.nextStep}</Text>
+        )}
+
+        {isAddingBackupContact ? (
+          <View style={styles.backupContactForm}>
+            <TextInput
+              label={editingBackupContactId ? 'Backup name' : 'Backup name'}
+              value={backupDraft.name}
+              onChangeText={(name) => setBackupDraft({ ...backupDraft, name })}
+            />
+            <TextInput
+              label={editingBackupContactId ? 'Phone (blank keeps current)' : 'Phone'}
+              value={backupDraft.phone}
+              onChangeText={(phone) => setBackupDraft({ ...backupDraft, phone })}
+              keyboardType="phone-pad"
+            />
+            <View style={styles.row}>
+              <View style={styles.rowItem}>
+                <TextInput
+                  label="Country"
+                  value={backupDraft.phoneCountry}
+                  onChangeText={(phoneCountry) => setBackupDraft({ ...backupDraft, phoneCountry })}
+                  autoCapitalize="characters"
+                />
+              </View>
+              <View style={styles.rowItem}>
+                <TextInput
+                  label="Relationship"
+                  value={backupDraft.relationshipToReceiver}
+                  onChangeText={(relationshipToReceiver) => setBackupDraft({ ...backupDraft, relationshipToReceiver })}
+                />
+              </View>
+            </View>
+            <TextInput
+              label="Location instructions"
+              value={backupDraft.locationInstructions}
+              onChangeText={(locationInstructions) => setBackupDraft({ ...backupDraft, locationInstructions })}
+            />
+            <View style={styles.editActionRow}>
+              <Pressable style={styles.secondaryButton} onPress={cancelAddingBackupContact} disabled={isSaving}>
+                <Text style={styles.secondaryButtonText}>Cancel</Text>
+              </Pressable>
+              <Pressable style={styles.primaryActionButton} onPress={saveBackupContact} disabled={isSaving}>
+                <Text style={styles.primaryButtonText}>{isSaving ? 'Saving...' : editingBackupContactId ? 'Update' : 'Save'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
       </View>
 
       <View style={styles.actionRow}>
@@ -322,7 +578,7 @@ export default function ReceiverDetailScreen() {
         <Pressable style={styles.secondaryButton} onPress={startEditing} disabled={isSaving || isEditing}>
           <Text style={styles.secondaryButtonText}>Edit</Text>
         </Pressable>
-        <Pressable style={styles.secondaryButton}>
+        <Pressable style={styles.secondaryButton} onPress={removeReceiver} disabled={isSaving}>
           <Text style={styles.secondaryButtonText}>Remove</Text>
         </Pressable>
       </View>
@@ -471,6 +727,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: spacing.sm,
   },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    marginBottom: spacing.sm,
+  },
   form: {
     gap: spacing.md,
   },
@@ -541,6 +804,35 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: fontSize.sm,
   },
+  backupContactList: {
+    gap: spacing.sm,
+  },
+  backupContactItem: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    gap: spacing.xs,
+    backgroundColor: colors.background,
+  },
+  backupContactName: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: '700',
+  },
+  backupContactMeta: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+  },
+  backupContactActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+  backupContactForm: {
+    gap: spacing.md,
+    marginTop: spacing.md,
+  },
   actionRow: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -571,6 +863,19 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   secondaryButtonText: {
+    color: colors.primary,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+  },
+  smallButton: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.surface,
+  },
+  smallButtonText: {
     color: colors.primary,
     fontSize: fontSize.sm,
     fontWeight: '600',

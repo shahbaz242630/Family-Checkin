@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Inject, NotFoundException, Param, Patch, Post, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Inject, NotFoundException, Param, Patch, Post, UnauthorizedException } from '@nestjs/common';
 import type { Channel, RelationshipType, TechProfile } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
@@ -147,6 +147,30 @@ export class ReceiversController {
       scheduleFrequency: body.scheduleFrequency ?? '',
       scheduleTimeWindow: body.scheduleTimeWindow ?? {},
       scheduleCustomCron: body.scheduleCustomCron,
+      ipAddress: this.firstForwardedIp(forwardedFor),
+      userAgent,
+    });
+
+    if (!receiver) {
+      throw new NotFoundException('Receiver not found');
+    }
+
+    return { receiver };
+  }
+
+  @Delete(':receiverId')
+  async delete(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-forwarded-for') forwardedFor: string | undefined,
+    @Headers('user-agent') userAgent: string | undefined,
+    @Param('receiverId') receiverId: string,
+  ) {
+    const accessToken = this.getBearerToken(authorization);
+    const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
+    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const receiver = await this.receiversService.deleteForSender({
+      userId: sender.id,
+      receiverId,
       ipAddress: this.firstForwardedIp(forwardedFor),
       userAgent,
     });

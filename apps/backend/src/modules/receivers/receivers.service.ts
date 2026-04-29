@@ -228,6 +228,33 @@ export class ReceiversService {
     return this.toDetail(receiver);
   }
 
+  async deleteForSender(input: ReceiverManagementInput): Promise<ReceiverDetail | null> {
+    const userId = input.userId.trim();
+    const receiverId = input.receiverId.trim();
+    const receiver = await this.receiversRepository.deleteForUserById({
+      userId,
+      receiverId,
+      deletedAt: new Date(),
+    });
+
+    if (!receiver) {
+      return null;
+    }
+
+    await this.auditService.append({
+      entityType: 'receiver',
+      entityId: receiver.id,
+      action: 'receiver.deleted',
+      actorType: ActorType.USER,
+      actorId: userId,
+      metadata: {},
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
+    });
+
+    return this.toDetail(receiver);
+  }
+
   private toCreateRecordInput(input: CreateReceiverForSenderInput): CreateReceiverRecordInput {
     const phone = normalizePhone(input.phone, input.phoneCountry);
     const personalNote = input.personalNote?.trim();

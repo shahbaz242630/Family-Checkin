@@ -88,6 +88,16 @@ class InMemoryReceiversRepository implements ReceiversRepository {
       : null;
   }
 
+  async deleteForUserById(input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverWithLatestCheckInRecord | null> {
+    const receiver = this.receiversForUser.find((item) => item.id === input.receiverId && item.userId === input.userId);
+    return receiver
+      ? {
+          ...receiver,
+          deletedAt: input.deletedAt,
+        }
+      : null;
+  }
+
   async markConsentRequested(input: {
     receiverId: string;
     consentRequestedAt: Date;
@@ -605,5 +615,72 @@ describe('ReceiversService', () => {
       ipAddress: '203.0.113.10',
       userAgent: 'Nearby Mobile/1.0',
     });
+  });
+
+  it('soft deletes a receiver for a sender and audits the action', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const crypto = new CryptoService(masterKey);
+    repository.receiversForUser = [
+      {
+        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        nameEncrypted: crypto.encrypt('Fatima Parent'),
+        phoneEncrypted: crypto.encrypt('+971501234567'),
+        phoneHash: crypto.hashForLookup('+971501234567'),
+        countryCode: 'AE',
+        relationshipType: RelationshipType.PARENT,
+        language: 'en',
+        timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+        consentStatus: ConsentStatus.GRANTED,
+        createdAt: new Date('2026-04-26T08:00:00.000Z'),
+        updatedAt: new Date('2026-04-27T10:02:00.000Z'),
+      },
+    ];
+    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService);
+
+    const receiver = await service.deleteForSender({
+      userId: '  61a5639c-c902-4950-9924-1a4d6db1e02d  ',
+      receiverId: '  1aef91f9-64c9-4548-baa5-d70b52386efb  ',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+
+    expect(receiver).toMatchObject({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      displayName: 'Fatima Parent',
+      phoneMasked: '*******4567',
+    });
+    expect(JSON.stringify(receiver)).not.toContain('+971501234567');
+    expect(audit.events.at(-1)).toEqual({
+      entityType: 'receiver',
+      entityId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      action: 'receiver.deleted',
+      actorType: ActorType.USER,
+      actorId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      metadata: {},
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+  });
+
+  it('returns null when deleting a receiver the sender does not own', async () => {
+    const service = new ReceiversService(
+      new InMemoryReceiversRepository(),
+      new CryptoService(masterKey),
+      new InMemoryAuditService() as unknown as AuditService,
+    );
+
+    await expect(
+      service.deleteForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: 'missing-receiver',
+      }),
+    ).resolves.toBeNull();
   });
 });

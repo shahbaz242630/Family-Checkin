@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import { getSession } from './supabase';
 
 const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
@@ -117,6 +118,32 @@ export interface BackendReceiverDetail extends BackendReceiverSummary {
   };
 }
 
+export interface BackendBackupContact {
+  id: string;
+  displayName: string;
+  phoneMasked: string;
+  relationshipToReceiver: string;
+  priorityOrder: number;
+  hasLocationInstructions: boolean;
+  createdAt: string;
+}
+
+export interface BackupContactSetupInput {
+  name: string;
+  phone: string;
+  phoneCountry?: string;
+  relationshipToReceiver: string;
+  locationInstructions?: string;
+}
+
+export interface BackupContactUpdateInput {
+  name: string;
+  phone?: string;
+  phoneCountry?: string;
+  relationshipToReceiver: string;
+  locationInstructions?: string;
+}
+
 export async function syncAuthenticatedUser(): Promise<SyncedBackendUser> {
   const response = await backendRequest<{ user: SyncedBackendUser }>('/auth/sync-user', {
     method: 'POST',
@@ -166,6 +193,51 @@ export async function updateReceiver(receiverId: string, input: ReceiverUpdateIn
   return response.receiver;
 }
 
+export async function deleteReceiver(receiverId: string): Promise<void> {
+  await backendRequest<{ receiver: BackendReceiverDetail }>(`/receivers/${receiverId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function listBackupContacts(receiverId: string): Promise<BackendBackupContact[]> {
+  const response = await backendRequest<{ backupContacts: BackendBackupContact[] }>(`/receivers/${receiverId}/backup-contacts`, {
+    method: 'GET',
+  });
+
+  return response.backupContacts;
+}
+
+export async function createBackupContact(receiverId: string, input: BackupContactSetupInput): Promise<BackendBackupContact> {
+  const response = await backendRequest<{ backupContact: BackendBackupContact }>(`/receivers/${receiverId}/backup-contacts`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+
+  return response.backupContact;
+}
+
+export async function updateBackupContact(
+  receiverId: string,
+  backupContactId: string,
+  input: BackupContactUpdateInput,
+): Promise<BackendBackupContact> {
+  const response = await backendRequest<{ backupContact: BackendBackupContact }>(
+    `/receivers/${receiverId}/backup-contacts/${backupContactId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+  );
+
+  return response.backupContact;
+}
+
+export async function deleteBackupContact(receiverId: string, backupContactId: string): Promise<void> {
+  await backendRequest<{ backupContact: BackendBackupContact }>(`/receivers/${receiverId}/backup-contacts/${backupContactId}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function createReceiver(input: ReceiverSetupInput): Promise<CreatedReceiver> {
   const response = await backendRequest<{ receiver: CreatedReceiver }>('/receivers', {
     method: 'POST',
@@ -176,7 +248,8 @@ export async function createReceiver(input: ReceiverSetupInput): Promise<Created
 }
 
 async function backendRequest<T>(path: string, init: RequestInit): Promise<T> {
-  if (!backendUrl) {
+  const resolvedBackendUrl = resolveBackendUrl();
+  if (!resolvedBackendUrl) {
     throw new Error('Missing EXPO_PUBLIC_BACKEND_URL');
   }
 
@@ -187,7 +260,7 @@ async function backendRequest<T>(path: string, init: RequestInit): Promise<T> {
     throw new Error('You need to sign in again');
   }
 
-  const response = await fetch(`${backendUrl.replace(/\/$/, '')}${path}`, {
+  const response = await fetch(`${resolvedBackendUrl.replace(/\/$/, '')}${path}`, {
     ...init,
     headers: {
       Accept: 'application/json',
@@ -202,6 +275,18 @@ async function backendRequest<T>(path: string, init: RequestInit): Promise<T> {
   }
 
   return (await response.json()) as T;
+}
+
+function resolveBackendUrl(): string | undefined {
+  if (!backendUrl) {
+    return undefined;
+  }
+
+  if (Platform.OS === 'android') {
+    return backendUrl.replace('://localhost:', '://10.0.2.2:').replace('://127.0.0.1:', '://10.0.2.2:');
+  }
+
+  return backendUrl;
 }
 
 async function responseErrorMessage(response: Response): Promise<string> {

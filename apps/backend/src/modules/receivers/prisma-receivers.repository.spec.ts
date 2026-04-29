@@ -368,6 +368,77 @@ describe('PrismaReceiversRepository', () => {
     });
   });
 
+  it('soft deletes one active receiver scoped to a user', async () => {
+    const create = vi.fn();
+    const findFirst = vi.fn().mockResolvedValue({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      nameEncrypted: 'encrypted-name',
+      phoneEncrypted: 'encrypted-phone',
+      phoneHash: 'phone-hash',
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      scheduleCustomCron: null,
+      personalNoteEncrypted: null,
+      consentStatus: ConsentStatus.GRANTED,
+      consentRequestedAt: null,
+      consentGrantedAt: null,
+      consentRevokedAt: null,
+      consentTranscript: null,
+      pausedUntil: null,
+      pausedReason: null,
+      deletedAt: null,
+      checkIns: [],
+      createdAt: new Date('2026-04-26T10:00:00.000Z'),
+      updatedAt: new Date('2026-04-26T10:00:00.000Z'),
+    });
+    const findMany = vi.fn();
+    const update = vi.fn();
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const abuseReportCreate = vi.fn();
+    const optOutCooldownUpsert = vi.fn();
+    const deletedAt = new Date('2026-04-27T12:00:00.000Z');
+    const repository = new PrismaReceiversRepository({
+      receiver: {
+        create,
+        findFirst,
+        findMany,
+        update,
+        updateMany,
+      },
+      abuseReport: {
+        create: abuseReportCreate,
+      },
+      optOutCooldown: {
+        upsert: optOutCooldownUpsert,
+      },
+    });
+
+    await repository.deleteForUserById({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      deletedAt,
+    });
+
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        deletedAt: null,
+      },
+      data: {
+        deletedAt,
+      },
+    });
+  });
+
   it('creates abuse report records', async () => {
     const create = vi.fn();
     const findFirst = vi.fn();

@@ -111,6 +111,14 @@ class FakeReceiversService {
       scheduleTimeWindow: input.scheduleTimeWindow,
     };
   }
+
+  async deleteForSender(input: { userId: string; receiverId: string; ipAddress?: string; userAgent?: string }) {
+    this.detailInput = input;
+    return {
+      id: input.receiverId,
+      deleted: true,
+    };
+  }
 }
 
 class FakeReceiverConsentService {}
@@ -283,5 +291,30 @@ describe('ReceiversController', () => {
       id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
       displayName: 'Fatima Updated',
     });
+  });
+
+  it('soft deletes a receiver for the authenticated sender', async () => {
+    const receiversService = new FakeReceiversService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    const response = await controller.delete(
+      'Bearer access-token',
+      '203.0.113.10, 198.51.100.7',
+      'Nearby Mobile/1.0',
+      '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    );
+
+    expect(receiversService.detailInput).toMatchObject({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+    expect(response).toEqual({ receiver: { id: '1aef91f9-64c9-4548-baa5-d70b52386efb', deleted: true } });
   });
 });
