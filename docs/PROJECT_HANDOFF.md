@@ -1344,16 +1344,58 @@ Backend full suite passed: 25 test files, 96 tests.
 
 ### 13. Next Planned Slice
 
+### 13. Operations check-in trigger slice - 2026-04-29
+
+Completed:
+
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-04-29-operations-check-in-trigger-design.md`
+  - `docs/superpowers/plans/2026-04-29-operations-check-in-trigger.md`
+- Added `OperationsModule`.
+- Added protected backend endpoint:
+  - `POST /operations/check-ins/run`
+  - header: `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`
+- Endpoint runs:
+  - `CheckInsService.sendDueCheckIns()`
+  - `CheckInsService.escalateOverdueCheckIns()`
+- Endpoint returns aggregate counts only:
+  - due check-ins: `created`, `sent`, `skipped`
+  - overdue escalations: `checked`, `escalated`, `skipped`, `failed`
+- Endpoint does not return receiver IDs, check-in IDs, provider IDs, names, phones, transcripts, or message bodies.
+
+Focused verification passed:
+
+```powershell
+npm.cmd --prefix apps/backend test -- operations.controller.spec.ts
+npm.cmd --prefix apps/backend run type-check
+```
+
+Focused suite passed: 1 file, 2 tests.
+
+Full backend verification passed before commit:
+
+```powershell
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+```
+
+Backend full suite passed: 26 test files, 98 tests.
+
+### 14. Next Planned Slice
+
 Finish smoke-test cleanup before moving into new product behavior:
 
 - Delete disposable smoke contacts/receiver only after explicit action-time approval.
 - Execute backup-contact remove on web/native only after explicit action-time approval.
 - Continue escalation cascade behavior:
-  - add scheduler/admin trigger for `CheckInsService.sendDueCheckIns()` and `CheckInsService.escalateOverdueCheckIns()`
+  - wire a hosted scheduler/cron to call `POST /operations/check-ins/run`
+  - run an end-to-end local smoke of the operations trigger using fake providers
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 14. Production readiness checklist
+### 15. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1383,7 +1425,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 15. Later, after local fake flow is proven
+### 16. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

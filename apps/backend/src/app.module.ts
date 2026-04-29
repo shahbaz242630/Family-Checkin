@@ -5,6 +5,7 @@ import { BackupContactsModule } from './modules/backup-contacts/backup-contacts.
 import { CheckInsModule } from './modules/check-ins/check-ins.module';
 import { ChannelsModule } from './modules/channels/channels.module';
 import { EscalationsModule } from './modules/escalations/escalations.module';
+import { OperationsModule } from './modules/operations/operations.module';
 import { ReceiversModule } from './modules/receivers/receivers.module';
 import { UsersModule } from './modules/users/users.module';
 import { AppConfigModule } from './shared/config/app-config.module';
@@ -20,6 +21,7 @@ import { AppConfigModule } from './shared/config/app-config.module';
     ChannelsModule,
     CheckInsModule,
     EscalationsModule,
+    OperationsModule,
   ],
 })
 export class AppModule {}
