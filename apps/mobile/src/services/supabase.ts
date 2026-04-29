@@ -1,74 +1,45 @@
 import 'react-native-url-polyfill/auto';
 import { createClient } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { createAuthStorage } from './auth-storage';
 import type { Database } from './database.types';
 
 const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL!;
 const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
-const isWebRuntime = Platform.OS === 'web' || typeof window !== 'undefined';
 
 if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing Supabase environment variables');
 }
 
-function getWebStorageItem(key: string): string | null {
-  if (typeof localStorage === 'undefined') {
-    return null;
-  }
-  return localStorage.getItem(key);
-}
-
-function setWebStorageItem(key: string, value: string): void {
-  if (typeof localStorage !== 'undefined') {
-    localStorage.setItem(key, value);
-  }
-}
-
-function removeWebStorageItem(key: string): void {
-  if (typeof localStorage !== 'undefined') {
-    localStorage.removeItem(key);
-  }
-}
-
-const authStorage = {
-  async getItem(key: string) {
-    if (isWebRuntime) {
-      return getWebStorageItem(key);
-    }
-    return await SecureStore.getItemAsync(key);
+const { supabaseSessionStorage, oauthStateStorage } = createAuthStorage({
+  platformOS: Platform.OS,
+  hasWindow: typeof window !== 'undefined',
+  localStorage: typeof localStorage === 'undefined' ? undefined : localStorage,
+  asyncStorage: AsyncStorage,
+  secureStore: {
+    getItem: SecureStore.getItemAsync,
+    setItem: SecureStore.setItemAsync,
+    removeItem: SecureStore.deleteItemAsync,
   },
-  async setItem(key: string, value: string) {
-    if (isWebRuntime) {
-      setWebStorageItem(key, value);
-      return;
-    }
-    await SecureStore.setItemAsync(key, value);
-  },
-  async removeItem(key: string) {
-    if (isWebRuntime) {
-      removeWebStorageItem(key);
-      return;
-    }
-    await SecureStore.deleteItemAsync(key);
-  },
-};
+});
 
 const OAUTH_STATE_KEY = 'oauth_state';
 
 export async function setExpectedOAuthState(state: string): Promise<void> {
-  await authStorage.setItem(OAUTH_STATE_KEY, state);
+  await oauthStateStorage.setItem(OAUTH_STATE_KEY, state);
 }
 
 export async function clearExpectedOAuthState(): Promise<void> {
-  await authStorage.removeItem(OAUTH_STATE_KEY);
+  await oauthStateStorage.removeItem(OAUTH_STATE_KEY);
 }
 
 async function consumeExpectedOAuthState(): Promise<string | null> {
-  const state = await authStorage.getItem(OAUTH_STATE_KEY);
+  const state = await oauthStateStorage.getItem(OAUTH_STATE_KEY);
   if (state) {
-    await authStorage.removeItem(OAUTH_STATE_KEY);
+    await oauthStateStorage.removeItem(OAUTH_STATE_KEY);
   }
   return state;
 }
@@ -83,7 +54,7 @@ function isAllowedAuthRedirect(url: string): boolean {
 
 export const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
   auth: {
-    storage: authStorage,
+    storage: supabaseSessionStorage,
     autoRefreshToken: true,
     persistSession: true,
     flowType: 'pkce',

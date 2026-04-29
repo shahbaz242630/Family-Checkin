@@ -56,7 +56,8 @@ Protected files whose behavior must be preserved:
 Important auth behavior to preserve:
 
 - Supabase client/session setup
-- SecureStore auth persistence on native
+- AsyncStorage Supabase session persistence on native
+- SecureStore OAuth state persistence on native
 - Browser `localStorage` auth persistence on web smoke tests
 - OAuth state handling
 - Deep-link callback and reset-password routing
@@ -68,6 +69,13 @@ Auth-sensitive note from 2026-04-26:
 - `apps/mobile/src/services/supabase.ts` was minimally updated so the storage adapter uses Expo SecureStore on native and browser `localStorage` on web.
 - This fixed Expo web auth smoke testing, where `expo-secure-store` threw `getValueWithKeyAsync is not a function`.
 - Native Supabase Auth flow, deep-link handling, OAuth state validation, and reset-password logic were not rewritten.
+
+Auth-sensitive note from 2026-04-29:
+
+- Android React Native can expose `window`, so the previous runtime check misclassified native as web and routed Supabase session persistence to unavailable `localStorage`.
+- Supabase session persistence now uses AsyncStorage on native and browser `localStorage` only when `Platform.OS === 'web'`.
+- OAuth state remains in SecureStore on native.
+- Covered by `apps/mobile/src/services/auth-storage.test.ts`.
 
 Before and after auth-sensitive work, inspect diffs carefully.
 
@@ -1220,19 +1228,48 @@ Files changed during smoke:
 - `apps/mobile/src/services/backendApi.ts`
 - `docs/PROJECT_HANDOFF.md`
 
-### 10. Next Planned Slice
+### 10. Android auth/session persistence fix - 2026-04-29
+
+Completed:
+
+- Fixed native Supabase session persistence on Android.
+- Root cause: `apps/mobile/src/services/supabase.ts` treated `typeof window !== 'undefined'` as a web runtime signal. React Native can expose `window`, so Expo Go on Android was routed to the web `localStorage` path, which was unavailable and caused `getSession()` to return no token for backend API calls.
+- Added `apps/mobile/src/services/auth-storage.ts` to split storage responsibilities:
+  - Supabase sessions use AsyncStorage on native.
+  - OAuth state uses SecureStore on native.
+  - Web still uses browser `localStorage`.
+- Added `apps/mobile/src/services/auth-storage.test.ts` to cover Android with `hasWindow: true`, native OAuth state, and web session storage.
+
+Android emulator smoke on `emulator-5554`:
+
+- Logged in through Expo Go with the user-provided test account.
+- Dashboard loaded receivers from the backend, proving authenticated backend requests had a Supabase access token.
+- Receiver detail for `Backup Smoke Receiver` loaded backup contacts.
+- Created Android smoke backup contact:
+  - masked phone displayed as `*******4198`
+  - instructions state displayed
+- Edited that Android smoke backup contact:
+  - updated name displayed as `AndroidSmokeEditedct`
+  - updated relationship displayed as `Caretakerr - *******4198`
+  - phone was left blank in the edit form and remained preserved
+- The trailing characters in the displayed smoke labels came from adb text input, not from application logic.
+
+Runtime note:
+
+- Expo Go still occasionally shows `Unable to activate keep awake`; this appears non-blocking and unrelated to auth/session persistence.
+
+### 11. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
-- Resolve Android native auth/session persistence so `getSession()` returns a valid access token after email/password login in Expo Go.
-- Re-run Android receiver detail backup-contact create/edit smoke after auth is fixed.
+- Delete disposable smoke contacts/receiver only after explicit action-time approval.
 - Execute backup-contact remove on web/native only after explicit action-time approval.
 - After smoke is clean, move into escalation cascade behavior:
   - escalate `RESPONDED_HELP` and no-response check-ins to active backup contacts in priority order
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 11. Later, after local fake flow is proven
+### 12. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.
