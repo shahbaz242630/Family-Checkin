@@ -1206,7 +1206,7 @@ Android emulator smoke:
 - Signed in manually through the native login screen after correcting an adb text-entry issue where the password initially became `Iloveyou123@g`.
 - Android then loaded the app shell and Add Receiver screen.
 - Direct navigation to the receiver detail route loaded the screen, but receiver API calls reported `You need to sign in again`.
-- Current Android blocker is native Supabase session availability for backend API calls, not the backup-contact backend routes. The Android localhost backend URL issue was fixed, but the native session still needs a focused auth/session smoke or repair before backup-contact detail can be fully tested on Android.
+- Superseded by section 10: native Supabase session persistence was fixed on 2026-04-29 and Android receiver-detail backup-contact create/edit smoke passed after the fix.
 
 Verification after smoke fixes:
 
@@ -1269,7 +1269,37 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 12. Later, after local fake flow is proven
+### 12. Production readiness checklist
+
+Use this before beta, production launch, or inviting real users into the hosted environment:
+
+- Smoke data cleanup:
+  - remove `Backup Smoke Receiver`
+  - remove `Backup Smoke Contact Edited`
+  - remove `AndroidSmokeEditedct`
+  - remove related disposable smoke check-ins, escalation events, and audit rows if they exist and are clearly tied to smoke testing
+- Destructive cleanup rule:
+  - execute deletes only after explicit action-time approval
+  - preserve audit/legal records unless there is a clear dev-only reason and approved cleanup path
+- Credentials and secrets:
+  - rotate any Supabase access tokens, database passwords, and test-account passwords pasted in chat or logs
+  - confirm `.env` files are local-only and not committed
+- Data separation:
+  - keep future smoke/beta data in a dedicated dev/staging environment where possible
+  - avoid using production for repeat smoke tests after launch
+- Auth and API smoke:
+  - verify web login, Android login, dashboard load, receiver detail load, and authenticated backend calls
+  - verify backup-contact create/edit still preserves phone when edit phone is blank
+- Compliance basics:
+  - confirm receiver consent flow before sends
+  - confirm STOP opt-out and REPORT abuse paths remain available
+  - confirm audit logs avoid raw PII
+- Operational readiness:
+  - confirm provider keys and channel routing are configured for the target environment
+  - confirm admin abuse-monitoring workflow exists before real users
+  - confirm payment/tier gating is enabled before charging users
+
+### 13. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.
