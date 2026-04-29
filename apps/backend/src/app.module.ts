@@ -4,11 +4,22 @@ import { AuthModule } from './modules/auth/auth.module';
 import { BackupContactsModule } from './modules/backup-contacts/backup-contacts.module';
 import { CheckInsModule } from './modules/check-ins/check-ins.module';
 import { ChannelsModule } from './modules/channels/channels.module';
+import { EscalationsModule } from './modules/escalations/escalations.module';
 import { ReceiversModule } from './modules/receivers/receivers.module';
 import { UsersModule } from './modules/users/users.module';
 import { AppConfigModule } from './shared/config/app-config.module';
 
 @Module({
-  imports: [AppConfigModule, UsersModule, AuthModule, AuditModule, ReceiversModule, BackupContactsModule, ChannelsModule, CheckInsModule],
+  imports: [
+    AppConfigModule,
+    UsersModule,
+    AuthModule,
+    AuditModule,
+    ReceiversModule,
+    BackupContactsModule,
+    ChannelsModule,
+    CheckInsModule,
+    EscalationsModule,
+  ],
 })
 export class AppModule {}

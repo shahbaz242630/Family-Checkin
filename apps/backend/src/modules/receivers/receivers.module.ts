@@ -3,6 +3,7 @@ import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { CheckInsModule } from '../check-ins/check-ins.module';
 import { ChannelsModule } from '../channels/channels.module';
+import { EscalationsModule } from '../escalations/escalations.module';
 import { UsersModule } from '../users/users.module';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
@@ -16,7 +17,7 @@ import { RECEIVERS_REPOSITORY } from './receivers.tokens';
 import { ReceiversService } from './receivers.service';
 
 @Module({
-  imports: [AuditModule, AuthModule, UsersModule, ChannelsModule, CheckInsModule],
+  imports: [AuditModule, AuthModule, UsersModule, ChannelsModule, CheckInsModule, EscalationsModule],
   controllers: [ReceiversController, ReceiverRepliesController],
   providers: [
     PrismaService,

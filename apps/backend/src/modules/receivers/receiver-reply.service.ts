@@ -1,9 +1,10 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { AbuseReportStatus, ActorType, CheckInStatus, ConsentStatus } from '@prisma/client';
 import type { Channel } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import type { CheckInRecord, CheckInsRepository } from '../check-ins/check-ins.repository';
 import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
+import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
 import type { ReceiversRepository } from './receivers.repository';
@@ -36,6 +37,9 @@ export class ReceiverReplyService {
     private readonly cryptoService: CryptoService,
     @Inject(AuditService)
     private readonly auditService: AuditService,
+    @Optional()
+    @Inject(EscalationsService)
+    private readonly escalationsService?: Pick<EscalationsService, 'escalateHelpResponse'>,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -258,6 +262,14 @@ export class ReceiverReplyService {
       ipAddress: input.input.ipAddress,
       userAgent: input.input.userAgent,
     });
+
+    if (responseDetectedAs === 'help') {
+      await this.escalationsService?.escalateHelpResponse({
+        receiverId: input.receiverId,
+        checkInId: checkIn.id,
+        sourceChannel: input.input.channel,
+      });
+    }
 
     return { action, checkIn };
   }

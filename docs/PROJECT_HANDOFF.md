@@ -1258,18 +1258,61 @@ Runtime note:
 
 - Expo Go still occasionally shows `Unable to activate keep awake`; this appears non-blocking and unrelated to auth/session persistence.
 
-### 11. Next Planned Slice
+### 11. HELP response escalation slice - 2026-04-29
+
+Completed:
+
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-04-29-help-escalation-design.md`
+  - `docs/superpowers/plans/2026-04-29-help-escalation.md`
+- Added `apps/backend/src/modules/escalations`:
+  - `EscalationsService`
+  - `PrismaEscalationsRepository`
+  - `EscalationsModule`
+  - repository token and interfaces
+- Wired `ReceiverReplyService` so receiver HELP responses trigger escalation after the open check-in is marked `RESPONDED_HELP`.
+- Current HELP escalation behavior:
+  - loads active backup contacts for the receiver ordered by `priorityOrder`, then `createdAt`
+  - sends SMS alerts through `ChannelRouterService` with template `backup_contact_help_alert`
+  - decrypts backup-contact phone only for provider delivery
+  - creates one `escalation_events` row per attempted backup-contact alert
+  - marks the check-in `ESCALATED` if at least one alert succeeds
+  - records PII-safe audit entries with IDs/status/channel only
+  - audits `escalation.no_backup_contacts` without marking the check-in escalated when no active backup contacts exist
+  - records provider failures as `EscalationResult.ERROR` and continues to the next contact
+
+Focused verification passed:
+
+```powershell
+npm.cmd --prefix apps/backend test -- escalations.service.spec.ts prisma-escalations.repository.spec.ts receiver-reply.service.spec.ts
+npm.cmd --prefix apps/backend run type-check
+```
+
+Focused suite passed: 3 files, 12 tests.
+
+Full backend verification passed before commit:
+
+```powershell
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+```
+
+Backend full suite passed: 25 test files, 93 tests.
+
+### 12. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
 - Delete disposable smoke contacts/receiver only after explicit action-time approval.
 - Execute backup-contact remove on web/native only after explicit action-time approval.
-- After smoke is clean, move into escalation cascade behavior:
-  - escalate `RESPONDED_HELP` and no-response check-ins to active backup contacts in priority order
+- Continue escalation cascade behavior:
+  - escalate no-response check-ins to active backup contacts after the configured response window
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 12. Production readiness checklist
+### 13. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1299,7 +1342,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 13. Later, after local fake flow is proven
+### 14. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

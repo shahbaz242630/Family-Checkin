@@ -291,6 +291,21 @@ class InMemoryAuditService {
   }
 }
 
+class InMemoryEscalationsService {
+  public helpEscalations: { receiverId: string; checkInId: string; sourceChannel: Channel }[] = [];
+
+  async escalateHelpResponse(input: { receiverId: string; checkInId: string; sourceChannel: Channel }) {
+    this.helpEscalations.push(input);
+    return {
+      checkInId: input.checkInId,
+      status: CheckInStatus.ESCALATED,
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+    };
+  }
+}
+
 describe('ReceiverReplyService', () => {
   it('grants consent when a pending receiver replies YES', async () => {
     const crypto = new CryptoService(masterKey);
@@ -302,6 +317,7 @@ describe('ReceiverReplyService', () => {
       new InMemoryCheckInsRepository(),
       crypto,
       audit as unknown as AuditService,
+      undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
     );
 
@@ -358,6 +374,7 @@ describe('ReceiverReplyService', () => {
       new InMemoryCheckInsRepository(),
       crypto,
       audit as unknown as AuditService,
+      undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
     );
 
@@ -402,6 +419,7 @@ describe('ReceiverReplyService', () => {
       new InMemoryCheckInsRepository(),
       crypto,
       audit as unknown as AuditService,
+      undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
     );
 
@@ -448,6 +466,7 @@ describe('ReceiverReplyService', () => {
       new InMemoryCheckInsRepository(),
       crypto,
       audit as unknown as AuditService,
+      undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
     );
 
@@ -508,6 +527,7 @@ describe('ReceiverReplyService', () => {
       checkIns,
       crypto,
       audit as unknown as AuditService,
+      undefined,
       () => new Date('2026-04-27T05:45:00.000Z'),
     );
 
@@ -562,6 +582,7 @@ describe('ReceiverReplyService', () => {
     const repository = new InMemoryReceiversRepository();
     const checkIns = new InMemoryCheckInsRepository();
     const audit = new InMemoryAuditService();
+    const escalations = new InMemoryEscalationsService();
     repository.records.push({
       ...receiverFixture(crypto),
       consentStatus: ConsentStatus.GRANTED,
@@ -573,6 +594,7 @@ describe('ReceiverReplyService', () => {
       checkIns,
       crypto,
       audit as unknown as AuditService,
+      escalations,
       () => new Date('2026-04-27T05:45:00.000Z'),
     );
 
@@ -604,6 +626,13 @@ describe('ReceiverReplyService', () => {
         providerMessageId: 'provider-message-5',
       },
     });
+    expect(escalations.helpEscalations).toEqual([
+      {
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'check-in-1',
+        sourceChannel: Channel.SMS,
+      },
+    ]);
   });
 });
 
