@@ -1303,16 +1303,57 @@ Backend full suite passed: 25 test files, 93 tests.
 
 ### 12. Next Planned Slice
 
+### 12. Missed check-in escalation slice - 2026-04-29
+
+Completed:
+
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-04-29-missed-check-in-escalation-design.md`
+  - `docs/superpowers/plans/2026-04-29-missed-check-in-escalation.md`
+- Extended `EscalationsService` with `escalateMissedCheckIn`.
+- Missed check-in escalation uses the same ordered backup-contact alert loop as HELP escalation, with:
+  - template `backup_contact_missed_checkin_alert`
+  - audit metadata `escalationReason: missed_check_in`
+  - sent timestamp and response window in audit metadata
+  - no raw names, phones, or message bodies in audit metadata
+- Added `CheckInsRepository.findOverdueSentCheckIns`.
+- Prisma overdue query selects only `SENT` check-ins with `sentAt <= overdueBefore`, ordered by oldest `sentAt`.
+- Added `CheckInsService.escalateOverdueCheckIns`.
+- Approved MVP response window is 30 minutes after `sentAt`.
+- `CheckInsService.escalateOverdueCheckIns()` delegates each overdue `SENT` check-in to `EscalationsService.escalateMissedCheckIn`.
+
+Focused verification passed:
+
+```powershell
+npm.cmd --prefix apps/backend test -- escalations.service.spec.ts prisma-check-ins.repository.spec.ts check-ins.service.spec.ts receiver-reply.service.spec.ts
+npm.cmd --prefix apps/backend run type-check
+```
+
+Focused suite passed: 4 files, 17 tests.
+
+Full backend verification passed before commit:
+
+```powershell
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+```
+
+Backend full suite passed: 25 test files, 96 tests.
+
+### 13. Next Planned Slice
+
 Finish smoke-test cleanup before moving into new product behavior:
 
 - Delete disposable smoke contacts/receiver only after explicit action-time approval.
 - Execute backup-contact remove on web/native only after explicit action-time approval.
 - Continue escalation cascade behavior:
-  - escalate no-response check-ins to active backup contacts after the configured response window
+  - add scheduler/admin trigger for `CheckInsService.sendDueCheckIns()` and `CheckInsService.escalateOverdueCheckIns()`
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 13. Production readiness checklist
+### 14. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1342,7 +1383,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 14. Later, after local fake flow is proven
+### 15. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

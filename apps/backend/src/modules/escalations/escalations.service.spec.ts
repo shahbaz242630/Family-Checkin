@@ -310,6 +310,77 @@ describe('EscalationsService', () => {
     expect(JSON.stringify(audit.events)).not.toContain('+971502222222');
     expect(JSON.stringify(audit.events)).not.toContain('+971501111111');
   });
+
+  it('alerts backup contacts for missed check-ins with missed-check-in template and PII-safe audit', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const audit = new InMemoryAuditService();
+    const sms = new FakeChannelProvider(Channel.SMS, {
+      now: () => new Date('2026-04-29T10:45:00.000Z'),
+    });
+    repository.backupContacts = [
+      backupContactFixture(crypto, {
+        id: 'backup-contact-first',
+        phone: '+971502222222',
+        priorityOrder: 1,
+        createdAt: new Date('2026-04-29T08:20:00.000Z'),
+      }),
+    ];
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms]),
+      audit as unknown as AuditService,
+      () => new Date('2026-04-29T10:45:00.000Z'),
+    );
+
+    const result = await service.escalateMissedCheckIn({
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      sentAt: new Date('2026-04-29T10:00:00.000Z'),
+      responseWindowMinutes: 30,
+    });
+
+    expect(result).toEqual({
+      checkInId: 'check-in-1',
+      status: CheckInStatus.ESCALATED,
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+    });
+    expect(sms.sentMessages).toEqual([
+      {
+        to: '+971502222222',
+        message: {
+          templateKey: 'backup_contact_missed_checkin_alert',
+          language: 'en',
+          variables: {
+            checkInId: 'check-in-1',
+            receiverId: 'receiver-1',
+          },
+        },
+      },
+    ]);
+    expect(audit.events[0]).toMatchObject({
+      entityType: 'escalation_event',
+      entityId: 'escalation-event-1',
+      action: 'escalation.backup_contact_alerted',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: 'receiver-1',
+        checkInId: 'check-in-1',
+        backupContactId: 'backup-contact-first',
+        channel: Channel.SMS,
+        attemptNumber: 1,
+        providerStatus: 'accepted',
+        escalationReason: 'missed_check_in',
+        sentAt: '2026-04-29T10:00:00.000Z',
+        responseWindowMinutes: 30,
+      },
+    });
+    expect(JSON.stringify(audit.events)).not.toContain('+971502222222');
+    expect(JSON.stringify(audit.events)).not.toContain('First Backup');
+  });
 });
 
 function backupContactFixture(

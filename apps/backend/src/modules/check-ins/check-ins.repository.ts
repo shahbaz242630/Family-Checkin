@@ -52,10 +52,15 @@ export interface MarkCheckInRespondedInput {
   responseTranscript: string;
 }
 
+export interface FindOverdueSentCheckInsInput {
+  overdueBefore: Date;
+}
+
 export interface CheckInsRepository {
   findReceiversDueForCheckIn(now: Date): Promise<CheckInReceiverCandidate[]>;
   createPending(input: CreatePendingCheckInInput): Promise<CheckInRecord>;
   markSent(input: MarkCheckInSentInput): Promise<CheckInRecord>;
   findLatestOpenForReceiver(receiverId: string): Promise<CheckInRecord | null>;
   markResponded(input: MarkCheckInRespondedInput): Promise<CheckInRecord>;
+  findOverdueSentCheckIns(input: FindOverdueSentCheckInsInput): Promise<CheckInRecord[]>;
 }

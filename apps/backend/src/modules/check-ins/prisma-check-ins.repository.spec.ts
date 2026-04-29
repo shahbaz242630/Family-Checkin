@@ -1,4 +1,4 @@
-import { Channel, ConsentStatus } from '@prisma/client';
+import { Channel, CheckInStatus, ConsentStatus } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { PrismaCheckInsRepository } from './prisma-check-ins.repository';
 
@@ -25,6 +25,7 @@ describe('PrismaCheckInsRepository', () => {
       checkIn: {
         create: vi.fn(),
         findFirst: vi.fn(),
+        findMany: vi.fn(),
         update: vi.fn(),
       },
     });
@@ -105,6 +106,7 @@ describe('PrismaCheckInsRepository', () => {
       checkIn: {
         create,
         findFirst: vi.fn(),
+        findMany: vi.fn(),
         update,
       },
     });
@@ -178,6 +180,7 @@ describe('PrismaCheckInsRepository', () => {
       checkIn: {
         create: vi.fn(),
         findFirst,
+        findMany: vi.fn(),
         update,
       },
     });
@@ -206,6 +209,59 @@ describe('PrismaCheckInsRepository', () => {
         responseDetectedAs: 'ok',
         responseTranscript: 'encrypted-transcript',
       },
+    });
+  });
+
+  it('finds sent check-ins that are older than the response window', async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      {
+        id: 'check-in-1',
+        receiverId: 'receiver-1',
+        scheduledAt: new Date('2026-04-29T10:00:00.000Z'),
+        status: CheckInStatus.SENT,
+        channelUsed: Channel.WHATSAPP,
+        sentAt: new Date('2026-04-29T10:00:00.000Z'),
+        respondedAt: null,
+        responseTranscript: null,
+        responseDetectedAs: null,
+        resolvedAt: null,
+        resolutionNote: null,
+        resolutionByUserId: null,
+        createdAt: new Date('2026-04-29T10:00:00.000Z'),
+        updatedAt: new Date('2026-04-29T10:00:00.000Z'),
+      },
+    ]);
+    const repository = new PrismaCheckInsRepository({
+      receiver: {
+        findMany: vi.fn(),
+      },
+      checkIn: {
+        create: vi.fn(),
+        findFirst: vi.fn(),
+        findMany,
+        update: vi.fn(),
+      },
+    });
+
+    const overdue = await repository.findOverdueSentCheckIns({
+      overdueBefore: new Date('2026-04-29T10:30:00.000Z'),
+    });
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        status: CheckInStatus.SENT,
+        sentAt: {
+          lte: new Date('2026-04-29T10:30:00.000Z'),
+        },
+      },
+      orderBy: { sentAt: 'asc' },
+    });
+    expect(overdue).toHaveLength(1);
+    expect(overdue[0]).toMatchObject({
+      id: 'check-in-1',
+      receiverId: 'receiver-1',
+      status: CheckInStatus.SENT,
+      sentAt: new Date('2026-04-29T10:00:00.000Z'),
     });
   });
 });

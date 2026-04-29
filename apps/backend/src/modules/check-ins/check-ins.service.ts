@@ -1,7 +1,8 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { ActorType, Channel, ConsentStatus } from '@prisma/client';
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import { ActorType, Channel, CheckInStatus, ConsentStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
+import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type { CheckInReceiverCandidate, CheckInsRepository } from './check-ins.repository';
 import { CHECK_INS_REPOSITORY } from './check-ins.tokens';
@@ -12,8 +13,17 @@ export interface SendDueCheckInsResult {
   skipped: number;
 }
 
+export interface EscalateOverdueCheckInsResult {
+  checked: number;
+  escalated: number;
+  skipped: number;
+  failed: number;
+}
+
 @Injectable()
 export class CheckInsService {
+  private static readonly defaultResponseWindowMinutes = 30;
+
   constructor(
     @Inject(CHECK_INS_REPOSITORY) private readonly checkInsRepository: CheckInsRepository,
     @Inject(CryptoService)
@@ -22,6 +32,9 @@ export class CheckInsService {
     private readonly channelRouter: ChannelRouterService,
     @Inject(AuditService)
     private readonly auditService: AuditService,
+    @Optional()
+    @Inject(EscalationsService)
+    private readonly escalationsService?: Pick<EscalationsService, 'escalateMissedCheckIn'>,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -74,6 +87,41 @@ export class CheckInsService {
           providerStatus: providerResult.providerStatus,
         },
       });
+    }
+
+    return result;
+  }
+
+  async escalateOverdueCheckIns(
+    responseWindowMinutes = CheckInsService.defaultResponseWindowMinutes,
+  ): Promise<EscalateOverdueCheckInsResult> {
+    const now = this.now();
+    const overdueBefore = new Date(now.getTime() - responseWindowMinutes * 60 * 1000);
+    const checkIns = await this.checkInsRepository.findOverdueSentCheckIns({ overdueBefore });
+    const result: EscalateOverdueCheckInsResult = { checked: checkIns.length, escalated: 0, skipped: 0, failed: 0 };
+
+    for (const checkIn of checkIns) {
+      if (!checkIn.sentAt) {
+        result.skipped += 1;
+        continue;
+      }
+
+      try {
+        const escalation = await this.escalationsService?.escalateMissedCheckIn({
+          receiverId: checkIn.receiverId,
+          checkInId: checkIn.id,
+          sentAt: checkIn.sentAt,
+          responseWindowMinutes,
+        });
+
+        if (escalation?.status === CheckInStatus.ESCALATED) {
+          result.escalated += 1;
+        } else {
+          result.skipped += 1;
+        }
+      } catch {
+        result.failed += 1;
+      }
     }
 
     return result;

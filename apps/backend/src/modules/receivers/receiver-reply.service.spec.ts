@@ -16,6 +16,7 @@ import type {
   CheckInReceiverCandidate,
   CreatePendingCheckInInput,
   MarkCheckInSentInput,
+  FindOverdueSentCheckInsInput,
 } from '../check-ins/check-ins.repository';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type {
@@ -275,6 +276,10 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
       createdAt: this.openCheckIn?.createdAt ?? input.respondedAt,
       updatedAt: input.respondedAt,
     };
+  }
+
+  async findOverdueSentCheckIns(_input: FindOverdueSentCheckInsInput): Promise<CheckInRecord[]> {
+    return [];
   }
 }
 

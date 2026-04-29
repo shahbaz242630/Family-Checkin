@@ -12,6 +12,7 @@ import type {
   CreatePendingCheckInInput,
   MarkCheckInSentInput,
   MarkCheckInRespondedInput,
+  FindOverdueSentCheckInsInput,
 } from './check-ins.repository';
 import { CheckInsService } from './check-ins.service';
 
@@ -19,6 +20,8 @@ const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 
 class InMemoryCheckInsRepository implements CheckInsRepository {
   public candidates: CheckInReceiverCandidate[] = [];
+  public overdueCheckIns: CheckInRecord[] = [];
+  public overdueQueries: FindOverdueSentCheckInsInput[] = [];
   public created: CreatePendingCheckInInput[] = [];
   public sent: MarkCheckInSentInput[] = [];
 
@@ -71,6 +74,11 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
       updatedAt: input.respondedAt,
     };
   }
+
+  async findOverdueSentCheckIns(input: FindOverdueSentCheckInsInput): Promise<CheckInRecord[]> {
+    this.overdueQueries.push(input);
+    return this.overdueCheckIns;
+  }
 }
 
 class InMemoryAuditService {
@@ -82,6 +90,31 @@ class InMemoryAuditService {
       id: `audit-${this.events.length}`,
       createdAt: new Date('2026-04-27T05:30:00.000Z'),
       ...input,
+    };
+  }
+}
+
+class InMemoryEscalationsService {
+  public missedEscalations: {
+    receiverId: string;
+    checkInId: string;
+    sentAt: Date;
+    responseWindowMinutes: number;
+  }[] = [];
+
+  async escalateMissedCheckIn(input: {
+    receiverId: string;
+    checkInId: string;
+    sentAt: Date;
+    responseWindowMinutes: number;
+  }): Promise<{ checkInId: string; status: CheckInStatus; attempted: number; succeeded: number; failed: number }> {
+    this.missedEscalations.push(input);
+    return {
+      checkInId: input.checkInId,
+      status: CheckInStatus.ESCALATED,
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
     };
   }
 }
@@ -100,6 +133,7 @@ describe('CheckInsService', () => {
       crypto,
       new ChannelRouterService([whatsapp]),
       audit as unknown as AuditService,
+      undefined,
       () => new Date('2026-04-27T05:30:00.000Z'),
     );
 
@@ -171,6 +205,7 @@ describe('CheckInsService', () => {
       crypto,
       new ChannelRouterService([whatsapp]),
       audit as unknown as AuditService,
+      undefined,
       () => new Date('2026-04-27T05:30:00.000Z'),
     );
 
@@ -181,6 +216,56 @@ describe('CheckInsService', () => {
     expect(repository.sent).toEqual([]);
     expect(whatsapp.sentMessages).toEqual([]);
     expect(audit.events).toEqual([]);
+  });
+
+  it('delegates overdue sent check-ins after the 30 minute response window', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
+    const escalations = new InMemoryEscalationsService();
+    repository.overdueCheckIns = [
+      {
+        id: 'check-in-overdue',
+        receiverId: 'receiver-1',
+        scheduledAt: new Date('2026-04-29T09:55:00.000Z'),
+        status: CheckInStatus.SENT,
+        channelUsed: Channel.WHATSAPP,
+        sentAt: new Date('2026-04-29T10:00:00.000Z'),
+        createdAt: new Date('2026-04-29T09:55:00.000Z'),
+        updatedAt: new Date('2026-04-29T10:00:00.000Z'),
+      },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([whatsapp]),
+      audit as unknown as AuditService,
+      escalations,
+      () => new Date('2026-04-29T10:31:00.000Z'),
+    );
+
+    const result = await service.escalateOverdueCheckIns();
+
+    expect(repository.overdueQueries).toEqual([
+      {
+        overdueBefore: new Date('2026-04-29T10:01:00.000Z'),
+      },
+    ]);
+    expect(escalations.missedEscalations).toEqual([
+      {
+        receiverId: 'receiver-1',
+        checkInId: 'check-in-overdue',
+        sentAt: new Date('2026-04-29T10:00:00.000Z'),
+        responseWindowMinutes: 30,
+      },
+    ]);
+    expect(result).toEqual({
+      checked: 1,
+      escalated: 1,
+      skipped: 0,
+      failed: 0,
+    });
   });
 });
 

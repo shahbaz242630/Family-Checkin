@@ -12,6 +12,13 @@ export interface EscalateHelpResponseInput {
   sourceChannel: Channel;
 }
 
+export interface EscalateMissedCheckInInput {
+  receiverId: string;
+  checkInId: string;
+  sentAt: Date;
+  responseWindowMinutes: number;
+}
+
 export interface EscalateHelpResponseResult {
   checkInId: string;
   status: CheckInStatus;
@@ -34,6 +41,44 @@ export class EscalationsService {
   ) {}
 
   async escalateHelpResponse(input: EscalateHelpResponseInput): Promise<EscalateHelpResponseResult> {
+    return await this.escalateBackupContacts({
+      receiverId: input.receiverId,
+      checkInId: input.checkInId,
+      templateKey: 'backup_contact_help_alert',
+      auditMetadata: {
+        sourceChannel: input.sourceChannel,
+      },
+      noContactsMetadata: {
+        sourceChannel: input.sourceChannel,
+      },
+    });
+  }
+
+  async escalateMissedCheckIn(input: EscalateMissedCheckInInput): Promise<EscalateHelpResponseResult> {
+    return await this.escalateBackupContacts({
+      receiverId: input.receiverId,
+      checkInId: input.checkInId,
+      templateKey: 'backup_contact_missed_checkin_alert',
+      auditMetadata: {
+        escalationReason: 'missed_check_in',
+        sentAt: input.sentAt.toISOString(),
+        responseWindowMinutes: input.responseWindowMinutes,
+      },
+      noContactsMetadata: {
+        escalationReason: 'missed_check_in',
+        sentAt: input.sentAt.toISOString(),
+        responseWindowMinutes: input.responseWindowMinutes,
+      },
+    });
+  }
+
+  private async escalateBackupContacts(input: {
+    receiverId: string;
+    checkInId: string;
+    templateKey: string;
+    auditMetadata: Record<string, string | number>;
+    noContactsMetadata: Record<string, string | number>;
+  }): Promise<EscalateHelpResponseResult> {
     const backupContacts = await this.escalationsRepository.findActiveBackupContactsForReceiver({
       receiverId: input.receiverId,
     });
@@ -44,11 +89,11 @@ export class EscalationsService {
         entityId: input.checkInId,
         action: 'escalation.no_backup_contacts',
         actorType: ActorType.SYSTEM,
-        metadata: {
-          receiverId: input.receiverId,
-          sourceChannel: input.sourceChannel,
-        },
-      });
+          metadata: {
+            receiverId: input.receiverId,
+            ...input.noContactsMetadata,
+          },
+        });
 
       return {
         checkInId: input.checkInId,
@@ -68,7 +113,7 @@ export class EscalationsService {
 
       try {
         const providerResult = await this.channelRouter.sendMessage(Channel.SMS, this.cryptoService.decrypt(contact.phoneEncrypted), {
-          templateKey: 'backup_contact_help_alert',
+          templateKey: input.templateKey,
           language: 'en',
           variables: {
             checkInId: input.checkInId,
@@ -98,7 +143,7 @@ export class EscalationsService {
             channel: Channel.SMS,
             attemptNumber,
             providerStatus: providerResult.providerStatus,
-            sourceChannel: input.sourceChannel,
+            ...input.auditMetadata,
           },
         });
       } catch {
@@ -124,7 +169,7 @@ export class EscalationsService {
             backupContactId: contact.id,
             channel: Channel.SMS,
             attemptNumber,
-            sourceChannel: input.sourceChannel,
+            ...input.auditMetadata,
           },
         });
       }

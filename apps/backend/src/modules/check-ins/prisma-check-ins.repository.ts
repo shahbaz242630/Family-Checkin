@@ -9,6 +9,7 @@ import type {
   CreatePendingCheckInInput,
   MarkCheckInSentInput,
   MarkCheckInRespondedInput,
+  FindOverdueSentCheckInsInput,
 } from './check-ins.repository';
 
 type ReceiverDueForCheckIn = Pick<
@@ -55,6 +56,13 @@ interface CheckInsPrismaClient {
       };
       orderBy: { scheduledAt: 'desc' };
     }): Promise<CheckIn | null>;
+    findMany(args: {
+      where: {
+        status: CheckInStatus;
+        sentAt: { lte: Date };
+      };
+      orderBy: { sentAt: 'asc' };
+    }): Promise<CheckIn[]>;
     update(args: {
       where: { id: string };
       data: Partial<{
@@ -157,6 +165,20 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     });
 
     return this.toCheckInRecord(checkIn);
+  }
+
+  async findOverdueSentCheckIns(input: FindOverdueSentCheckInsInput): Promise<CheckInRecord[]> {
+    const checkIns = await this.prisma.checkIn.findMany({
+      where: {
+        status: CheckInStatus.SENT,
+        sentAt: {
+          lte: input.overdueBefore,
+        },
+      },
+      orderBy: { sentAt: 'asc' },
+    });
+
+    return checkIns.map((checkIn) => this.toCheckInRecord(checkIn));
   }
 
   private isInsideScheduleWindow(scheduleTimeWindow: Prisma.JsonValue, now: Date, timezone: string): boolean {
