@@ -1,0 +1,3 @@
+ALTER TABLE public.admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.channel_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.idempotency_keys ENABLE ROW LEVEL SECURITY;

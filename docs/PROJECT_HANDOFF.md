@@ -1723,7 +1723,35 @@ Local HTTP auth split smoke against the running backend on port `3000`:
 - `GET /operations/check-ins/summary` with `OPERATIONS_CRON_SECRET` returned `401`
 - `POST /operations/check-ins/run` with `OPERATIONS_CRON_SECRET` returned `200`
 
-### 24. Next Planned Slice
+### 24. Supabase Security Advisor RLS hardening - completed 2026-04-30
+
+Security Advisor reported `rls_disabled_in_public` errors for internal public-schema tables:
+
+- `public.admin_users`
+- `public.channel_templates`
+- `public.idempotency_keys`
+
+Applied the approved hosted-project hardening:
+
+```sql
+ALTER TABLE public.admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.channel_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.idempotency_keys ENABLE ROW LEVEL SECURITY;
+```
+
+No policies were added for these tables. With RLS enabled and no policies, `anon` and normal authenticated Supabase clients are denied by default through PostgREST, while backend/service-role/database paths remain available for internal use.
+
+Verification confirmed:
+
+- all three tables have `relrowsecurity = true`
+- `pg_policies` has `0` policies for those three tables
+
+Repo follow-up:
+
+- Added `apps/backend/prisma/20260430_internal_tables_rls.sql`
+- Updated `apps/backend/prisma/supabase_setup.sql` so fresh rebuilds also enable RLS on these internal tables
+
+### 25. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1731,7 +1759,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 25. Production readiness checklist
+### 26. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1761,7 +1789,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 26. Later, after local fake flow is proven
+### 27. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.
