@@ -1,8 +1,9 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ActorType, CheckInStatus, ConsentStatus } from '@prisma/client';
 import type { Channel, RelationshipType, TechProfile } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
 import type { CreateReceiverRecordInput, ReceiverRecord, ReceiversRepository, UpdateReceiverRecordInput } from './receivers.repository';
@@ -82,6 +83,10 @@ export interface ResolveCheckInForSenderInput extends ReceiverManagementInput {
   checkInId: string;
 }
 
+export interface SenderCheckInActionInput extends ReceiverManagementInput {
+  checkInId: string;
+}
+
 export interface UpdateReceiverForSenderInput extends ReceiverManagementInput {
   name: string;
   countryCode: string;
@@ -98,14 +103,27 @@ export interface UpdateReceiverForSenderInput extends ReceiverManagementInput {
 
 @Injectable()
 export class ReceiversService {
+  private readonly now: () => Date;
+  private readonly escalationsService?: Pick<EscalationsService, 'escalateSenderRequestedBackup'>;
+
   constructor(
     @Inject(RECEIVERS_REPOSITORY) private readonly receiversRepository: ReceiversRepository,
     @Inject(CryptoService)
     private readonly cryptoService: CryptoService,
     @Inject(AuditService)
     private readonly auditService: AuditService,
-    private readonly now: () => Date = () => new Date(),
-  ) {}
+    @Optional()
+    @Inject(EscalationsService)
+    escalationsOrNow?: Pick<EscalationsService, 'escalateSenderRequestedBackup'> | (() => Date),
+  ) {
+    if (typeof escalationsOrNow === 'function') {
+      this.now = escalationsOrNow;
+      this.escalationsService = undefined;
+    } else {
+      this.now = () => new Date();
+      this.escalationsService = escalationsOrNow;
+    }
+  }
 
   async createForSender(input: CreateReceiverForSenderInput): Promise<ReceiverRecord> {
     const normalized = this.normalizeInput(input);
@@ -310,6 +328,71 @@ export class ReceiversService {
     return this.toDetail(receiver);
   }
 
+  async alertBackupForSender(input: SenderCheckInActionInput): Promise<ReceiverDetail | null> {
+    const context = await this.findActionableLatestCheckIn(input, [
+      CheckInStatus.RESPONDED_HELP,
+      CheckInStatus.FAILED,
+      CheckInStatus.SKIPPED,
+    ]);
+    if (!context || !this.escalationsService) {
+      return null;
+    }
+
+    await this.auditService.append({
+      entityType: 'check_in',
+      entityId: context.checkInId,
+      action: 'check_in.backup_alert_requested',
+      actorType: ActorType.USER,
+      actorId: context.userId,
+      metadata: {
+        receiverId: context.receiverId,
+        previousStatus: context.previousStatus,
+      },
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
+    });
+
+    await this.escalationsService.escalateSenderRequestedBackup({
+      receiverId: context.receiverId,
+      checkInId: context.checkInId,
+    });
+
+    const receiver = await this.receiversRepository.findForUserById({
+      userId: context.userId,
+      receiverId: context.receiverId,
+    });
+
+    return receiver ? this.toDetail(receiver) : null;
+  }
+
+  async tryCheckInLaterForSender(input: SenderCheckInActionInput): Promise<ReceiverDetail | null> {
+    const context = await this.findActionableLatestCheckIn(input, [
+      CheckInStatus.SENT,
+      CheckInStatus.RESPONDED_HELP,
+      CheckInStatus.FAILED,
+      CheckInStatus.SKIPPED,
+    ]);
+    if (!context) {
+      return null;
+    }
+
+    await this.auditService.append({
+      entityType: 'check_in',
+      entityId: context.checkInId,
+      action: 'check_in.try_later_requested',
+      actorType: ActorType.USER,
+      actorId: context.userId,
+      metadata: {
+        receiverId: context.receiverId,
+        previousStatus: context.previousStatus,
+      },
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
+    });
+
+    return this.toDetail(context.receiver);
+  }
+
   private toCreateRecordInput(input: CreateReceiverForSenderInput): CreateReceiverRecordInput {
     const phone = normalizePhone(input.phone, input.phoneCountry);
     const personalNote = input.personalNote?.trim();
@@ -445,6 +528,38 @@ export class ReceiversService {
       scheduleFrequency,
       fallbackChannels: [...input.fallbackChannels],
       scheduleCustomCron: input.scheduleCustomCron?.trim() || undefined,
+    };
+  }
+
+  private async findActionableLatestCheckIn(
+    input: SenderCheckInActionInput,
+    actionableStatuses: CheckInStatus[],
+  ): Promise<{
+    userId: string;
+    receiverId: string;
+    checkInId: string;
+    previousStatus: CheckInStatus;
+    receiver: ReceiverRecord & { latestCheckIn?: NonNullable<Awaited<ReturnType<ReceiversRepository['findManyForUser']>>[number]['latestCheckIn']> };
+  } | null> {
+    const userId = input.userId.trim();
+    const receiverId = input.receiverId.trim();
+    const checkInId = input.checkInId.trim();
+    const receiver = await this.receiversRepository.findForUserById({ userId, receiverId });
+
+    if (
+      !receiver?.latestCheckIn ||
+      receiver.latestCheckIn.id !== checkInId ||
+      !actionableStatuses.includes(receiver.latestCheckIn.status)
+    ) {
+      return null;
+    }
+
+    return {
+      userId,
+      receiverId,
+      checkInId,
+      previousStatus: receiver.latestCheckIn.status,
+      receiver,
     };
   }
 

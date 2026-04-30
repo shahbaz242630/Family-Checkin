@@ -28,6 +28,8 @@ class FakeReceiversService {
   public detailInput: { userId: string; receiverId: string } | null = null;
   public updateInput: Record<string, unknown> | null = null;
   public resolveInput: Record<string, unknown> | null = null;
+  public alertBackupInput: Record<string, unknown> | null = null;
+  public tryLaterInput: Record<string, unknown> | null = null;
 
   async listForSender(userId: string) {
     this.listedForUserId = userId;
@@ -130,6 +132,28 @@ class FakeReceiversService {
         status: 'RESOLVED',
         resolvedAt: '2026-04-30T10:00:00.000Z',
         resolutionByUserId: input.userId,
+      },
+    };
+  }
+
+  async alertBackupForSender(input: Record<string, unknown>) {
+    this.alertBackupInput = input;
+    return {
+      id: input.receiverId,
+      latestCheckIn: {
+        id: input.checkInId,
+        status: 'ESCALATED',
+      },
+    };
+  }
+
+  async tryCheckInLaterForSender(input: Record<string, unknown>) {
+    this.tryLaterInput = input;
+    return {
+      id: input.receiverId,
+      latestCheckIn: {
+        id: input.checkInId,
+        status: 'SKIPPED',
       },
     };
   }
@@ -361,6 +385,72 @@ describe('ReceiversController', () => {
       latestCheckIn: {
         id: 'check-in-1',
         status: 'RESOLVED',
+      },
+    });
+  });
+
+  it('alerts backup contacts for a receiver check-in for the authenticated sender', async () => {
+    const receiversService = new FakeReceiversService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    const response = await controller.alertBackupForCheckIn(
+      'Bearer access-token',
+      '203.0.113.10, 198.51.100.7',
+      'Nearby Mobile/1.0',
+      '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      'check-in-1',
+    );
+
+    expect(receiversService.alertBackupInput).toEqual({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      checkInId: 'check-in-1',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+    expect(response.receiver).toMatchObject({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      latestCheckIn: {
+        id: 'check-in-1',
+        status: 'ESCALATED',
+      },
+    });
+  });
+
+  it('records try-later for a receiver check-in for the authenticated sender', async () => {
+    const receiversService = new FakeReceiversService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    const response = await controller.tryCheckInLater(
+      'Bearer access-token',
+      '203.0.113.10, 198.51.100.7',
+      'Nearby Mobile/1.0',
+      '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      'check-in-1',
+    );
+
+    expect(receiversService.tryLaterInput).toEqual({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      checkInId: 'check-in-1',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+    expect(response.receiver).toMatchObject({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      latestCheckIn: {
+        id: 'check-in-1',
+        status: 'SKIPPED',
       },
     });
   });

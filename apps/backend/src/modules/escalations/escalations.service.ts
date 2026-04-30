@@ -19,6 +19,11 @@ export interface EscalateMissedCheckInInput {
   responseWindowMinutes: number;
 }
 
+export interface EscalateSenderRequestedBackupInput {
+  receiverId: string;
+  checkInId: string;
+}
+
 export interface EscalateHelpResponseResult {
   checkInId: string;
   status: CheckInStatus;
@@ -70,6 +75,20 @@ export class EscalationsService {
         escalationReason: 'missed_check_in',
         sentAt: input.sentAt.toISOString(),
         responseWindowMinutes: input.responseWindowMinutes,
+      },
+    });
+  }
+
+  async escalateSenderRequestedBackup(input: EscalateSenderRequestedBackupInput): Promise<EscalateHelpResponseResult> {
+    return await this.escalateBackupContacts({
+      receiverId: input.receiverId,
+      checkInId: input.checkInId,
+      templateKey: 'backup_contact_sender_requested_alert',
+      auditMetadata: {
+        escalationReason: 'sender_requested',
+      },
+      noContactsMetadata: {
+        escalationReason: 'sender_requested',
       },
     });
   }

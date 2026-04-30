@@ -1,6 +1,7 @@
 export { supabase, getCurrentUser, getSession } from './supabase';
 export type { Database } from './database.types';
 export {
+  alertBackupForReceiverCheckIn,
   createBackupContact,
   createReceiver,
   deleteBackupContact,
@@ -15,6 +16,7 @@ export {
   resolveReceiverCheckIn,
   resumeReceiver,
   syncAuthenticatedUser,
+  tryReceiverCheckInLater,
   updateBackupContact,
   updateReceiver,
   type BackupContactSetupInput,

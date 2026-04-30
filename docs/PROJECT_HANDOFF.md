@@ -1860,7 +1860,50 @@ In-app browser smoke passed on `http://localhost:8084/admin-operations/7e207653-
 - displayed check-in and receiver UUIDs only
 - no names, phone numbers, transcripts, or message body content appeared in the DOM snapshot
 
-### 27. Next Planned Slice
+### 27. Sender escalation actions - completed 2026-04-30
+
+Completed sender-facing escalation decision actions from receiver detail:
+
+- Added authenticated backend endpoints:
+  - `PATCH /receivers/:receiverId/check-ins/:checkInId/alert-backup`
+  - `PATCH /receivers/:receiverId/check-ins/:checkInId/try-later`
+- Both endpoints:
+  - verify the sender Supabase bearer token
+  - scope the action through sender-owned, non-deleted receiver detail
+  - require the target check-in to be the latest check-in for that receiver
+  - reject non-actionable states
+- `alert-backup`:
+  - allowed for latest `RESPONDED_HELP`, `FAILED`, and `SKIPPED` check-ins
+  - writes `check_in.backup_alert_requested` as a user audit event
+  - reuses `EscalationsService.escalateSenderRequestedBackup`
+  - sends `backup_contact_sender_requested_alert` through the existing backup escalation delivery path
+  - audit metadata remains limited to IDs, previous status, counts, channels, and operational reason
+- `try-later`:
+  - allowed for latest `SENT`, `RESPONDED_HELP`, `FAILED`, and `SKIPPED` check-ins
+  - writes `check_in.try_later_requested`
+  - does not send provider messages in this slice
+- Receiver detail UI now shows contextual actions:
+  - `Alert backup contacts`
+  - `Try again later`
+  - `Mark resolved`
+
+Verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- src/modules/receivers/receivers.service.spec.ts src/modules/receivers/receivers.controller.spec.ts src/modules/escalations/escalations.service.spec.ts
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/mobile run type-check
+```
+
+In-app browser smoke passed on `http://localhost:8084/receivers/c2852756-939f-4c9f-9f01-5580fcc7d15c`:
+
+- displayed latest check-in status `Skipped`
+- displayed `Alert backup contacts`
+- displayed `Try again later`
+- displayed `Mark resolved`
+- no transcripts or message body content appeared in the DOM snapshot
+
+### 28. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1868,7 +1911,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 28. Production readiness checklist
+### 29. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1900,7 +1943,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 29. Later, after local fake flow is proven
+### 30. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

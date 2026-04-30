@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { TextInput } from '../../../components/auth';
 import {
+  alertBackupForReceiverCheckIn,
   createBackupContact,
   deleteBackupContact,
   deleteReceiver,
@@ -11,6 +12,7 @@ import {
   pauseReceiver,
   resolveReceiverCheckIn,
   resumeReceiver,
+  tryReceiverCheckInLater,
   updateBackupContact,
   updateReceiver,
   type BackupContactSetupInput,
@@ -189,6 +191,8 @@ export default function ReceiverDetailScreen() {
   };
 
   const canResolveLatestCheckIn = ['RESPONDED_HELP', 'ESCALATED', 'FAILED', 'SKIPPED'].includes(receiver.latestCheckIn?.status ?? '');
+  const canAlertBackupForLatestCheckIn = ['RESPONDED_HELP', 'FAILED', 'SKIPPED'].includes(receiver.latestCheckIn?.status ?? '');
+  const canTryLatestCheckInLater = ['SENT', 'RESPONDED_HELP', 'FAILED', 'SKIPPED'].includes(receiver.latestCheckIn?.status ?? '');
 
   const resolveLatestCheckIn = async () => {
     if (!id || !receiver.latestCheckIn || !canResolveLatestCheckIn) return;
@@ -199,6 +203,34 @@ export default function ReceiverDetailScreen() {
       setReceiver(await resolveReceiverCheckIn(id, receiver.latestCheckIn.id));
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unable to mark check-in resolved');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const alertBackupForLatestCheckIn = async () => {
+    if (!id || !receiver.latestCheckIn || !canAlertBackupForLatestCheckIn) return;
+
+    try {
+      setIsSaving(true);
+      setActionError(null);
+      setReceiver(await alertBackupForReceiverCheckIn(id, receiver.latestCheckIn.id));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to alert backup contacts');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const tryLatestCheckInLater = async () => {
+    if (!id || !receiver.latestCheckIn || !canTryLatestCheckInLater) return;
+
+    try {
+      setIsSaving(true);
+      setActionError(null);
+      setReceiver(await tryReceiverCheckInLater(id, receiver.latestCheckIn.id));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to record try later');
     } finally {
       setIsSaving(false);
     }
@@ -493,10 +525,24 @@ export default function ReceiverDetailScreen() {
         <InfoRow label="Sent" value={formatDateTime(receiver.latestCheckIn?.sentAt)} />
         <InfoRow label="Responded" value={formatDateTime(receiver.latestCheckIn?.respondedAt)} />
         <InfoRow label="Resolved" value={formatDateTime(receiver.latestCheckIn?.resolvedAt)} />
-        {canResolveLatestCheckIn ? (
-          <Pressable style={styles.resolveButton} onPress={resolveLatestCheckIn} disabled={isSaving}>
-            <Text style={styles.resolveButtonText}>{isSaving ? 'Saving...' : 'Mark resolved'}</Text>
-          </Pressable>
+        {canAlertBackupForLatestCheckIn || canTryLatestCheckInLater || canResolveLatestCheckIn ? (
+          <View style={styles.checkInActionStack}>
+            {canAlertBackupForLatestCheckIn ? (
+              <Pressable style={styles.resolveButton} onPress={alertBackupForLatestCheckIn} disabled={isSaving}>
+                <Text style={styles.resolveButtonText}>{isSaving ? 'Saving...' : 'Alert backup contacts'}</Text>
+              </Pressable>
+            ) : null}
+            {canTryLatestCheckInLater ? (
+              <Pressable style={styles.secondaryActionButton} onPress={tryLatestCheckInLater} disabled={isSaving}>
+                <Text style={styles.secondaryButtonText}>{isSaving ? 'Saving...' : 'Try again later'}</Text>
+              </Pressable>
+            ) : null}
+            {canResolveLatestCheckIn ? (
+              <Pressable style={styles.secondaryActionButton} onPress={resolveLatestCheckIn} disabled={isSaving}>
+                <Text style={styles.secondaryButtonText}>{isSaving ? 'Saving...' : 'Mark resolved'}</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : null}
       </View>
 
@@ -898,12 +944,23 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     alignItems: 'center',
     backgroundColor: colors.primary,
-    marginTop: spacing.md,
   },
   resolveButtonText: {
     color: colors.textOnPrimary,
     fontSize: fontSize.sm,
     fontWeight: '600',
+  },
+  checkInActionStack: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  secondaryActionButton: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    backgroundColor: colors.surface,
   },
   primaryActionButton: {
     flex: 1,

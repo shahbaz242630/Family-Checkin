@@ -287,6 +287,28 @@ export async function resolveReceiverCheckIn(receiverId: string, checkInId: stri
   return response.receiver;
 }
 
+export async function alertBackupForReceiverCheckIn(receiverId: string, checkInId: string): Promise<BackendReceiverDetail> {
+  const response = await backendRequest<{ receiver: BackendReceiverDetail }>(
+    `/receivers/${receiverId}/check-ins/${checkInId}/alert-backup`,
+    {
+      method: 'PATCH',
+    },
+  );
+
+  return response.receiver;
+}
+
+export async function tryReceiverCheckInLater(receiverId: string, checkInId: string): Promise<BackendReceiverDetail> {
+  const response = await backendRequest<{ receiver: BackendReceiverDetail }>(
+    `/receivers/${receiverId}/check-ins/${checkInId}/try-later`,
+    {
+      method: 'PATCH',
+    },
+  );
+
+  return response.receiver;
+}
+
 export async function listBackupContacts(receiverId: string): Promise<BackendBackupContact[]> {
   const response = await backendRequest<{ backupContacts: BackendBackupContact[] }>(`/receivers/${receiverId}/backup-contacts`, {
     method: 'GET',

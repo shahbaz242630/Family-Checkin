@@ -2,6 +2,7 @@ import { AbuseReportStatus, ActorType, Channel, CheckInStatus, ConsentStatus, Re
 import { describe, expect, it } from 'vitest';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
+import type { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type {
   CreateReceiverRecordInput,
@@ -219,6 +220,21 @@ class InMemoryAuditService {
       id: '04dc851f-5cb1-4d3c-9d6b-1b015b9af62f',
       createdAt: new Date('2026-04-26T10:00:00.000Z'),
       ...input,
+    };
+  }
+}
+
+class InMemoryEscalationsService {
+  public senderRequestedBackups: Array<{ receiverId: string; checkInId: string }> = [];
+
+  async escalateSenderRequestedBackup(input: { receiverId: string; checkInId: string }) {
+    this.senderRequestedBackups.push(input);
+    return {
+      checkInId: input.checkInId,
+      status: CheckInStatus.ESCALATED,
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
     };
   }
 }
@@ -820,6 +836,204 @@ describe('ReceiversService', () => {
         userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
         receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
         checkInId: 'older-actionable-check-in',
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it('alerts backup contacts for an actionable latest check-in after sender confirmation', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const crypto = new CryptoService(masterKey);
+    const escalations = new InMemoryEscalationsService();
+    repository.receiversForUser = [
+      {
+        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        nameEncrypted: crypto.encrypt('Fatima Parent'),
+        phoneEncrypted: crypto.encrypt('+971501234567'),
+        phoneHash: crypto.hashForLookup('+971501234567'),
+        countryCode: 'AE',
+        relationshipType: RelationshipType.PARENT,
+        language: 'en',
+        timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+        consentStatus: ConsentStatus.GRANTED,
+        latestCheckIn: {
+          id: 'check-in-1',
+          status: CheckInStatus.RESPONDED_HELP,
+          scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+          channelUsed: Channel.SMS,
+          sentAt: new Date('2026-04-30T06:01:00.000Z'),
+          respondedAt: new Date('2026-04-30T06:20:00.000Z'),
+        },
+        createdAt: new Date('2026-04-26T08:00:00.000Z'),
+        updatedAt: new Date('2026-04-30T06:20:00.000Z'),
+      },
+    ];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      audit as unknown as AuditService,
+      escalations as unknown as EscalationsService,
+    );
+
+    const receiver = await service.alertBackupForSender({
+      userId: '  61a5639c-c902-4950-9924-1a4d6db1e02d  ',
+      receiverId: '  1aef91f9-64c9-4548-baa5-d70b52386efb  ',
+      checkInId: '  check-in-1  ',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+
+    expect(escalations.senderRequestedBackups).toEqual([
+      {
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'check-in-1',
+      },
+    ]);
+    expect(receiver?.latestCheckIn).toMatchObject({
+      id: 'check-in-1',
+      status: CheckInStatus.RESPONDED_HELP,
+    });
+    expect(audit.events[0]).toEqual({
+      entityType: 'check_in',
+      entityId: 'check-in-1',
+      action: 'check_in.backup_alert_requested',
+      actorType: ActorType.USER,
+      actorId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      metadata: {
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        previousStatus: CheckInStatus.RESPONDED_HELP,
+      },
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+    expect(JSON.stringify(audit.events)).not.toContain('+971501234567');
+    expect(JSON.stringify(audit.events)).not.toContain('Fatima Parent');
+  });
+
+  it('records try-later for an actionable latest check-in without sending backup alerts', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const crypto = new CryptoService(masterKey);
+    repository.receiversForUser = [
+      {
+        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        nameEncrypted: crypto.encrypt('Fatima Parent'),
+        phoneEncrypted: crypto.encrypt('+971501234567'),
+        phoneHash: crypto.hashForLookup('+971501234567'),
+        countryCode: 'AE',
+        relationshipType: RelationshipType.PARENT,
+        language: 'en',
+        timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+        consentStatus: ConsentStatus.GRANTED,
+        latestCheckIn: {
+          id: 'check-in-1',
+          status: CheckInStatus.SKIPPED,
+          scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+          channelUsed: Channel.SMS,
+          sentAt: new Date('2026-04-30T06:01:00.000Z'),
+        },
+        createdAt: new Date('2026-04-26T08:00:00.000Z'),
+        updatedAt: new Date('2026-04-30T06:20:00.000Z'),
+      },
+    ];
+    const escalations = new InMemoryEscalationsService();
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      audit as unknown as AuditService,
+      escalations as unknown as EscalationsService,
+    );
+
+    const receiver = await service.tryCheckInLaterForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      checkInId: 'check-in-1',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+
+    expect(escalations.senderRequestedBackups).toEqual([]);
+    expect(receiver?.latestCheckIn).toMatchObject({
+      id: 'check-in-1',
+      status: CheckInStatus.SKIPPED,
+    });
+    expect(audit.events).toEqual([
+      {
+        entityType: 'check_in',
+        entityId: 'check-in-1',
+        action: 'check_in.try_later_requested',
+        actorType: ActorType.USER,
+        actorId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        metadata: {
+          receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+          previousStatus: CheckInStatus.SKIPPED,
+        },
+        ipAddress: '203.0.113.10',
+        userAgent: 'Nearby Mobile/1.0',
+      },
+    ]);
+  });
+
+  it('returns null when sender check-in actions target non-actionable or non-latest check-ins', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const crypto = new CryptoService(masterKey);
+    repository.receiversForUser = [
+      {
+        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        nameEncrypted: crypto.encrypt('Fatima Parent'),
+        phoneEncrypted: crypto.encrypt('+971501234567'),
+        phoneHash: crypto.hashForLookup('+971501234567'),
+        countryCode: 'AE',
+        relationshipType: RelationshipType.PARENT,
+        language: 'en',
+        timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+        consentStatus: ConsentStatus.GRANTED,
+        latestCheckIn: {
+          id: 'latest-check-in',
+          status: CheckInStatus.RESPONDED_OK,
+          scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+        },
+        createdAt: new Date('2026-04-26T08:00:00.000Z'),
+        updatedAt: new Date('2026-04-30T06:20:00.000Z'),
+      },
+    ];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      new InMemoryEscalationsService() as unknown as EscalationsService,
+    );
+
+    await expect(
+      service.alertBackupForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'latest-check-in',
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      service.tryCheckInLaterForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'older-check-in',
       }),
     ).resolves.toBeNull();
   });
