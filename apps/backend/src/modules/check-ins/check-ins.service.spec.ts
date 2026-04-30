@@ -61,6 +61,10 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     return null;
   }
 
+  async findLatestActionableForReceiver(_receiverId: string): Promise<CheckInRecord | null> {
+    return null;
+  }
+
   async markResponded(input: MarkCheckInRespondedInput): Promise<CheckInRecord> {
     return {
       id: input.checkInId,
@@ -72,6 +76,18 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
       responseTranscript: input.responseTranscript,
       createdAt: input.respondedAt,
       updatedAt: input.respondedAt,
+    };
+  }
+
+  async markResolvedByBackupContact(input: { checkInId: string; resolvedAt: Date }): Promise<CheckInRecord> {
+    return {
+      id: input.checkInId,
+      receiverId: 'receiver-1',
+      scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+      status: CheckInStatus.RESOLVED,
+      resolvedAt: input.resolvedAt,
+      createdAt: input.resolvedAt,
+      updatedAt: input.resolvedAt,
     };
   }
 

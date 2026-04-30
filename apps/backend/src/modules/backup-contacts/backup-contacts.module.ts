@@ -26,6 +26,6 @@ import { PrismaBackupContactsRepository } from './prisma-backup-contacts.reposit
     },
     BackupContactsService,
   ],
-  exports: [BackupContactsService],
+  exports: [BackupContactsService, BACKUP_CONTACTS_REPOSITORY],
 })
 export class BackupContactsModule {}

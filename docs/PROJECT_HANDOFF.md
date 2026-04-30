@@ -1903,15 +1903,57 @@ In-app browser smoke passed on `http://localhost:8084/receivers/c2852756-939f-4c
 - displayed `Mark resolved`
 - no transcripts or message body content appeared in the DOM snapshot
 
-### 28. Next Planned Slice
+### 28. Backup contact DONE reply handling - completed 2026-04-30
+
+Completed backend closure path for backup-contact replies:
+
+- Existing fake inbound endpoint now supports backup contacts:
+  - `POST /receiver-replies/fake`
+  - first matches active receivers by normalized phone hash
+  - if no receiver matches, matches active backup contacts by normalized phone hash
+- Backup contact reply behavior:
+  - accepts `DONE`, `CHECKED`, and `RESOLVED` as closure confirmations
+  - finds the latest actionable check-in for the backup contact's receiver
+  - actionable statuses are:
+    - `RESPONDED_HELP`
+    - `ESCALATED`
+    - `FAILED`
+    - `SKIPPED`
+  - marks the check-in `RESOLVED` and sets `resolvedAt`
+  - returns `backupContactId`, `receiverId`, `checkInId`, and resolved status from the fake endpoint
+- Audit event:
+  - `check_in.resolved_by_backup`
+  - metadata includes only `receiverId`, `backupContactId`, channel, normalized reply, and provider message id
+  - no raw backup names, receiver names, phone numbers, transcripts, notes, or message bodies are stored in audit metadata
+- Repository updates:
+  - `BackupContactsRepository.findActiveByPhoneHash`
+  - `CheckInsRepository.findLatestActionableForReceiver`
+  - `CheckInsRepository.markResolvedByBackupContact`
+- This completes the core BRD closure loop where a backup contact can confirm they checked on the receiver.
+
+Verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- src/modules/receivers/receiver-reply.service.spec.ts src/modules/check-ins/prisma-check-ins.repository.spec.ts src/modules/backup-contacts/prisma-backup-contacts.repository.spec.ts src/modules/check-ins/check-ins.service.spec.ts src/modules/backup-contacts/backup-contacts.service.spec.ts
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run build
+```
+
+Full backend suite passed: 34 files, 149 tests.
+
+### 29. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
-- Continue escalation cascade behavior:
-  - keep provider sends behind the channel-router abstraction
-  - audit escalation events without raw PII
+- Add real provider webhook adapter controllers:
+  - WhatsApp/SMS inbound receiver replies
+  - WhatsApp/SMS inbound backup contact replies
+  - keep all vendor payload parsing at the edge
+  - route normalized replies into existing reply services
+  - keep audit metadata free of raw PII
 
-### 29. Production readiness checklist
+### 30. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1943,7 +1985,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 30. Later, after local fake flow is proven
+### 31. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

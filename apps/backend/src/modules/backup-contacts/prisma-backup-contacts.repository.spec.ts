@@ -2,6 +2,55 @@ import { describe, expect, it, vi } from 'vitest';
 import { PrismaBackupContactsRepository } from './prisma-backup-contacts.repository';
 
 describe('PrismaBackupContactsRepository', () => {
+  it('finds an active backup contact by phone hash without selecting receiver PII', async () => {
+    const findFirst = vi.fn().mockResolvedValue({
+      id: 'contact-1',
+      receiverId: 'receiver-1',
+      nameEncrypted: 'encrypted-name',
+      phoneEncrypted: 'encrypted-phone',
+      phoneHash: 'phone-hash',
+      relationshipToReceiver: 'Cousin',
+      locationInstructionsEncrypted: null,
+      priorityOrder: 0,
+      deletedAt: null,
+      createdAt: new Date('2026-04-28T10:00:00.000Z'),
+    });
+    const repository = new PrismaBackupContactsRepository({
+      receiver: { findFirst: vi.fn() },
+      backupContact: {
+        findMany: vi.fn(),
+        count: vi.fn(),
+        create: vi.fn(),
+        findFirst,
+        updateMany: vi.fn(),
+      },
+    });
+
+    const contact = await repository.findActiveByPhoneHash('phone-hash');
+
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        phoneHash: 'phone-hash',
+        deletedAt: null,
+        receiver: { deletedAt: null },
+      },
+    });
+    expect(contact).toEqual({
+      id: 'contact-1',
+      receiverId: 'receiver-1',
+      nameEncrypted: 'encrypted-name',
+      phoneEncrypted: 'encrypted-phone',
+      phoneHash: 'phone-hash',
+      relationshipToReceiver: 'Cousin',
+      locationInstructionsEncrypted: undefined,
+      priorityOrder: 0,
+      deletedAt: undefined,
+      createdAt: new Date('2026-04-28T10:00:00.000Z'),
+    });
+    expect(JSON.stringify(findFirst.mock.calls)).not.toContain('receiver.name');
+    expect(JSON.stringify(findFirst.mock.calls)).not.toContain('receiver.phone');
+  });
+
   it('lists active backup contacts scoped to receiver ownership', async () => {
     const receiverFindFirst = vi.fn().mockResolvedValue({ id: 'receiver-1' });
     const backupContactFindMany = vi.fn().mockResolvedValue([]);

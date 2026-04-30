@@ -21,6 +21,10 @@ class InMemoryBackupContactsRepository implements BackupContactsRepository {
   public lastUpdateInput: UpdateBackupContactRecordInput | null = null;
   public lastDeleteInput: DeleteBackupContactRecordInput | null = null;
 
+  async findActiveByPhoneHash(phoneHash: string): Promise<BackupContactRecord | null> {
+    return this.contacts.find((contact) => contact.phoneHash === phoneHash && !contact.deletedAt) ?? null;
+  }
+
   async findManyForReceiverForUser(input: { userId: string; receiverId: string }): Promise<BackupContactRecord[] | null> {
     if (!this.receiverExists) return null;
     return this.contacts.filter((contact) => contact.receiverId === input.receiverId && !contact.deletedAt);

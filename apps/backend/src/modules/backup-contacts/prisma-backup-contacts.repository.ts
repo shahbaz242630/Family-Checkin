@@ -34,7 +34,9 @@ interface BackupContactsPrismaClient {
       };
     }): Promise<BackupContact>;
     findFirst(args: {
-      where: { id: string; receiverId: string; deletedAt?: null };
+      where:
+        | { id: string; receiverId: string; deletedAt?: null }
+        | { phoneHash: string; deletedAt: null; receiver: { deletedAt: null } };
     }): Promise<BackupContact | null>;
     updateMany(args: {
       where: { id: string; receiverId: string; deletedAt: null };
@@ -53,6 +55,18 @@ interface BackupContactsPrismaClient {
 @Injectable()
 export class PrismaBackupContactsRepository implements BackupContactsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: BackupContactsPrismaClient | PrismaService) {}
+
+  async findActiveByPhoneHash(phoneHash: string): Promise<BackupContactRecord | null> {
+    const contact = await this.prisma.backupContact.findFirst({
+      where: {
+        phoneHash,
+        deletedAt: null,
+        receiver: { deletedAt: null },
+      },
+    });
+
+    return contact ? this.toRecord(contact) : null;
+  }
 
   async findManyForReceiverForUser(input: { userId: string; receiverId: string }): Promise<BackupContactRecord[] | null> {
     const ownsReceiver = await this.receiverExistsForUser(input);

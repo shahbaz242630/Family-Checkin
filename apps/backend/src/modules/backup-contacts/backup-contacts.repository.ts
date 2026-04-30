@@ -41,6 +41,7 @@ export interface BackupContactRecord {
 }
 
 export interface BackupContactsRepository {
+  findActiveByPhoneHash(phoneHash: string): Promise<BackupContactRecord | null>;
   findManyForReceiverForUser(input: { userId: string; receiverId: string }): Promise<BackupContactRecord[] | null>;
   countActiveForReceiverForUser(input: { userId: string; receiverId: string }): Promise<number | null>;
   createForReceiverForUser(input: CreateBackupContactRecordInput): Promise<BackupContactRecord | null>;

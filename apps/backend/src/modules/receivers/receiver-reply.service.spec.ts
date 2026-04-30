@@ -10,12 +10,14 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
+import type { BackupContactRecord, BackupContactsRepository } from '../backup-contacts/backup-contacts.repository';
 import type {
   CheckInRecord,
   CheckInsRepository,
   CheckInReceiverCandidate,
   CreatePendingCheckInInput,
   MarkCheckInSentInput,
+  ResolveCheckInByBackupContactInput,
   FindOverdueSentCheckInsInput,
 } from '../check-ins/check-ins.repository';
 import { CryptoService } from '../../shared/crypto/crypto.service';
@@ -217,8 +219,37 @@ class InMemoryReceiversRepository implements ReceiversRepository {
   }
 }
 
+class InMemoryBackupContactsRepository implements BackupContactsRepository {
+  public records: BackupContactRecord[] = [];
+
+  async findActiveByPhoneHash(phoneHash: string): Promise<BackupContactRecord | null> {
+    return this.records.find((contact) => contact.phoneHash === phoneHash && !contact.deletedAt) ?? null;
+  }
+
+  async findManyForReceiverForUser(): Promise<BackupContactRecord[] | null> {
+    return [];
+  }
+
+  async countActiveForReceiverForUser(): Promise<number | null> {
+    return 0;
+  }
+
+  async createForReceiverForUser(): Promise<BackupContactRecord | null> {
+    return null;
+  }
+
+  async updateForReceiverForUser(): Promise<BackupContactRecord | null> {
+    return null;
+  }
+
+  async deleteForReceiverForUser(): Promise<BackupContactRecord | null> {
+    return null;
+  }
+}
+
 class InMemoryCheckInsRepository implements CheckInsRepository {
   public openCheckIn: CheckInRecord | null = null;
+  public actionableCheckIn: CheckInRecord | null = null;
   public responseUpdate:
     | {
         checkInId: string;
@@ -228,6 +259,7 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
         responseTranscript: string;
       }
     | null = null;
+  public backupResolution: ResolveCheckInByBackupContactInput | null = null;
 
   async findReceiversDueForCheckIn(_now: Date): Promise<CheckInReceiverCandidate[]> {
     return [];
@@ -261,6 +293,10 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     return this.openCheckIn?.receiverId === receiverId ? this.openCheckIn : null;
   }
 
+  async findLatestActionableForReceiver(receiverId: string): Promise<CheckInRecord | null> {
+    return this.actionableCheckIn?.receiverId === receiverId ? this.actionableCheckIn : null;
+  }
+
   async markResponded(input: {
     checkInId: string;
     status: CheckInStatus;
@@ -279,6 +315,23 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
       responseTranscript: input.responseTranscript,
       createdAt: this.openCheckIn?.createdAt ?? input.respondedAt,
       updatedAt: input.respondedAt,
+    };
+  }
+
+  async markResolvedByBackupContact(input: ResolveCheckInByBackupContactInput): Promise<CheckInRecord> {
+    this.backupResolution = input;
+    return {
+      id: input.checkInId,
+      receiverId: this.actionableCheckIn?.receiverId ?? 'receiver-1',
+      scheduledAt: this.actionableCheckIn?.scheduledAt ?? input.resolvedAt,
+      status: CheckInStatus.RESOLVED,
+      channelUsed: this.actionableCheckIn?.channelUsed,
+      sentAt: this.actionableCheckIn?.sentAt,
+      respondedAt: this.actionableCheckIn?.respondedAt,
+      responseDetectedAs: this.actionableCheckIn?.responseDetectedAs,
+      resolvedAt: input.resolvedAt,
+      createdAt: this.actionableCheckIn?.createdAt ?? input.resolvedAt,
+      updatedAt: input.resolvedAt,
     };
   }
 
@@ -326,6 +379,7 @@ describe('ReceiverReplyService', () => {
       new InMemoryCheckInsRepository(),
       crypto,
       audit as unknown as AuditService,
+      undefined,
       undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
     );
@@ -384,6 +438,7 @@ describe('ReceiverReplyService', () => {
       crypto,
       audit as unknown as AuditService,
       undefined,
+      undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
     );
 
@@ -428,6 +483,7 @@ describe('ReceiverReplyService', () => {
       new InMemoryCheckInsRepository(),
       crypto,
       audit as unknown as AuditService,
+      undefined,
       undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
     );
@@ -475,6 +531,7 @@ describe('ReceiverReplyService', () => {
       new InMemoryCheckInsRepository(),
       crypto,
       audit as unknown as AuditService,
+      undefined,
       undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
     );
@@ -536,6 +593,7 @@ describe('ReceiverReplyService', () => {
       checkIns,
       crypto,
       audit as unknown as AuditService,
+      undefined,
       undefined,
       () => new Date('2026-04-27T05:45:00.000Z'),
     );
@@ -604,6 +662,7 @@ describe('ReceiverReplyService', () => {
       crypto,
       audit as unknown as AuditService,
       escalations,
+      undefined,
       () => new Date('2026-04-27T05:45:00.000Z'),
     );
 
@@ -643,6 +702,99 @@ describe('ReceiverReplyService', () => {
       },
     ]);
   });
+
+  it('marks the latest actionable check-in resolved when an active backup contact replies DONE', async () => {
+    const crypto = new CryptoService(masterKey);
+    const receivers = new InMemoryReceiversRepository();
+    const backupContacts = new InMemoryBackupContactsRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    backupContacts.records.push(backupContactFixture(crypto));
+    checkIns.actionableCheckIn = {
+      ...checkInFixture(CheckInStatus.ESCALATED),
+      respondedAt: new Date('2026-04-27T05:45:00.000Z'),
+      responseDetectedAs: 'help',
+    };
+    const service = new ReceiverReplyService(
+      receivers,
+      checkIns,
+      crypto,
+      audit as unknown as AuditService,
+      undefined,
+      backupContacts,
+      () => new Date('2026-04-27T06:30:00.000Z'),
+    );
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971509999999',
+      channel: Channel.WHATSAPP,
+      body: ' done ',
+      providerMessageId: 'backup-message-1',
+      providerReceivedAt: new Date('2026-04-27T06:30:00.000Z'),
+    });
+
+    expect(result).toEqual({
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      backupContactId: 'backup-contact-1',
+      action: 'check_in_resolved_by_backup',
+      checkInId: 'check-in-1',
+      checkInStatus: CheckInStatus.RESOLVED,
+    });
+    expect(checkIns.backupResolution).toEqual({
+      checkInId: 'check-in-1',
+      resolvedAt: new Date('2026-04-27T06:30:00.000Z'),
+    });
+    expect(audit.events).toEqual([
+      {
+        entityType: 'check_in',
+        entityId: 'check-in-1',
+        action: 'check_in.resolved_by_backup',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+          backupContactId: 'backup-contact-1',
+          channel: Channel.WHATSAPP,
+          normalizedReply: 'DONE',
+          providerMessageId: 'backup-message-1',
+        },
+        ipAddress: undefined,
+        userAgent: undefined,
+      },
+    ]);
+    expect(JSON.stringify(audit.events)).not.toContain('phone');
+    expect(JSON.stringify(audit.events)).not.toContain('name');
+    expect(JSON.stringify(audit.events)).not.toContain('message body');
+  });
+
+  it('rejects unsupported backup contact replies without resolving check-ins', async () => {
+    const crypto = new CryptoService(masterKey);
+    const receivers = new InMemoryReceiversRepository();
+    const backupContacts = new InMemoryBackupContactsRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    backupContacts.records.push(backupContactFixture(crypto));
+    checkIns.actionableCheckIn = checkInFixture(CheckInStatus.ESCALATED);
+    const service = new ReceiverReplyService(
+      receivers,
+      checkIns,
+      crypto,
+      audit as unknown as AuditService,
+      undefined,
+      backupContacts,
+      () => new Date('2026-04-27T06:30:00.000Z'),
+    );
+
+    await expect(
+      service.handleInboundReply({
+        fromPhone: '+971509999999',
+        channel: Channel.SMS,
+        body: 'hello',
+      }),
+    ).rejects.toThrow('Unsupported backup contact reply');
+
+    expect(checkIns.backupResolution).toBeNull();
+    expect(audit.events).toEqual([]);
+  });
 });
 
 function receiverFixture(crypto: CryptoService): ReceiverRecord {
@@ -681,5 +833,18 @@ function checkInFixture(status: CheckInStatus): CheckInRecord {
     sentAt: new Date('2026-04-27T05:30:00.000Z'),
     createdAt: new Date('2026-04-27T05:30:00.000Z'),
     updatedAt: new Date('2026-04-27T05:30:00.000Z'),
+  };
+}
+
+function backupContactFixture(crypto: CryptoService): BackupContactRecord {
+  return {
+    id: 'backup-contact-1',
+    receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    nameEncrypted: crypto.encrypt('Backup Contact'),
+    phoneEncrypted: crypto.encrypt('+971509999999'),
+    phoneHash: crypto.hashForLookup('+971509999999'),
+    relationshipToReceiver: 'Cousin',
+    priorityOrder: 0,
+    createdAt: new Date('2026-04-26T10:00:00.000Z'),
   };
 }

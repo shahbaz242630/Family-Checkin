@@ -13,7 +13,10 @@ interface FakeInboundReceiverReplyResponse {
   ok: true;
   receiverId: string;
   action: string;
-  consentStatus: ConsentStatus;
+  consentStatus?: ConsentStatus;
+  checkInId?: string;
+  checkInStatus?: string;
+  backupContactId?: string;
 }
 
 @Controller('receiver-replies')

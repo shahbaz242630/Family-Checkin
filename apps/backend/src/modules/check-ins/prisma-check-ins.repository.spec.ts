@@ -212,6 +212,78 @@ describe('PrismaCheckInsRepository', () => {
     });
   });
 
+  it('finds latest actionable check-in and marks it resolved by backup contact', async () => {
+    const findFirst = vi.fn().mockResolvedValue({
+      id: 'check-in-1',
+      receiverId: 'receiver-1',
+      scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+      status: CheckInStatus.ESCALATED,
+      channelUsed: Channel.WHATSAPP,
+      sentAt: new Date('2026-04-27T05:30:00.000Z'),
+      respondedAt: new Date('2026-04-27T05:45:00.000Z'),
+      responseTranscript: null,
+      responseDetectedAs: 'help',
+      resolvedAt: null,
+      resolutionNote: null,
+      resolutionByUserId: null,
+      createdAt: new Date('2026-04-27T05:30:00.000Z'),
+      updatedAt: new Date('2026-04-27T05:45:00.000Z'),
+    });
+    const update = vi.fn().mockResolvedValue({
+      id: 'check-in-1',
+      receiverId: 'receiver-1',
+      scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+      status: CheckInStatus.RESOLVED,
+      channelUsed: Channel.WHATSAPP,
+      sentAt: new Date('2026-04-27T05:30:00.000Z'),
+      respondedAt: new Date('2026-04-27T05:45:00.000Z'),
+      responseTranscript: null,
+      responseDetectedAs: 'help',
+      resolvedAt: new Date('2026-04-27T06:30:00.000Z'),
+      resolutionNote: null,
+      resolutionByUserId: null,
+      createdAt: new Date('2026-04-27T05:30:00.000Z'),
+      updatedAt: new Date('2026-04-27T06:30:00.000Z'),
+    });
+    const repository = new PrismaCheckInsRepository({
+      receiver: {
+        findMany: vi.fn(),
+      },
+      checkIn: {
+        create: vi.fn(),
+        findFirst,
+        findMany: vi.fn(),
+        update,
+      },
+    });
+
+    await repository.findLatestActionableForReceiver('receiver-1');
+    const resolved = await repository.markResolvedByBackupContact({
+      checkInId: 'check-in-1',
+      resolvedAt: new Date('2026-04-27T06:30:00.000Z'),
+    });
+
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        receiverId: 'receiver-1',
+        status: { in: [CheckInStatus.RESPONDED_HELP, CheckInStatus.ESCALATED, CheckInStatus.FAILED, CheckInStatus.SKIPPED] },
+      },
+      orderBy: { scheduledAt: 'desc' },
+    });
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'check-in-1' },
+      data: {
+        status: CheckInStatus.RESOLVED,
+        resolvedAt: new Date('2026-04-27T06:30:00.000Z'),
+      },
+    });
+    expect(resolved).toMatchObject({
+      id: 'check-in-1',
+      status: CheckInStatus.RESOLVED,
+      resolvedAt: new Date('2026-04-27T06:30:00.000Z'),
+    });
+  });
+
   it('finds sent check-ins that are older than the response window', async () => {
     const findMany = vi.fn().mockResolvedValue([
       {

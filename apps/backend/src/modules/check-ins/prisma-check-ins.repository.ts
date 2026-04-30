@@ -72,6 +72,7 @@ interface CheckInsPrismaClient {
         respondedAt: Date;
         responseDetectedAs: string;
         responseTranscript: string;
+        resolvedAt: Date;
       }>;
     }): Promise<CheckIn>;
   };
@@ -153,6 +154,18 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return checkIn ? this.toCheckInRecord(checkIn) : null;
   }
 
+  async findLatestActionableForReceiver(receiverId: string): Promise<CheckInRecord | null> {
+    const checkIn = await this.prisma.checkIn.findFirst({
+      where: {
+        receiverId,
+        status: { in: [CheckInStatus.RESPONDED_HELP, CheckInStatus.ESCALATED, CheckInStatus.FAILED, CheckInStatus.SKIPPED] },
+      },
+      orderBy: { scheduledAt: 'desc' },
+    });
+
+    return checkIn ? this.toCheckInRecord(checkIn) : null;
+  }
+
   async markResponded(input: MarkCheckInRespondedInput): Promise<CheckInRecord> {
     const checkIn = await this.prisma.checkIn.update({
       where: { id: input.checkInId },
@@ -161,6 +174,18 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         respondedAt: input.respondedAt,
         responseDetectedAs: input.responseDetectedAs,
         responseTranscript: input.responseTranscript,
+      },
+    });
+
+    return this.toCheckInRecord(checkIn);
+  }
+
+  async markResolvedByBackupContact(input: { checkInId: string; resolvedAt: Date }): Promise<CheckInRecord> {
+    const checkIn = await this.prisma.checkIn.update({
+      where: { id: input.checkInId },
+      data: {
+        status: CheckInStatus.RESOLVED,
+        resolvedAt: input.resolvedAt,
       },
     });
 

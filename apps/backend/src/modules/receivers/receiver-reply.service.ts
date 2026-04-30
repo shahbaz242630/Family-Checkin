@@ -2,6 +2,8 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { AbuseReportStatus, ActorType, CheckInStatus, ConsentStatus } from '@prisma/client';
 import type { Channel } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import type { BackupContactsRepository } from '../backup-contacts/backup-contacts.repository';
+import { BACKUP_CONTACTS_REPOSITORY } from '../backup-contacts/backup-contacts.tokens';
 import type { CheckInRecord, CheckInsRepository } from '../check-ins/check-ins.repository';
 import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { EscalationsService } from '../escalations/escalations.service';
@@ -23,9 +25,10 @@ export interface HandleInboundReceiverReplyInput {
 export interface HandleInboundReceiverReplyResult {
   receiverId: string;
   action: string;
-  consentStatus: ConsentStatus;
+  consentStatus?: ConsentStatus;
   checkInId?: string;
   checkInStatus?: CheckInStatus;
+  backupContactId?: string;
 }
 
 @Injectable()
@@ -40,6 +43,9 @@ export class ReceiverReplyService {
     @Optional()
     @Inject(EscalationsService)
     private readonly escalationsService?: Pick<EscalationsService, 'escalateHelpResponse'>,
+    @Optional()
+    @Inject(BACKUP_CONTACTS_REPOSITORY)
+    private readonly backupContactsRepository?: Pick<BackupContactsRepository, 'findActiveByPhoneHash'>,
     private readonly now: () => Date = () => new Date(),
   ) {}
 
@@ -49,7 +55,11 @@ export class ReceiverReplyService {
     const receiver = await this.receiversRepository.findActiveByPhoneHash(phoneHash);
 
     if (!receiver) {
-      throw new Error('Receiver not found for inbound reply');
+      return this.handleBackupContactReply({
+        phoneHash,
+        input,
+        receivedAt,
+      });
     }
 
     const normalizedReply = this.normalizeReceiverReply(input.body);
@@ -150,6 +160,14 @@ export class ReceiverReplyService {
     }
     if (normalized === 'REPORT') {
       return 'REPORT';
+    }
+    return 'UNKNOWN';
+  }
+
+  private normalizeBackupContactReply(body: string): 'DONE' | 'UNKNOWN' {
+    const normalized = body.trim().toUpperCase();
+    if (['DONE', 'CHECKED', 'RESOLVED'].includes(normalized)) {
+      return 'DONE';
     }
     return 'UNKNOWN';
   }
@@ -272,6 +290,56 @@ export class ReceiverReplyService {
     }
 
     return { action, checkIn };
+  }
+
+  private async handleBackupContactReply(input: {
+    phoneHash: string;
+    input: HandleInboundReceiverReplyInput;
+    receivedAt: Date;
+  }): Promise<HandleInboundReceiverReplyResult> {
+    const backupContact = await this.backupContactsRepository?.findActiveByPhoneHash(input.phoneHash);
+    if (!backupContact) {
+      throw new Error('Receiver or backup contact not found for inbound reply');
+    }
+
+    const normalizedReply = this.normalizeBackupContactReply(input.input.body);
+    if (normalizedReply !== 'DONE') {
+      throw new Error('Unsupported backup contact reply');
+    }
+
+    const checkIn = await this.checkInsRepository.findLatestActionableForReceiver(backupContact.receiverId);
+    if (!checkIn) {
+      throw new Error('No actionable check-in found for backup contact reply');
+    }
+
+    const resolvedCheckIn = await this.checkInsRepository.markResolvedByBackupContact({
+      checkInId: checkIn.id,
+      resolvedAt: input.receivedAt,
+    });
+
+    await this.auditService.append({
+      entityType: 'check_in',
+      entityId: checkIn.id,
+      action: 'check_in.resolved_by_backup',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: backupContact.receiverId,
+        backupContactId: backupContact.id,
+        channel: input.input.channel,
+        normalizedReply,
+        providerMessageId: input.input.providerMessageId,
+      },
+      ipAddress: input.input.ipAddress,
+      userAgent: input.input.userAgent,
+    });
+
+    return {
+      receiverId: backupContact.receiverId,
+      backupContactId: backupContact.id,
+      action: 'check_in_resolved_by_backup',
+      checkInId: resolvedCheckIn.id,
+      checkInStatus: resolvedCheckIn.status,
+    };
   }
 
   private addDays(date: Date, days: number): Date {

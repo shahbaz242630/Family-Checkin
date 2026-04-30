@@ -52,6 +52,11 @@ export interface MarkCheckInRespondedInput {
   responseTranscript: string;
 }
 
+export interface ResolveCheckInByBackupContactInput {
+  checkInId: string;
+  resolvedAt: Date;
+}
+
 export interface FindOverdueSentCheckInsInput {
   overdueBefore: Date;
 }
@@ -61,6 +66,8 @@ export interface CheckInsRepository {
   createPending(input: CreatePendingCheckInInput): Promise<CheckInRecord>;
   markSent(input: MarkCheckInSentInput): Promise<CheckInRecord>;
   findLatestOpenForReceiver(receiverId: string): Promise<CheckInRecord | null>;
+  findLatestActionableForReceiver(receiverId: string): Promise<CheckInRecord | null>;
   markResponded(input: MarkCheckInRespondedInput): Promise<CheckInRecord>;
+  markResolvedByBackupContact(input: ResolveCheckInByBackupContactInput): Promise<CheckInRecord>;
   findOverdueSentCheckIns(input: FindOverdueSentCheckInsInput): Promise<CheckInRecord[]>;
 }
