@@ -1525,7 +1525,35 @@ npm.cmd --prefix apps/backend test -- operations.controller.spec.ts operations-r
 
 Focused suite passed: 3 files, 8 tests.
 
-### 18. Next Planned Slice
+### 18. Sender-facing escalation status labels - completed 2026-04-30
+
+Completed Expo/mobile visibility slice:
+
+- Added shared receiver status helper:
+  - `apps/mobile/src/utils/receiverStatus.ts`
+  - `apps/mobile/src/utils/receiverStatus.spec.ts`
+- Dashboard and receiver detail now share the same status mapping.
+- Escalation outcomes now render clearly for senders:
+  - `ESCALATED` -> `Backup alerted` with error tone
+  - `FAILED` -> `Escalation failed` with error tone
+  - `SKIPPED` -> `No backup available` with warning tone
+- Existing mappings are preserved:
+  - `RESPONDED_OK` -> `OK`
+  - `RESPONDED_HELP` -> `Needs help`
+  - `SENT` -> `Awaiting reply`
+  - consent pending/declined/revoked and paused states still show their previous sender-facing labels.
+- Backend API contract did not change.
+
+Focused verification:
+
+```powershell
+npx vitest run apps/mobile/src/utils/receiverStatus.spec.ts
+npm.cmd --prefix apps/mobile run type-check
+```
+
+Focused suite passed: 1 file, 4 tests. Mobile type-check passed.
+
+### 19. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1535,7 +1563,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 19. Production readiness checklist
+### 20. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1565,7 +1593,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 20. Later, after local fake flow is proven
+### 21. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import { useState, useCallback } from 'react';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { useProfile, useLovedOnes, LovedOne } from '../../hooks';
+import { getReceiverStatusDisplay, type ReceiverStatusTone } from '../../utils/receiverStatus';
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -104,8 +105,8 @@ function LovedOneCard({ lovedOne }: LovedOneCardProps) {
     ? `Daily at ${formatTime(lovedOne.schedule.time_local)}`
     : 'No schedule set';
   const isPaused = Boolean(lovedOne.paused_reason || lovedOne.paused_until);
-  const statusText = formatReceiverStatus(lovedOne.consent_status, lovedOne.latest_check_in_status, isPaused);
-  const statusColor = receiverStatusColor(lovedOne.consent_status, lovedOne.latest_check_in_status, isPaused);
+  const status = getReceiverStatusDisplay(lovedOne.consent_status, lovedOne.latest_check_in_status, isPaused);
+  const statusColor = receiverStatusColor(status.tone);
 
   // Get preferred channel
   const channels = lovedOne.preferred_channels;
@@ -136,7 +137,7 @@ function LovedOneCard({ lovedOne }: LovedOneCardProps) {
         </View>
         <View style={styles.lovedOneStatus}>
           <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
-          <Text style={styles.statusText}>{statusText}</Text>
+          <Text style={styles.statusText}>{status.label}</Text>
         </View>
       </View>
 
@@ -209,22 +210,10 @@ function formatRelationship(type: string): string {
   return labels[type] || type;
 }
 
-function formatReceiverStatus(consentStatus: string, latestCheckInStatus?: string, isPaused = false): string {
-  if (isPaused) return 'Paused';
-  if (consentStatus === 'PENDING') return 'Pending';
-  if (consentStatus === 'DECLINED') return 'Declined';
-  if (consentStatus === 'REVOKED') return 'Opted out';
-  if (latestCheckInStatus === 'RESPONDED_OK') return 'OK';
-  if (latestCheckInStatus === 'RESPONDED_HELP') return 'Needs help';
-  if (latestCheckInStatus === 'SENT') return 'Awaiting reply';
-  return 'Active';
-}
-
-function receiverStatusColor(consentStatus: string, latestCheckInStatus?: string, isPaused = false): string {
-  if (isPaused) return colors.warning;
-  if (latestCheckInStatus === 'RESPONDED_HELP') return colors.error;
-  if (consentStatus === 'PENDING' || latestCheckInStatus === 'SENT') return colors.warning;
-  if (consentStatus === 'DECLINED' || consentStatus === 'REVOKED') return colors.textLight;
+function receiverStatusColor(tone: ReceiverStatusTone): string {
+  if (tone === 'error') return colors.error;
+  if (tone === 'warning') return colors.warning;
+  if (tone === 'muted') return colors.textLight;
   return colors.success;
 }
 

@@ -22,6 +22,7 @@ import {
   type ReceiverUpdateInput,
 } from '../../../services';
 import { colors, spacing, fontSize, borderRadius } from '../../../theme';
+import { getReceiverStatusDisplay, type ReceiverStatusTone } from '../../../utils/receiverStatus';
 
 const relationshipOptions: Array<{ value: BackendRelationshipType; label: string }> = [
   { value: 'PARENT', label: 'Parent' },
@@ -111,6 +112,7 @@ export default function ReceiverDetailScreen() {
   }
 
   const isPaused = Boolean(receiver.pausedReason || receiver.pausedUntil);
+  const currentStatus = getReceiverStatusDisplay(receiver.consentStatus, receiver.latestCheckIn?.status, isPaused);
 
   const startEditing = () => {
     setDraft({
@@ -371,8 +373,8 @@ export default function ReceiverDetailScreen() {
 
       <View style={styles.statusBand}>
         <Text style={styles.statusLabel}>Current status</Text>
-        <Text style={[styles.statusValue, { color: receiverStatusColor(receiver.consentStatus, receiver.latestCheckIn?.status, isPaused) }]}>
-          {formatReceiverStatus(receiver.consentStatus, receiver.latestCheckIn?.status, isPaused)}
+        <Text style={[styles.statusValue, { color: receiverStatusColor(currentStatus.tone) }]}>
+          {currentStatus.label}
         </Text>
       </View>
 
@@ -595,22 +597,10 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatReceiverStatus(consentStatus: string, latestCheckInStatus?: string, isPaused = false): string {
-  if (isPaused) return 'Paused';
-  if (consentStatus === 'PENDING') return 'Pending consent';
-  if (consentStatus === 'DECLINED') return 'Consent declined';
-  if (consentStatus === 'REVOKED') return 'Opted out';
-  if (latestCheckInStatus === 'RESPONDED_OK') return 'OK';
-  if (latestCheckInStatus === 'RESPONDED_HELP') return 'Needs help';
-  if (latestCheckInStatus === 'SENT') return 'Awaiting reply';
-  return 'Active';
-}
-
-function receiverStatusColor(consentStatus: string, latestCheckInStatus?: string, isPaused = false): string {
-  if (isPaused) return colors.warning;
-  if (latestCheckInStatus === 'RESPONDED_HELP') return colors.error;
-  if (consentStatus === 'PENDING' || latestCheckInStatus === 'SENT') return colors.warning;
-  if (consentStatus === 'DECLINED' || consentStatus === 'REVOKED') return colors.textLight;
+function receiverStatusColor(tone: ReceiverStatusTone): string {
+  if (tone === 'error') return colors.error;
+  if (tone === 'warning') return colors.warning;
+  if (tone === 'muted') return colors.textLight;
   return colors.success;
 }
 
