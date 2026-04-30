@@ -1792,7 +1792,51 @@ Security Advisor INFO notes:
 - Other no-policy tables remain denied to direct Supabase clients unless intentionally exposed later through explicit scoped read policies.
 - Do not add broad policies just to silence INFO findings; each table should get a policy only when a product flow requires direct client access.
 
-### 26. Next Planned Slice
+### 26. Admin operations dashboard UI - completed 2026-04-30
+
+Completed read-only Expo web/admin operations dashboard:
+
+- Added route:
+  - `/admin-operations`
+  - file: `apps/mobile/src/app/(main)/admin-operations.tsx`
+- Added typed backend API methods:
+  - `getAdminMe()`
+  - `getOperationsCheckInSummary()`
+- Added operations formatting helpers:
+  - `apps/mobile/src/utils/adminOperations.ts`
+  - `apps/mobile/src/utils/adminOperations.spec.ts`
+- Dashboard behavior:
+  - uses existing Supabase app session through `backendApi`
+  - calls `GET /auth/admin/me`
+  - calls `GET /operations/check-ins/summary`
+  - shows admin role, 24-hour status counts, and recent operational check-ins
+  - shows operational identifiers/timestamps/escalation counts only
+  - includes a refresh action
+  - shows access-denied/error state if the signed-in user is not an active admin
+- Security boundary:
+  - does not expose `OPERATIONS_CRON_SECRET`
+  - does not show names, phone numbers, transcripts, message bodies, encrypted payloads, or provider payloads
+  - read-only; no mutation actions
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-04-30-admin-operations-dashboard-design.md`
+  - `docs/superpowers/plans/2026-04-30-admin-operations-dashboard.md`
+
+Verification:
+
+```powershell
+npx vitest run apps/mobile/src/utils/adminOperations.spec.ts
+npm.cmd --prefix apps/mobile run type-check
+```
+
+Expo web smoke on `http://localhost:8084/admin-operations` passed after signing into the Nearby app as the provisioned `SUPER_ADMIN`:
+
+- displayed `SUPER ADMIN`
+- displayed `24 hours`
+- displayed status counts
+- displayed recent operational check-ins
+- no names, phone numbers, or transcripts appeared in the DOM snapshot
+
+### 27. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1800,7 +1844,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 27. Production readiness checklist
+### 28. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1832,7 +1876,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 28. Later, after local fake flow is proven
+### 29. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

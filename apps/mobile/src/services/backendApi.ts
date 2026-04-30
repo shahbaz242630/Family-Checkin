@@ -24,6 +24,31 @@ export interface SyncedBackendUser {
   timezone: string;
 }
 
+export interface BackendAdminMe {
+  id: string;
+  role: 'SUPER_ADMIN' | 'OPERATOR' | 'SUPPORT_READONLY';
+}
+
+export interface BackendOperationsRecentCheckIn {
+  checkInId: string;
+  receiverId: string;
+  status: BackendCheckInStatus;
+  scheduledAt: string;
+  sentAt?: string;
+  respondedAt?: string;
+  resolvedAt?: string;
+  escalationAttemptCount: number;
+  successfulEscalationCount: number;
+}
+
+export interface BackendOperationsSummary {
+  ok: true;
+  windowHours: number;
+  generatedAt: string;
+  statusCounts: Partial<Record<BackendCheckInStatus, number>>;
+  recent: BackendOperationsRecentCheckIn[];
+}
+
 export interface ReceiverSetupInput {
   name: string;
   phone: string;
@@ -198,6 +223,20 @@ export async function updateReceiver(receiverId: string, input: ReceiverUpdateIn
 export async function deleteReceiver(receiverId: string): Promise<void> {
   await backendRequest<{ receiver: BackendReceiverDetail }>(`/receivers/${receiverId}`, {
     method: 'DELETE',
+  });
+}
+
+export async function getAdminMe(): Promise<BackendAdminMe> {
+  const response = await backendRequest<{ admin: BackendAdminMe }>('/auth/admin/me', {
+    method: 'GET',
+  });
+
+  return response.admin;
+}
+
+export async function getOperationsCheckInSummary(): Promise<BackendOperationsSummary> {
+  return await backendRequest<BackendOperationsSummary>('/operations/check-ins/summary', {
+    method: 'GET',
   });
 }
 
