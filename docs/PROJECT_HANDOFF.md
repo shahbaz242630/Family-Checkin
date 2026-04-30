@@ -1383,7 +1383,31 @@ $env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --
 
 Backend full suite passed: 26 test files, 98 tests.
 
-### 14. Next Planned Slice
+### 14. Operations trigger local smoke - completed 2026-04-30
+
+Completed:
+
+- Started the backend dev server locally on port `3000`.
+- Confirmed `CHANNEL_PROVIDER_MODE="fake"` in local backend env.
+- Called the protected operations endpoint with the local service-role bearer token:
+  - `POST http://localhost:3000/operations/check-ins/run`
+- Endpoint returned:
+  - `ok: true`
+  - due check-ins: `created: 2`, `sent: 2`, `skipped: 0`
+  - overdue escalations: `checked: 0`, `escalated: 0`, `skipped: 0`, `failed: 0`
+- No raw receiver IDs, names, phone numbers, transcripts, provider IDs, or message bodies were returned by the endpoint.
+
+Baseline verification before smoke:
+
+```powershell
+git status --short --branch
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run type-check
+```
+
+Backend baseline passed: 26 test files, 98 tests.
+
+### 15. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1391,11 +1415,10 @@ Finish smoke-test cleanup before moving into new product behavior:
 - Execute backup-contact remove on web/native only after explicit action-time approval.
 - Continue escalation cascade behavior:
   - wire a hosted scheduler/cron to call `POST /operations/check-ins/run`
-  - run an end-to-end local smoke of the operations trigger using fake providers
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 15. Production readiness checklist
+### 16. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1425,7 +1448,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 16. Later, after local fake flow is proven
+### 17. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.
