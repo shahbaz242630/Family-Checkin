@@ -1,5 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Controller, Get, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
+import { AdminAuthService } from '../auth/admin-auth.service';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import { OperationsVisibilityService } from './operations-visibility.service';
@@ -13,6 +14,8 @@ export class OperationsController {
     private readonly config: Pick<AppConfigService, 'operationsCronSecret'>,
     @Inject(OperationsVisibilityService)
     private readonly operationsVisibilityService: Pick<OperationsVisibilityService, 'getCheckInSummary'>,
+    @Inject(AdminAuthService)
+    private readonly adminAuthService: Pick<AdminAuthService, 'verifyAdminAccessToken'>,
   ) {}
 
   @Post('check-ins/run')
@@ -31,9 +34,20 @@ export class OperationsController {
 
   @Get('check-ins/summary')
   async getCheckInSummary(@Headers('authorization') authorization: string | undefined) {
-    this.assertOperationsCronBearer(authorization);
+    const accessToken = this.getBearerToken(authorization);
+    await this.adminAuthService.verifyAdminAccessToken(accessToken);
 
     return await this.operationsVisibilityService.getCheckInSummary();
+  }
+
+  private getBearerToken(authorization: string | undefined): string {
+    const [scheme, token] = authorization?.split(' ') ?? [];
+
+    if (scheme !== 'Bearer' || !token) {
+      throw new UnauthorizedException('Bearer token is required');
+    }
+
+    return token;
   }
 
   private assertOperationsCronBearer(authorization: string | undefined): void {

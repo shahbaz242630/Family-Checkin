@@ -1,5 +1,6 @@
-import { Controller, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
 import { UsersService } from '../users/users.service';
+import { AdminAuthService } from './admin-auth.service';
 import { SupabaseAuthService } from './supabase-auth.service';
 
 @Controller('auth')
@@ -9,6 +10,8 @@ export class AuthController {
     private readonly supabaseAuthService: SupabaseAuthService,
     @Inject(UsersService)
     private readonly usersService: UsersService,
+    @Inject(AdminAuthService)
+    private readonly adminAuthService: AdminAuthService,
   ) {}
 
   @Post('sync-user')
@@ -23,6 +26,19 @@ export class AuthController {
         country: user.country,
         preferredLanguage: user.preferredLanguage,
         timezone: user.timezone,
+      },
+    };
+  }
+
+  @Get('admin/me')
+  async adminMe(@Headers('authorization') authorization: string | undefined) {
+    const accessToken = this.getBearerToken(authorization);
+    const admin = await this.adminAuthService.verifyAdminAccessToken(accessToken);
+
+    return {
+      admin: {
+        id: admin.id,
+        role: admin.role,
       },
     };
   }

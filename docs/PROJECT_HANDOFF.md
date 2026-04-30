@@ -1676,7 +1676,54 @@ Local HTTP smoke against `http://localhost:3000/operations/check-ins/summary` pa
 - returned recent operational rows
 - response did not contain `phone`, `name`, or `transcript`
 
-### 23. Next Planned Slice
+### 23. Admin auth foundation - completed 2026-04-30
+
+Completed backend admin authorization foundation:
+
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-04-30-admin-auth-foundation-design.md`
+  - `docs/superpowers/plans/2026-04-30-admin-auth-foundation.md`
+- Added admin allowlist repository and service:
+  - `AdminAuthService`
+  - `PrismaAdminUsersRepository`
+  - `AdminUsersRepository`
+  - `ADMIN_USERS_REPOSITORY`
+- Admin auth behavior:
+  - verifies Supabase bearer tokens through existing `SupabaseAuthService`
+  - looks up `admin_users.authProviderId`
+  - requires `active = true`
+  - supports role allowlists
+  - does not auto-create admin rows from sender auth
+  - does not select or return admin email, encrypted email, or email hash
+- Added endpoint:
+  - `GET /auth/admin/me`
+  - returns only `admin.id` and `admin.role`
+- Updated operations auth split:
+  - `GET /operations/check-ins/summary` now requires active admin Supabase bearer auth
+  - `POST /operations/check-ins/run` remains protected by `OPERATIONS_CRON_SECRET`
+  - this keeps the scheduler secret out of future client/admin UI surfaces
+
+Focused verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- admin-auth.service.spec.ts prisma-admin-users.repository.spec.ts auth.controller.spec.ts operations.controller.spec.ts
+npm.cmd --prefix apps/backend run type-check
+```
+
+Full verification:
+
+```powershell
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+```
+
+Local HTTP auth split smoke against the running backend on port `3000`:
+
+- `GET /operations/check-ins/summary` with `OPERATIONS_CRON_SECRET` returned `401`
+- `POST /operations/check-ins/run` with `OPERATIONS_CRON_SECRET` returned `200`
+
+### 24. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1684,7 +1731,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 24. Production readiness checklist
+### 25. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1709,11 +1756,12 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm STOP opt-out and REPORT abuse paths remain available
   - confirm audit logs avoid raw PII
 - Operational readiness:
+  - provision `admin_users` rows for actual admin Supabase identities before using admin endpoints outside tests
   - confirm provider keys and channel routing are configured for the target environment
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 25. Later, after local fake flow is proven
+### 26. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.
