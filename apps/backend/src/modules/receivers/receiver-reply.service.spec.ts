@@ -211,6 +211,10 @@ class InMemoryReceiversRepository implements ReceiversRepository {
   }): Promise<void> {
     this.optOutCooldown = input;
   }
+
+  async resolveCheckInForUserById(): Promise<null> {
+    return null;
+  }
 }
 
 class InMemoryCheckInsRepository implements CheckInsRepository {

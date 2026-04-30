@@ -1,4 +1,4 @@
-import { AbuseReportStatus, ActorType, Channel, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
+import { AbuseReportStatus, ActorType, Channel, CheckInStatus, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
@@ -96,6 +96,39 @@ class InMemoryReceiversRepository implements ReceiversRepository {
           deletedAt: input.deletedAt,
         }
       : null;
+  }
+
+  async resolveCheckInForUserById(input: {
+    userId: string;
+    receiverId: string;
+    checkInId: string;
+    resolvedAt: Date;
+    resolutionByUserId: string;
+  }): Promise<ReceiverWithLatestCheckInRecord | null> {
+    const receiver = this.receiversForUser.find((item) => item.id === input.receiverId && item.userId === input.userId);
+    if (!receiver?.latestCheckIn || receiver.latestCheckIn.id !== input.checkInId) {
+      return null;
+    }
+
+    const actionableStatuses: CheckInStatus[] = [
+      CheckInStatus.RESPONDED_HELP,
+      CheckInStatus.ESCALATED,
+      CheckInStatus.FAILED,
+      CheckInStatus.SKIPPED,
+    ];
+    if (!actionableStatuses.includes(receiver.latestCheckIn.status)) {
+      return null;
+    }
+
+    return {
+      ...receiver,
+      latestCheckIn: {
+        ...receiver.latestCheckIn,
+        status: CheckInStatus.RESOLVED,
+        resolvedAt: input.resolvedAt,
+        resolutionByUserId: input.resolutionByUserId,
+      },
+    };
   }
 
   async markConsentRequested(input: {
@@ -667,6 +700,128 @@ describe('ReceiversService', () => {
       ipAddress: '203.0.113.10',
       userAgent: 'Nearby Mobile/1.0',
     });
+  });
+
+  it('resolves an actionable latest check-in for a sender and audits without PII', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const crypto = new CryptoService(masterKey);
+    repository.receiversForUser = [
+      {
+        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        nameEncrypted: crypto.encrypt('Fatima Parent'),
+        phoneEncrypted: crypto.encrypt('+971501234567'),
+        phoneHash: crypto.hashForLookup('+971501234567'),
+        countryCode: 'AE',
+        relationshipType: RelationshipType.PARENT,
+        language: 'en',
+        timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+        consentStatus: ConsentStatus.GRANTED,
+        latestCheckIn: {
+          id: 'check-in-1',
+          status: CheckInStatus.ESCALATED,
+          scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+          channelUsed: Channel.SMS,
+          sentAt: new Date('2026-04-30T06:01:00.000Z'),
+        },
+        createdAt: new Date('2026-04-26T08:00:00.000Z'),
+        updatedAt: new Date('2026-04-30T06:01:00.000Z'),
+      },
+    ];
+    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService, () => new Date('2026-04-30T10:00:00.000Z'));
+
+    const receiver = await service.resolveCheckInForSender({
+      userId: '  61a5639c-c902-4950-9924-1a4d6db1e02d  ',
+      receiverId: '  1aef91f9-64c9-4548-baa5-d70b52386efb  ',
+      checkInId: '  check-in-1  ',
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+
+    expect(receiver?.latestCheckIn).toMatchObject({
+      id: 'check-in-1',
+      status: CheckInStatus.RESOLVED,
+      resolvedAt: '2026-04-30T10:00:00.000Z',
+      resolutionByUserId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+    });
+    expect(audit.events.at(-1)).toEqual({
+      entityType: 'check_in',
+      entityId: 'check-in-1',
+      action: 'check_in.resolved',
+      actorType: ActorType.USER,
+      actorId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      metadata: {
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      },
+      ipAddress: '203.0.113.10',
+      userAgent: 'Nearby Mobile/1.0',
+    });
+    expect(JSON.stringify(receiver)).not.toContain('+971501234567');
+    expect(JSON.stringify(audit.events)).not.toContain('+971501234567');
+  });
+
+  it('returns null when resolving a non-actionable or missing check-in', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const crypto = new CryptoService(masterKey);
+    repository.receiversForUser = [
+      {
+        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        nameEncrypted: crypto.encrypt('Fatima Parent'),
+        phoneEncrypted: crypto.encrypt('+971501234567'),
+        phoneHash: crypto.hashForLookup('+971501234567'),
+        countryCode: 'AE',
+        relationshipType: RelationshipType.PARENT,
+        language: 'en',
+        timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+        consentStatus: ConsentStatus.GRANTED,
+        latestCheckIn: {
+          id: 'latest-check-in',
+          status: CheckInStatus.RESPONDED_OK,
+          scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+        },
+        createdAt: new Date('2026-04-26T08:00:00.000Z'),
+        updatedAt: new Date('2026-04-30T06:01:00.000Z'),
+      },
+    ];
+    const service = new ReceiversService(
+      repository,
+      new CryptoService(masterKey),
+      new InMemoryAuditService() as unknown as AuditService,
+    );
+
+    await expect(
+      service.resolveCheckInForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: 'missing-receiver',
+        checkInId: 'missing-check-in',
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      service.resolveCheckInForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'latest-check-in',
+      }),
+    ).resolves.toBeNull();
+    await expect(
+      service.resolveCheckInForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'older-actionable-check-in',
+      }),
+    ).resolves.toBeNull();
   });
 
   it('returns null when deleting a receiver the sender does not own', async () => {

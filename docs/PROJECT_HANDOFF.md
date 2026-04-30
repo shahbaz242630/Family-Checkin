@@ -1553,7 +1553,41 @@ npm.cmd --prefix apps/mobile run type-check
 
 Focused suite passed: 1 file, 4 tests. Mobile type-check passed.
 
-### 19. Next Planned Slice
+### 19. Sender check-in resolution - completed 2026-04-30
+
+Completed sender-driven incident closure slice:
+
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-04-30-check-in-resolution-design.md`
+  - `docs/superpowers/plans/2026-04-30-check-in-resolution.md`
+- Added authenticated backend endpoint:
+  - `PATCH /receivers/:receiverId/check-ins/:checkInId/resolve`
+  - verifies sender Supabase bearer token
+  - scopes update through sender-owned, non-deleted receiver
+  - only resolves actionable latest check-in states: `RESPONDED_HELP`, `ESCALATED`, `FAILED`, `SKIPPED`
+  - sets `status = RESOLVED`, `resolvedAt`, and `resolutionByUserId`
+  - returns updated receiver detail
+- Added audit event:
+  - `check_in.resolved`
+  - metadata includes only `receiverId`; no raw PII, message bodies, transcripts, or notes
+- Added Expo API method:
+  - `resolveReceiverCheckIn(receiverId, checkInId)`
+- Receiver detail now shows latest check-in `Resolved` timestamp and a `Mark resolved` action for actionable states.
+- Mobile status helper now maps `RESOLVED` -> `Resolved`.
+- Free-text resolution notes were intentionally left out to avoid adding a new PII surface in this slice.
+
+Focused verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- receivers.service.spec.ts receivers.controller.spec.ts prisma-receivers.repository.spec.ts
+npx vitest run apps/mobile/src/utils/receiverStatus.spec.ts
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/mobile run type-check
+```
+
+Focused backend receiver tests passed: 3 files, 29 tests. Mobile status helper passed: 1 file, 5 tests.
+
+### 20. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1563,7 +1597,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 20. Production readiness checklist
+### 21. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1593,7 +1627,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 21. Later, after local fake flow is proven
+### 22. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

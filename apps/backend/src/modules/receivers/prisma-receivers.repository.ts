@@ -58,6 +58,24 @@ interface ReceiversPrismaClient {
       }>;
     }): Promise<{ count: number }>;
   };
+  checkIn?: {
+    updateMany(args: {
+      where: {
+        id: string;
+        receiverId: string;
+        status: { in: CheckIn['status'][] };
+        receiver: {
+          userId: string;
+          deletedAt: null;
+        };
+      };
+      data: {
+        status: CheckIn['status'];
+        resolvedAt: Date;
+        resolutionByUserId: string;
+      };
+    }): Promise<{ count: number }>;
+  };
   abuseReport: {
     create(args: {
       data: {
@@ -245,6 +263,33 @@ export class PrismaReceiversRepository implements ReceiversRepository {
     return result.count > 0 ? { ...receiver, deletedAt: input.deletedAt } : null;
   }
 
+  async resolveCheckInForUserById(input: {
+    userId: string;
+    receiverId: string;
+    checkInId: string;
+    resolvedAt: Date;
+    resolutionByUserId: string;
+  }): Promise<ReceiverWithLatestCheckInRecord | null> {
+    const result = await this.prisma.checkIn?.updateMany({
+      where: {
+        id: input.checkInId,
+        receiverId: input.receiverId,
+        status: { in: ['RESPONDED_HELP', 'ESCALATED', 'FAILED', 'SKIPPED'] },
+        receiver: {
+          userId: input.userId,
+          deletedAt: null,
+        },
+      },
+      data: {
+        status: 'RESOLVED',
+        resolvedAt: input.resolvedAt,
+        resolutionByUserId: input.resolutionByUserId,
+      },
+    });
+
+    return result && result.count > 0 ? await this.findForUserById(input) : null;
+  }
+
   async findActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord | null> {
     const receiver = await this.prisma.receiver.findFirst({
       where: {
@@ -373,6 +418,8 @@ export class PrismaReceiversRepository implements ReceiversRepository {
       sentAt: checkIn.sentAt ?? undefined,
       respondedAt: checkIn.respondedAt ?? undefined,
       responseDetectedAs: checkIn.responseDetectedAs ?? undefined,
+      resolvedAt: checkIn.resolvedAt ?? undefined,
+      resolutionByUserId: checkIn.resolutionByUserId ?? undefined,
     };
   }
 

@@ -9,6 +9,7 @@ export {
   listBackupContacts,
   listReceivers,
   pauseReceiver,
+  resolveReceiverCheckIn,
   resumeReceiver,
   syncAuthenticatedUser,
   updateBackupContact,

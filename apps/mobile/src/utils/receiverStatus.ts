@@ -28,6 +28,8 @@ export function getReceiverStatusDisplay(
       return { label: 'Escalation failed', tone: 'error' };
     case 'SKIPPED':
       return { label: 'No backup available', tone: 'warning' };
+    case 'RESOLVED':
+      return { label: 'Resolved', tone: 'success' };
     case 'SENT':
       return { label: 'Awaiting reply', tone: 'warning' };
     default:

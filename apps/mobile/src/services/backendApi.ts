@@ -105,6 +105,8 @@ export interface BackendReceiverSummary {
     sentAt?: string;
     respondedAt?: string;
     responseDetectedAs?: string;
+    resolvedAt?: string;
+    resolutionByUserId?: string;
   };
   createdAt: string;
   updatedAt: string;
@@ -197,6 +199,14 @@ export async function deleteReceiver(receiverId: string): Promise<void> {
   await backendRequest<{ receiver: BackendReceiverDetail }>(`/receivers/${receiverId}`, {
     method: 'DELETE',
   });
+}
+
+export async function resolveReceiverCheckIn(receiverId: string, checkInId: string): Promise<BackendReceiverDetail> {
+  const response = await backendRequest<{ receiver: BackendReceiverDetail }>(`/receivers/${receiverId}/check-ins/${checkInId}/resolve`, {
+    method: 'PATCH',
+  });
+
+  return response.receiver;
 }
 
 export async function listBackupContacts(receiverId: string): Promise<BackendBackupContact[]> {

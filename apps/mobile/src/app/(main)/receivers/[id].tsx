@@ -9,6 +9,7 @@ import {
   getReceiver,
   listBackupContacts,
   pauseReceiver,
+  resolveReceiverCheckIn,
   resumeReceiver,
   updateBackupContact,
   updateReceiver,
@@ -182,6 +183,22 @@ export default function ReceiverDetailScreen() {
       setReceiver(isPaused ? await resumeReceiver(id) : await pauseReceiver(id));
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unable to update receiver');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const canResolveLatestCheckIn = ['RESPONDED_HELP', 'ESCALATED', 'FAILED', 'SKIPPED'].includes(receiver.latestCheckIn?.status ?? '');
+
+  const resolveLatestCheckIn = async () => {
+    if (!id || !receiver.latestCheckIn || !canResolveLatestCheckIn) return;
+
+    try {
+      setIsSaving(true);
+      setActionError(null);
+      setReceiver(await resolveReceiverCheckIn(id, receiver.latestCheckIn.id));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Unable to mark check-in resolved');
     } finally {
       setIsSaving(false);
     }
@@ -475,6 +492,12 @@ export default function ReceiverDetailScreen() {
         <InfoRow label="Scheduled" value={formatDateTime(receiver.latestCheckIn?.scheduledAt)} />
         <InfoRow label="Sent" value={formatDateTime(receiver.latestCheckIn?.sentAt)} />
         <InfoRow label="Responded" value={formatDateTime(receiver.latestCheckIn?.respondedAt)} />
+        <InfoRow label="Resolved" value={formatDateTime(receiver.latestCheckIn?.resolvedAt)} />
+        {canResolveLatestCheckIn ? (
+          <Pressable style={styles.resolveButton} onPress={resolveLatestCheckIn} disabled={isSaving}>
+            <Text style={styles.resolveButtonText}>{isSaving ? 'Saving...' : 'Mark resolved'}</Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={styles.section}>
@@ -867,6 +890,18 @@ const styles = StyleSheet.create({
   },
   smallButtonText: {
     color: colors.primary,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+  },
+  resolveButton: {
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    marginTop: spacing.md,
+  },
+  resolveButtonText: {
+    color: colors.textOnPrimary,
     fontSize: fontSize.sm,
     fontWeight: '600',
   },

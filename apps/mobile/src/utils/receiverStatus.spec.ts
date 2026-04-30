@@ -23,6 +23,13 @@ describe('getReceiverStatusDisplay', () => {
     });
   });
 
+  it('marks resolved check-ins as closed', () => {
+    expect(getReceiverStatusDisplay('GRANTED', 'RESOLVED')).toEqual({
+      label: 'Resolved',
+      tone: 'success',
+    });
+  });
+
   it('preserves existing consent, pause, and normal check-in mappings', () => {
     expect(getReceiverStatusDisplay('GRANTED', 'RESPONDED_OK')).toEqual({ label: 'OK', tone: 'success' });
     expect(getReceiverStatusDisplay('GRANTED', 'RESPONDED_HELP')).toEqual({ label: 'Needs help', tone: 'error' });

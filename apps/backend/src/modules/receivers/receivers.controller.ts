@@ -182,6 +182,32 @@ export class ReceiversController {
     return { receiver };
   }
 
+  @Patch(':receiverId/check-ins/:checkInId/resolve')
+  async resolveCheckIn(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-forwarded-for') forwardedFor: string | undefined,
+    @Headers('user-agent') userAgent: string | undefined,
+    @Param('receiverId') receiverId: string,
+    @Param('checkInId') checkInId: string,
+  ) {
+    const accessToken = this.getBearerToken(authorization);
+    const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
+    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const receiver = await this.receiversService.resolveCheckInForSender({
+      userId: sender.id,
+      receiverId,
+      checkInId,
+      ipAddress: this.firstForwardedIp(forwardedFor),
+      userAgent,
+    });
+
+    if (!receiver) {
+      throw new NotFoundException('Check-in not found');
+    }
+
+    return { receiver };
+  }
+
   @Post()
   async create(
     @Headers('authorization') authorization: string | undefined,

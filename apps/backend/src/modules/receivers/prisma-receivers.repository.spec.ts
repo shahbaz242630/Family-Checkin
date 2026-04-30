@@ -1,4 +1,4 @@
-import { AbuseReportStatus, Channel, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
+import { AbuseReportStatus, Channel, CheckInStatus, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { PrismaReceiversRepository } from './prisma-receivers.repository';
 
@@ -436,6 +436,109 @@ describe('PrismaReceiversRepository', () => {
       data: {
         deletedAt,
       },
+    });
+  });
+
+  it('resolves an actionable owned check-in through receiver ownership scope', async () => {
+    const create = vi.fn();
+    const findFirst = vi.fn().mockResolvedValue({
+      id: 'receiver-1',
+      userId: 'user-1',
+      nameEncrypted: 'encrypted-name',
+      phoneEncrypted: 'encrypted-phone',
+      phoneHash: 'phone-hash',
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      scheduleCustomCron: null,
+      personalNoteEncrypted: null,
+      consentStatus: ConsentStatus.GRANTED,
+      consentRequestedAt: null,
+      consentGrantedAt: null,
+      consentRevokedAt: null,
+      consentTranscript: null,
+      pausedUntil: null,
+      pausedReason: null,
+      deletedAt: null,
+      checkIns: [
+        {
+          id: 'check-in-1',
+          receiverId: 'receiver-1',
+          scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+          status: CheckInStatus.RESOLVED,
+          channelUsed: Channel.SMS,
+          sentAt: new Date('2026-04-30T06:01:00.000Z'),
+          respondedAt: null,
+          responseTranscript: null,
+          responseDetectedAs: null,
+          resolvedAt: new Date('2026-04-30T10:00:00.000Z'),
+          resolutionNote: null,
+          resolutionByUserId: 'user-1',
+          createdAt: new Date('2026-04-30T06:00:00.000Z'),
+          updatedAt: new Date('2026-04-30T10:00:00.000Z'),
+        },
+      ],
+      createdAt: new Date('2026-04-26T10:00:00.000Z'),
+      updatedAt: new Date('2026-04-30T10:00:00.000Z'),
+    });
+    const findMany = vi.fn();
+    const update = vi.fn();
+    const updateMany = vi.fn();
+    const checkInUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const repository = new PrismaReceiversRepository({
+      receiver: {
+        create,
+        findFirst,
+        findMany,
+        update,
+        updateMany,
+      },
+      checkIn: {
+        updateMany: checkInUpdateMany,
+      },
+      abuseReport: {
+        create: vi.fn(),
+      },
+      optOutCooldown: {
+        upsert: vi.fn(),
+      },
+    });
+
+    const receiver = await repository.resolveCheckInForUserById({
+      userId: 'user-1',
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      resolvedAt: new Date('2026-04-30T10:00:00.000Z'),
+      resolutionByUserId: 'user-1',
+    });
+
+    expect(checkInUpdateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'check-in-1',
+        receiverId: 'receiver-1',
+        status: { in: [CheckInStatus.RESPONDED_HELP, CheckInStatus.ESCALATED, CheckInStatus.FAILED, CheckInStatus.SKIPPED] },
+        receiver: {
+          userId: 'user-1',
+          deletedAt: null,
+        },
+      },
+      data: {
+        status: CheckInStatus.RESOLVED,
+        resolvedAt: new Date('2026-04-30T10:00:00.000Z'),
+        resolutionByUserId: 'user-1',
+      },
+    });
+    expect(receiver?.latestCheckIn).toMatchObject({
+      id: 'check-in-1',
+      status: CheckInStatus.RESOLVED,
+      resolvedAt: new Date('2026-04-30T10:00:00.000Z'),
+      resolutionByUserId: 'user-1',
     });
   });
 

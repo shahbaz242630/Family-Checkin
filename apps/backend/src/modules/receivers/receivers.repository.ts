@@ -57,6 +57,8 @@ export interface ReceiverLatestCheckInRecord {
   sentAt?: Date;
   respondedAt?: Date;
   responseDetectedAs?: string;
+  resolvedAt?: Date;
+  resolutionByUserId?: string;
 }
 
 export interface ReceiverWithLatestCheckInRecord extends ReceiverRecord {
@@ -76,6 +78,13 @@ export interface ReceiversRepository {
   }): Promise<ReceiverWithLatestCheckInRecord | null>;
   resumeForUserById(input: { userId: string; receiverId: string }): Promise<ReceiverWithLatestCheckInRecord | null>;
   deleteForUserById(input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverWithLatestCheckInRecord | null>;
+  resolveCheckInForUserById(input: {
+    userId: string;
+    receiverId: string;
+    checkInId: string;
+    resolvedAt: Date;
+    resolutionByUserId: string;
+  }): Promise<ReceiverWithLatestCheckInRecord | null>;
   findActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord | null>;
   markConsentRequested(input: {
     receiverId: string;

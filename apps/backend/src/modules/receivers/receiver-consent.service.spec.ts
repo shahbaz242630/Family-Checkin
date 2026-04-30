@@ -110,6 +110,10 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     };
   }
 
+  async resolveCheckInForUserById(): Promise<null> {
+    return null;
+  }
+
   private record(input: CreateReceiverRecordInput): ReceiverRecord {
     return {
       id: '1aef91f9-64c9-4548-baa5-d70b52386efb',

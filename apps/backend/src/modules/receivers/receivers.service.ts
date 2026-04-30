@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { ActorType, ConsentStatus } from '@prisma/client';
+import { ActorType, CheckInStatus, ConsentStatus } from '@prisma/client';
 import type { Channel, RelationshipType, TechProfile } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
@@ -56,6 +56,8 @@ export interface ReceiverSummary {
     sentAt?: string;
     respondedAt?: string;
     responseDetectedAs?: string;
+    resolvedAt?: string;
+    resolutionByUserId?: string;
   };
   createdAt: string;
   updatedAt: string;
@@ -74,6 +76,10 @@ export interface ReceiverManagementInput {
   receiverId: string;
   ipAddress?: string;
   userAgent?: string;
+}
+
+export interface ResolveCheckInForSenderInput extends ReceiverManagementInput {
+  checkInId: string;
 }
 
 export interface UpdateReceiverForSenderInput extends ReceiverManagementInput {
@@ -98,6 +104,7 @@ export class ReceiversService {
     private readonly cryptoService: CryptoService,
     @Inject(AuditService)
     private readonly auditService: AuditService,
+    private readonly now: () => Date = () => new Date(),
   ) {}
 
   async createForSender(input: CreateReceiverForSenderInput): Promise<ReceiverRecord> {
@@ -248,6 +255,54 @@ export class ReceiversService {
       actorType: ActorType.USER,
       actorId: userId,
       metadata: {},
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
+    });
+
+    return this.toDetail(receiver);
+  }
+
+  async resolveCheckInForSender(input: ResolveCheckInForSenderInput): Promise<ReceiverDetail | null> {
+    const userId = input.userId.trim();
+    const receiverId = input.receiverId.trim();
+    const checkInId = input.checkInId.trim();
+    const receiverBeforeUpdate = await this.receiversRepository.findForUserById({ userId, receiverId });
+    const actionableStatuses: CheckInStatus[] = [
+      CheckInStatus.RESPONDED_HELP,
+      CheckInStatus.ESCALATED,
+      CheckInStatus.FAILED,
+      CheckInStatus.SKIPPED,
+    ];
+
+    if (
+      !receiverBeforeUpdate?.latestCheckIn ||
+      receiverBeforeUpdate.latestCheckIn.id !== checkInId ||
+      !actionableStatuses.includes(receiverBeforeUpdate.latestCheckIn.status)
+    ) {
+      return null;
+    }
+
+    const receiver = await this.receiversRepository.resolveCheckInForUserById({
+      userId,
+      receiverId,
+      checkInId,
+      resolvedAt: this.now(),
+      resolutionByUserId: userId,
+    });
+
+    if (!receiver) {
+      return null;
+    }
+
+    await this.auditService.append({
+      entityType: 'check_in',
+      entityId: checkInId,
+      action: 'check_in.resolved',
+      actorType: ActorType.USER,
+      actorId: userId,
+      metadata: {
+        receiverId,
+      },
       ipAddress: input.ipAddress,
       userAgent: input.userAgent,
     });
@@ -426,6 +481,8 @@ export class ReceiversService {
             sentAt: receiver.latestCheckIn.sentAt?.toISOString(),
             respondedAt: receiver.latestCheckIn.respondedAt?.toISOString(),
             responseDetectedAs: receiver.latestCheckIn.responseDetectedAs,
+            resolvedAt: receiver.latestCheckIn.resolvedAt?.toISOString(),
+            resolutionByUserId: receiver.latestCheckIn.resolutionByUserId,
           }
         : undefined,
       createdAt: receiver.createdAt.toISOString(),
