@@ -1607,26 +1607,38 @@ Completed local API smoke against the running backend on port `3000`:
 - No raw names, phone numbers, credentials, tokens, transcripts, or message bodies were written to source-controlled docs.
 - Disposable smoke receivers/check-ins were left in the environment; no destructive cleanup was performed.
 
-### 21. Next Planned Slice
+### 21. Smoke data cleanup - completed 2026-04-30
+
+Completed after explicit action-time approval:
+
+- Soft-deleted 3 disposable smoke receivers:
+  - 2 `Resolution Smoke ...` receivers from the sender resolution smoke
+  - `Backup Smoke Receiver`
+- Soft-deleted 2 active backup contacts under `Backup Smoke Receiver`.
+- Preserved historical rows:
+  - check-ins were not deleted
+  - audit logs were not deleted
+  - escalation rows were not deleted
+- Verification confirmed:
+  - all 3 smoke receivers have `deletedAt`
+  - active backup contacts for those receivers are `0`
+  - check-in and audit-log counts remain present for historical traceability
+
+### 22. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
-- Delete disposable smoke contacts/receiver only after explicit action-time approval.
-- Delete disposable `Resolution Smoke ...` receivers/check-ins only after explicit action-time approval.
-- Execute backup-contact remove on web/native only after explicit action-time approval.
 - Continue escalation cascade behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 22. Production readiness checklist
+### 23. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
 - Smoke data cleanup:
-  - remove `Backup Smoke Receiver`
-  - remove `Backup Smoke Contact Edited`
-  - remove `AndroidSmokeEditedct`
-  - remove disposable `Resolution Smoke ...` receivers/check-ins if they exist and are clearly tied to smoke testing
+  - `Backup Smoke Receiver` and current `Resolution Smoke ...` receivers were soft-deleted on 2026-04-30
+  - check whether any future smoke rows exist before beta
   - remove related disposable smoke check-ins, escalation events, and audit rows if they exist and are clearly tied to smoke testing
 - Destructive cleanup rule:
   - execute deletes only after explicit action-time approval
@@ -1649,7 +1661,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 23. Later, after local fake flow is proven
+### 24. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.
