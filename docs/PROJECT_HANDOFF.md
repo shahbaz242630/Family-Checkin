@@ -1407,18 +1407,57 @@ npm.cmd --prefix apps/backend run type-check
 
 Backend baseline passed: 26 test files, 98 tests.
 
-### 15. Next Planned Slice
+### 15. Hosted operations scheduler - completed 2026-04-30
+
+Completed:
+
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-04-30-operations-scheduler-design.md`
+  - `docs/superpowers/plans/2026-04-30-operations-scheduler.md`
+- Added a reusable operations runner:
+  - `apps/backend/src/modules/operations/operations-runner.ts`
+  - posts to the configured `POST /operations/check-ins/run` endpoint
+  - sends `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`
+  - validates required env-driven configuration
+  - reconstructs aggregate output so unexpected response details are not logged
+  - does not include response bodies in HTTP failure messages
+- Added CLI wrapper:
+  - `apps/backend/scripts/run-operations-check-ins.ts`
+  - reads `OPERATIONS_CHECK_INS_RUN_URL`
+  - reads `SUPABASE_SERVICE_ROLE_KEY`
+  - logs only the aggregate endpoint response
+- Added backend package script:
+  - `npm --prefix apps/backend run operations:check-ins`
+- Added GitHub Actions scheduler:
+  - `.github/workflows/operations-check-ins.yml`
+  - runs every 10 minutes
+  - supports manual `workflow_dispatch`
+  - uses GitHub Secrets for `OPERATIONS_CHECK_INS_RUN_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+
+Required GitHub repository secrets before enabling hosted runs:
+
+- `OPERATIONS_CHECK_INS_RUN_URL`: full deployed endpoint URL, e.g. `https://api.example.com/operations/check-ins/run`
+- `SUPABASE_SERVICE_ROLE_KEY`: the backend service-role bearer token
+
+Focused verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- operations-runner.spec.ts
+```
+
+Focused suite passed: 1 file, 4 tests.
+
+### 16. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
 - Delete disposable smoke contacts/receiver only after explicit action-time approval.
 - Execute backup-contact remove on web/native only after explicit action-time approval.
 - Continue escalation cascade behavior:
-  - wire a hosted scheduler/cron to call `POST /operations/check-ins/run`
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 16. Production readiness checklist
+### 17. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1448,7 +1487,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 17. Later, after local fake flow is proven
+### 18. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

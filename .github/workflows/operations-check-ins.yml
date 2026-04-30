@@ -1,0 +1,30 @@
+name: Operations check-ins
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  run-check-ins:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run operations check-ins
+        run: npm --prefix apps/backend run operations:check-ins
+        env:
+          OPERATIONS_CHECK_INS_RUN_URL: ${{ secrets.OPERATIONS_CHECK_INS_RUN_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}

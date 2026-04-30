@@ -9,6 +9,7 @@
     "type-check": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "operations:check-ins": "tsx scripts/run-operations-check-ins.ts",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate"
   },
