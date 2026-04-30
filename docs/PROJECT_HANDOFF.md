@@ -1751,7 +1751,48 @@ Repo follow-up:
 - Added `apps/backend/prisma/20260430_internal_tables_rls.sql`
 - Updated `apps/backend/prisma/supabase_setup.sql` so fresh rebuilds also enable RLS on these internal tables
 
-### 25. Next Planned Slice
+### 25. Supabase Security Advisor WARN fixes - completed 2026-04-30
+
+Security Advisor also reported WARN findings:
+
+- `function_search_path_mutable` for `public.prevent_audit_log_modification`
+- `extension_in_public` for `pg_trgm`
+- `auth_leaked_password_protection` disabled
+
+Applied the approved hosted-project database fixes:
+
+```sql
+ALTER FUNCTION public.prevent_audit_log_modification()
+SET search_path = public, pg_temp;
+
+CREATE SCHEMA IF NOT EXISTS extensions;
+ALTER EXTENSION pg_trgm SET SCHEMA extensions;
+```
+
+Verification confirmed:
+
+- `prevent_audit_log_modification` has `proconfig = search_path=public, pg_temp`
+- `pg_trgm` now lives in the `extensions` schema
+- no dependent `pg_trgm` objects were found before the extension move
+
+Repo follow-up:
+
+- Added `apps/backend/prisma/20260430_security_advisor_warn_fixes.sql`
+- Updated `apps/backend/prisma/supabase_setup.sql`
+- Updated `apps/backend/prisma/reset_public_schema_for_nearby.sql`
+
+Remaining non-database dashboard setting:
+
+- `auth_leaked_password_protection` must be enabled in Supabase Dashboard under Authentication security settings.
+- This is recommended before inviting beta/production users.
+
+Security Advisor INFO notes:
+
+- `rls_enabled_no_policy` is expected for internal deny-by-default tables such as `admin_users`, `channel_templates`, and `idempotency_keys`.
+- Other no-policy tables remain denied to direct Supabase clients unless intentionally exposed later through explicit scoped read policies.
+- Do not add broad policies just to silence INFO findings; each table should get a policy only when a product flow requires direct client access.
+
+### 26. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1759,7 +1800,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 26. Production readiness checklist
+### 27. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1773,6 +1814,8 @@ Use this before beta, production launch, or inviting real users into the hosted 
 - Credentials and secrets:
   - rotate any Supabase access tokens, database passwords, and test-account passwords pasted in chat or logs
   - confirm `.env` files are local-only and not committed
+- Supabase Auth security:
+  - enable leaked password protection in the Dashboard before beta/production access
 - Data separation:
   - keep future smoke/beta data in a dedicated dev/staging environment where possible
   - avoid using production for repeat smoke tests after launch
@@ -1789,7 +1832,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 27. Later, after local fake flow is proven
+### 28. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.
