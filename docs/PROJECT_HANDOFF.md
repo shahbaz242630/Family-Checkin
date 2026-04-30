@@ -1587,17 +1587,38 @@ npm.cmd --prefix apps/mobile run type-check
 
 Focused backend receiver tests passed: 3 files, 29 tests. Mobile status helper passed: 1 file, 5 tests.
 
-### 20. Next Planned Slice
+### 20. Sender resolution API smoke - completed 2026-04-30
+
+Completed local API smoke against the running backend on port `3000`:
+
+- Signed in with the existing Supabase test account provided in chat.
+- Created disposable synthetic receivers named `Resolution Smoke ...`.
+- Granted receiver consent through `POST /receiver-replies/fake`.
+- Triggered check-in creation/sending through `POST /operations/check-ins/run` with `OPERATIONS_CRON_SECRET`.
+- Submitted a fake `HELP` receiver reply through `POST /receiver-replies/fake`.
+- Confirmed receiver detail returned an actionable latest check-in before resolution.
+- Called `PATCH /receivers/:receiverId/check-ins/:checkInId/resolve`.
+- Confirmed the latest check-in returned as:
+  - `status = RESOLVED`
+  - `resolvedAt` present
+  - `resolutionByUserId` present in the database
+- Confirmed the latest `check_in.resolved` audit row has metadata keys:
+  - `receiverId`
+- No raw names, phone numbers, credentials, tokens, transcripts, or message bodies were written to source-controlled docs.
+- Disposable smoke receivers/check-ins were left in the environment; no destructive cleanup was performed.
+
+### 21. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
 - Delete disposable smoke contacts/receiver only after explicit action-time approval.
+- Delete disposable `Resolution Smoke ...` receivers/check-ins only after explicit action-time approval.
 - Execute backup-contact remove on web/native only after explicit action-time approval.
 - Continue escalation cascade behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 21. Production readiness checklist
+### 22. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1605,6 +1626,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - remove `Backup Smoke Receiver`
   - remove `Backup Smoke Contact Edited`
   - remove `AndroidSmokeEditedct`
+  - remove disposable `Resolution Smoke ...` receivers/check-ins if they exist and are clearly tied to smoke testing
   - remove related disposable smoke check-ins, escalation events, and audit rows if they exist and are clearly tied to smoke testing
 - Destructive cleanup rule:
   - execute deletes only after explicit action-time approval
@@ -1627,7 +1649,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 22. Later, after local fake flow is proven
+### 23. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.
