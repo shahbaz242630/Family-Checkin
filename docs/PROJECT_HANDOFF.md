@@ -1624,7 +1624,59 @@ Completed after explicit action-time approval:
   - active backup contacts for those receivers are `0`
   - check-in and audit-log counts remain present for historical traceability
 
-### 22. Next Planned Slice
+### 22. Operations check-in visibility - completed 2026-04-30
+
+Completed protected read-only operations visibility slice:
+
+- Added backend endpoint:
+  - `GET /operations/check-ins/summary`
+  - protected by `Authorization: Bearer <OPERATIONS_CRON_SECRET>`
+  - reuses timing-safe operations bearer comparison
+- Added operations visibility service and Prisma repository:
+  - counts check-ins by status over the default 24-hour window
+  - excludes soft-deleted receivers from counts and recent rows
+  - returns the 25 newest operational check-ins with statuses:
+    - `RESPONDED_HELP`
+    - `ESCALATED`
+    - `FAILED`
+    - `SKIPPED`
+    - `RESOLVED`
+  - includes only operational identifiers/timestamps/counts:
+    - `checkInId`
+    - `receiverId`
+    - `status`
+    - `scheduledAt`
+    - optional `sentAt`, `respondedAt`, `resolvedAt`
+    - `escalationAttemptCount`
+    - `successfulEscalationCount`
+- Response intentionally excludes raw names, phone numbers, transcripts, message bodies, encrypted payloads, and provider payloads.
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-04-30-operations-visibility-design.md`
+  - `docs/superpowers/plans/2026-04-30-operations-visibility.md`
+
+Focused verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- operations-visibility.service.spec.ts prisma-operations-visibility.repository.spec.ts operations.controller.spec.ts
+npm.cmd --prefix apps/backend run type-check
+```
+
+Full verification:
+
+```powershell
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+```
+
+Local HTTP smoke against `http://localhost:3000/operations/check-ins/summary` passed:
+
+- returned `ok: true`
+- returned `windowHours: 24`
+- returned recent operational rows
+- response did not contain `phone`, `name`, or `transcript`
+
+### 23. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1632,7 +1684,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 23. Production readiness checklist
+### 24. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1661,7 +1713,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 24. Later, after local fake flow is proven
+### 25. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

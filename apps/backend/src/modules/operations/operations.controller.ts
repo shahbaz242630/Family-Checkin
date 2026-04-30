@@ -1,7 +1,8 @@
 import { timingSafeEqual } from 'node:crypto';
-import { Controller, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import { AppConfigService } from '../../shared/config/app-config.service';
+import { OperationsVisibilityService } from './operations-visibility.service';
 
 @Controller('operations')
 export class OperationsController {
@@ -10,6 +11,8 @@ export class OperationsController {
     private readonly checkInsService: Pick<CheckInsService, 'sendDueCheckIns' | 'escalateOverdueCheckIns'>,
     @Inject(AppConfigService)
     private readonly config: Pick<AppConfigService, 'operationsCronSecret'>,
+    @Inject(OperationsVisibilityService)
+    private readonly operationsVisibilityService: Pick<OperationsVisibilityService, 'getCheckInSummary'>,
   ) {}
 
   @Post('check-ins/run')
@@ -24,6 +27,13 @@ export class OperationsController {
       dueCheckIns,
       overdueEscalations,
     };
+  }
+
+  @Get('check-ins/summary')
+  async getCheckInSummary(@Headers('authorization') authorization: string | undefined) {
+    this.assertOperationsCronBearer(authorization);
+
+    return await this.operationsVisibilityService.getCheckInSummary();
   }
 
   private assertOperationsCronBearer(authorization: string | undefined): void {
