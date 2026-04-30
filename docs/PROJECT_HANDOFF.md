@@ -1500,7 +1500,32 @@ npm.cmd --prefix apps/backend test -- check-ins.service.spec.ts escalations.serv
 
 Focused suite passed: 3 files, 14 tests.
 
-### 17. Next Planned Slice
+### 17. Cron-secret operations smoke - completed 2026-04-30
+
+Completed local smoke against the running backend on port `3000`:
+
+- Confirmed local backend env has:
+  - `CHANNEL_PROVIDER_MODE="fake"`
+  - `OPERATIONS_CRON_SECRET`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+- Called `POST http://localhost:3000/operations/check-ins/run` with `Authorization: Bearer <OPERATIONS_CRON_SECRET>`.
+- Endpoint returned aggregate counts only:
+  - `ok: true`
+  - due check-ins: `created: 0`, `sent: 0`, `skipped: 0`
+  - overdue escalations: `checked: 2`, `escalated: 0`, `skipped: 2`, `failed: 0`
+- Called the same endpoint with `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`.
+- Service-role bearer was rejected with HTTP `401`, confirming the scheduler path no longer accepts the Supabase service-role key.
+- No raw receiver IDs, names, phone numbers, provider IDs, transcripts, or message bodies were returned by the endpoint.
+
+Focused verification before smoke:
+
+```powershell
+npm.cmd --prefix apps/backend test -- operations.controller.spec.ts operations-runner.spec.ts app-config.service.spec.ts
+```
+
+Focused suite passed: 3 files, 8 tests.
+
+### 18. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1510,7 +1535,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 18. Production readiness checklist
+### 19. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1540,7 +1565,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 19. Later, after local fake flow is proven
+### 20. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.
