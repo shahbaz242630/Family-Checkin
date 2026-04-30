@@ -24,6 +24,33 @@ export interface OperationsCheckInSummary {
   }>;
 }
 
+export interface OperationsCheckInDetail {
+  ok: true;
+  checkIn: {
+    checkInId: string;
+    receiverId: string;
+    status: CheckInStatus;
+    channelUsed?: string;
+    scheduledAt: string;
+    sentAt?: string;
+    respondedAt?: string;
+    responseDetectedAs?: string;
+    resolvedAt?: string;
+    escalationAttemptCount: number;
+    successfulEscalationCount: number;
+    escalations: Array<{
+      id: string;
+      attemptNumber: number;
+      channel: string;
+      startedAt: string;
+      completedAt?: string;
+      result?: string;
+      senderNotifiedAt?: string;
+      backupAlertedAt?: string;
+    }>;
+  };
+}
+
 @Injectable()
 export class OperationsVisibilityService {
   constructor(
@@ -58,6 +85,41 @@ export class OperationsVisibilityService {
         escalationAttemptCount: checkIn.escalationAttemptCount,
         successfulEscalationCount: checkIn.successfulEscalationCount,
       })),
+    };
+  }
+
+  async getCheckInDetail(checkInId: string): Promise<OperationsCheckInDetail | null> {
+    const checkIn = await this.repository.findOperationalCheckInDetail({ checkInId: checkInId.trim() });
+
+    if (!checkIn) {
+      return null;
+    }
+
+    return {
+      ok: true,
+      checkIn: {
+        checkInId: checkIn.checkInId,
+        receiverId: checkIn.receiverId,
+        status: checkIn.status,
+        channelUsed: checkIn.channelUsed,
+        scheduledAt: checkIn.scheduledAt.toISOString(),
+        sentAt: checkIn.sentAt?.toISOString(),
+        respondedAt: checkIn.respondedAt?.toISOString(),
+        responseDetectedAs: checkIn.responseDetectedAs,
+        resolvedAt: checkIn.resolvedAt?.toISOString(),
+        escalationAttemptCount: checkIn.escalationAttemptCount,
+        successfulEscalationCount: checkIn.successfulEscalationCount,
+        escalations: checkIn.escalations.map((escalation) => ({
+          id: escalation.id,
+          attemptNumber: escalation.attemptNumber,
+          channel: escalation.channel,
+          startedAt: escalation.startedAt.toISOString(),
+          completedAt: escalation.completedAt?.toISOString(),
+          result: escalation.result,
+          senderNotifiedAt: escalation.senderNotifiedAt?.toISOString(),
+          backupAlertedAt: escalation.backupAlertedAt?.toISOString(),
+        })),
+      },
     };
   }
 }

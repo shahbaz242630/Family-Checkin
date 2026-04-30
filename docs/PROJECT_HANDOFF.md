@@ -1836,6 +1836,30 @@ Expo web smoke on `http://localhost:8084/admin-operations` passed after signing 
 - displayed recent operational check-ins
 - no names, phone numbers, or transcripts appeared in the DOM snapshot
 
+Admin operations detail view was added on 2026-04-30:
+
+- backend endpoint: `GET /operations/check-ins/:checkInId`
+- mobile route: `/admin-operations/:checkInId`
+- protected by the same active admin bearer auth as the summary endpoint
+- displays status, timeline, check-in ID, receiver ID, channel, escalation counts, and escalation delivery timestamps
+- intentionally excludes receiver names, phone numbers, personal notes, transcripts, message bodies, resolution notes, and provider error details
+
+Verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- src/modules/operations/operations-visibility.service.spec.ts src/modules/operations/prisma-operations-visibility.repository.spec.ts src/modules/operations/operations.controller.spec.ts
+npm.cmd --prefix apps/backend run type-check
+npx vitest run apps/mobile/src/utils/adminOperations.spec.ts
+npm.cmd --prefix apps/mobile run type-check
+```
+
+In-app browser smoke passed on `http://localhost:8084/admin-operations/7e207653-d8b8-444e-9161-461e655c3c2c`:
+
+- displayed `Check-in Detail`
+- displayed timeline and escalation sections
+- displayed check-in and receiver UUIDs only
+- no names, phone numbers, transcripts, or message body content appeared in the DOM snapshot
+
 ### 27. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:

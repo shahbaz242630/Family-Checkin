@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatOperationsDateTime, operationsStatusLabel, sortStatusCounts } from './adminOperations';
+import { escalationResultLabel, formatOperationsDateTime, operationsStatusLabel, sortStatusCounts } from './adminOperations';
 
 describe('admin operations formatting', () => {
   it('maps operational check-in statuses to readable labels', () => {
@@ -22,5 +22,12 @@ describe('admin operations formatting', () => {
       'SENT',
       'RESOLVED',
     ]);
+  });
+
+  it('maps escalation results to readable labels', () => {
+    expect(escalationResultLabel('SUCCESS')).toBe('Delivered');
+    expect(escalationResultLabel('NO_RESPONSE')).toBe('No response');
+    expect(escalationResultLabel('ERROR')).toBe('Error');
+    expect(escalationResultLabel(undefined)).toBe('Pending');
   });
 });

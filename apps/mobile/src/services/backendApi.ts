@@ -49,6 +49,34 @@ export interface BackendOperationsSummary {
   recent: BackendOperationsRecentCheckIn[];
 }
 
+export type BackendEscalationResult = 'SUCCESS' | 'NO_RESPONSE' | 'ERROR';
+
+export interface BackendOperationsEscalationDetail {
+  id: string;
+  attemptNumber: number;
+  channel: BackendChannel;
+  startedAt: string;
+  completedAt?: string;
+  result?: BackendEscalationResult;
+  senderNotifiedAt?: string;
+  backupAlertedAt?: string;
+}
+
+export interface BackendOperationsCheckInDetail {
+  checkInId: string;
+  receiverId: string;
+  status: BackendCheckInStatus;
+  channelUsed?: BackendChannel;
+  scheduledAt: string;
+  sentAt?: string;
+  respondedAt?: string;
+  responseDetectedAs?: string;
+  resolvedAt?: string;
+  escalationAttemptCount: number;
+  successfulEscalationCount: number;
+  escalations: BackendOperationsEscalationDetail[];
+}
+
 export interface ReceiverSetupInput {
   name: string;
   phone: string;
@@ -238,6 +266,17 @@ export async function getOperationsCheckInSummary(): Promise<BackendOperationsSu
   return await backendRequest<BackendOperationsSummary>('/operations/check-ins/summary', {
     method: 'GET',
   });
+}
+
+export async function getOperationsCheckInDetail(checkInId: string): Promise<BackendOperationsCheckInDetail> {
+  const response = await backendRequest<{ ok: true; checkIn: BackendOperationsCheckInDetail }>(
+    `/operations/check-ins/${encodeURIComponent(checkInId)}`,
+    {
+      method: 'GET',
+    },
+  );
+
+  return response.checkIn;
 }
 
 export async function resolveReceiverCheckIn(receiverId: string, checkInId: string): Promise<BackendReceiverDetail> {

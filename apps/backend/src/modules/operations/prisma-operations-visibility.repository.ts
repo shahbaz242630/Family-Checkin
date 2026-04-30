@@ -13,6 +13,19 @@ type RecentCheckIn = Pick<CheckIn, 'id' | 'receiverId' | 'status' | 'scheduledAt
   _count: { escalations: number };
 };
 
+type CheckInDetail = Pick<
+  CheckIn,
+  'id' | 'receiverId' | 'status' | 'channelUsed' | 'scheduledAt' | 'sentAt' | 'respondedAt' | 'responseDetectedAs' | 'resolvedAt'
+> & {
+  escalations: Array<
+    Pick<
+      EscalationEvent,
+      'id' | 'attemptNumber' | 'channel' | 'startedAt' | 'completedAt' | 'result' | 'senderNotifiedAt' | 'backupAlertedAt'
+    >
+  >;
+  _count: { escalations: number };
+};
+
 interface OperationsVisibilityPrismaClient {
   checkIn: {
     groupBy(args: {
@@ -47,6 +60,39 @@ interface OperationsVisibilityPrismaClient {
       orderBy: { scheduledAt: 'desc' };
       take: number;
     }): Promise<RecentCheckIn[]>;
+    findFirst(args: {
+      where: {
+        id: string;
+        receiver: { deletedAt: null };
+      };
+      select: {
+        id: true;
+        receiverId: true;
+        status: true;
+        channelUsed: true;
+        scheduledAt: true;
+        sentAt: true;
+        respondedAt: true;
+        responseDetectedAs: true;
+        resolvedAt: true;
+        escalations: {
+          select: {
+            id: true;
+            attemptNumber: true;
+            channel: true;
+            startedAt: true;
+            completedAt: true;
+            result: true;
+            senderNotifiedAt: true;
+            backupAlertedAt: true;
+          };
+          orderBy: { attemptNumber: 'asc' };
+        };
+        _count: {
+          select: { escalations: true };
+        };
+      };
+    }): Promise<CheckInDetail | null>;
   };
 }
 
@@ -116,5 +162,70 @@ export class PrismaOperationsVisibilityRepository implements OperationsVisibilit
       successfulEscalationCount: checkIn.escalations.filter((escalation) => escalation.result === EscalationResult.SUCCESS)
         .length,
     }));
+  }
+
+  async findOperationalCheckInDetail(input: { checkInId: string }) {
+    const checkIn = (await this.prisma.checkIn.findFirst({
+      where: {
+        id: input.checkInId,
+        receiver: { deletedAt: null },
+      },
+      select: {
+        id: true,
+        receiverId: true,
+        status: true,
+        channelUsed: true,
+        scheduledAt: true,
+        sentAt: true,
+        respondedAt: true,
+        responseDetectedAs: true,
+        resolvedAt: true,
+        escalations: {
+          select: {
+            id: true,
+            attemptNumber: true,
+            channel: true,
+            startedAt: true,
+            completedAt: true,
+            result: true,
+            senderNotifiedAt: true,
+            backupAlertedAt: true,
+          },
+          orderBy: { attemptNumber: 'asc' },
+        },
+        _count: {
+          select: { escalations: true },
+        },
+      },
+    })) as CheckInDetail | null;
+
+    if (!checkIn) {
+      return null;
+    }
+
+    return {
+      checkInId: checkIn.id,
+      receiverId: checkIn.receiverId,
+      status: checkIn.status,
+      channelUsed: checkIn.channelUsed ?? undefined,
+      scheduledAt: checkIn.scheduledAt,
+      sentAt: checkIn.sentAt ?? undefined,
+      respondedAt: checkIn.respondedAt ?? undefined,
+      responseDetectedAs: checkIn.responseDetectedAs ?? undefined,
+      resolvedAt: checkIn.resolvedAt ?? undefined,
+      escalationAttemptCount: checkIn._count.escalations,
+      successfulEscalationCount: checkIn.escalations.filter((escalation) => escalation.result === EscalationResult.SUCCESS)
+        .length,
+      escalations: checkIn.escalations.map((escalation) => ({
+        id: escalation.id,
+        attemptNumber: escalation.attemptNumber,
+        channel: escalation.channel,
+        startedAt: escalation.startedAt,
+        completedAt: escalation.completedAt ?? undefined,
+        result: escalation.result ?? undefined,
+        senderNotifiedAt: escalation.senderNotifiedAt ?? undefined,
+        backupAlertedAt: escalation.backupAlertedAt ?? undefined,
+      })),
+    };
   }
 }

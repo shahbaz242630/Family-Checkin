@@ -1,4 +1,4 @@
-import { CheckInStatus } from '@prisma/client';
+import { Channel, CheckInStatus, EscalationResult } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import type { OperationsVisibilityRepository } from './operations-visibility.repository';
 import { OperationsVisibilityService } from './operations-visibility.service';
@@ -29,6 +29,40 @@ class FakeOperationsVisibilityRepository implements OperationsVisibilityReposito
         successfulEscalationCount: 1,
       },
     ];
+  }
+
+  async findOperationalCheckInDetail(input: { checkInId: string }) {
+    this.calls.push({ method: 'findOperationalCheckInDetail', input });
+
+    if (input.checkInId === 'missing-check-in') {
+      return null;
+    }
+
+    return {
+      checkInId: 'check-in-1',
+      receiverId: 'receiver-1',
+      status: CheckInStatus.ESCALATED,
+      channelUsed: Channel.SMS,
+      scheduledAt: new Date('2026-04-30T06:30:00.000Z'),
+      sentAt: new Date('2026-04-30T06:31:00.000Z'),
+      respondedAt: undefined,
+      responseDetectedAs: undefined,
+      resolvedAt: undefined,
+      escalationAttemptCount: 2,
+      successfulEscalationCount: 1,
+      escalations: [
+        {
+          id: 'escalation-1',
+          attemptNumber: 1,
+          channel: Channel.SMS,
+          startedAt: new Date('2026-04-30T07:01:00.000Z'),
+          completedAt: new Date('2026-04-30T07:02:00.000Z'),
+          result: EscalationResult.SUCCESS,
+          senderNotifiedAt: new Date('2026-04-30T07:03:00.000Z'),
+          backupAlertedAt: new Date('2026-04-30T07:04:00.000Z'),
+        },
+      ],
+    };
   }
 }
 
@@ -75,5 +109,58 @@ describe('OperationsVisibilityService', () => {
     expect(JSON.stringify(summary)).not.toContain('name');
     expect(JSON.stringify(summary)).not.toContain('transcript');
     expect(JSON.stringify(summary)).not.toContain('message');
+  });
+
+  it('returns a PII-safe check-in detail with escalation delivery metadata', async () => {
+    const repository = new FakeOperationsVisibilityRepository();
+    const service = new OperationsVisibilityService(repository, () => new Date('2026-04-30T07:00:00.000Z'));
+
+    const detail = await service.getCheckInDetail(' check-in-1 ');
+
+    expect(repository.calls).toEqual([
+      {
+        method: 'findOperationalCheckInDetail',
+        input: { checkInId: 'check-in-1' },
+      },
+    ]);
+    expect(detail).toEqual({
+      ok: true,
+      checkIn: {
+        checkInId: 'check-in-1',
+        receiverId: 'receiver-1',
+        status: CheckInStatus.ESCALATED,
+        channelUsed: Channel.SMS,
+        scheduledAt: '2026-04-30T06:30:00.000Z',
+        sentAt: '2026-04-30T06:31:00.000Z',
+        respondedAt: undefined,
+        responseDetectedAs: undefined,
+        resolvedAt: undefined,
+        escalationAttemptCount: 2,
+        successfulEscalationCount: 1,
+        escalations: [
+          {
+            id: 'escalation-1',
+            attemptNumber: 1,
+            channel: Channel.SMS,
+            startedAt: '2026-04-30T07:01:00.000Z',
+            completedAt: '2026-04-30T07:02:00.000Z',
+            result: EscalationResult.SUCCESS,
+            senderNotifiedAt: '2026-04-30T07:03:00.000Z',
+            backupAlertedAt: '2026-04-30T07:04:00.000Z',
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(detail)).not.toContain('phone');
+    expect(JSON.stringify(detail)).not.toContain('name');
+    expect(JSON.stringify(detail)).not.toContain('transcript');
+    expect(JSON.stringify(detail)).not.toContain('message');
+  });
+
+  it('returns null when an operational check-in detail is not found', async () => {
+    const repository = new FakeOperationsVisibilityRepository();
+    const service = new OperationsVisibilityService(repository, () => new Date('2026-04-30T07:00:00.000Z'));
+
+    await expect(service.getCheckInDetail('missing-check-in')).resolves.toBeNull();
   });
 });

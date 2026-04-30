@@ -37,6 +37,19 @@ export function operationsStatusLabel(status: BackendCheckInStatus | string): st
   }
 }
 
+export function escalationResultLabel(result?: string): string {
+  switch (result) {
+    case 'SUCCESS':
+      return 'Delivered';
+    case 'NO_RESPONSE':
+      return 'No response';
+    case 'ERROR':
+      return 'Error';
+    default:
+      return 'Pending';
+  }
+}
+
 export function formatOperationsDateTime(value?: string): string {
   if (!value) return 'Not yet';
   return new Date(value).toLocaleString();

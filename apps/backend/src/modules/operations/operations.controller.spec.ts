@@ -55,6 +55,40 @@ class FakeOperationsVisibilityService {
       ],
     };
   }
+
+  async getCheckInDetail(checkInId: string) {
+    this.calls.push(`getCheckInDetail:${checkInId}`);
+
+    if (checkInId === 'missing-check-in') {
+      return null;
+    }
+
+    return {
+      ok: true,
+      checkIn: {
+        checkInId: 'check-in-1',
+        receiverId: 'receiver-1',
+        status: 'ESCALATED',
+        channelUsed: 'SMS',
+        scheduledAt: '2026-04-30T06:30:00.000Z',
+        sentAt: '2026-04-30T06:31:00.000Z',
+        escalationAttemptCount: 1,
+        successfulEscalationCount: 1,
+        escalations: [
+          {
+            id: 'escalation-1',
+            attemptNumber: 1,
+            channel: 'SMS',
+            startedAt: '2026-04-30T07:01:00.000Z',
+            completedAt: '2026-04-30T07:02:00.000Z',
+            result: 'SUCCESS',
+            senderNotifiedAt: '2026-04-30T07:03:00.000Z',
+            backupAlertedAt: '2026-04-30T07:04:00.000Z',
+          },
+        ],
+      },
+    };
+  }
 }
 
 class FakeAdminAuthService {
@@ -165,5 +199,63 @@ describe('OperationsController', () => {
 
     await expect(controller.getCheckInSummary(undefined)).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(controller.getCheckInSummary('Basic admin-token')).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('returns a PII-safe check-in detail for a valid admin bearer token', async () => {
+    const visibility = new FakeOperationsVisibilityService();
+    const adminAuth = new FakeAdminAuthService();
+    const controller = new OperationsController(
+      new FakeCheckInsService() as unknown as CheckInsService,
+      { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
+      visibility as unknown as OperationsVisibilityService,
+      adminAuth as unknown as AdminAuthService,
+    );
+
+    const response = await controller.getCheckInDetail('Bearer admin-token', 'check-in-1');
+
+    expect(adminAuth.tokens).toEqual(['admin-token']);
+    expect(visibility.calls).toEqual(['getCheckInDetail:check-in-1']);
+    expect(response).toEqual({
+      ok: true,
+      checkIn: {
+        checkInId: 'check-in-1',
+        receiverId: 'receiver-1',
+        status: 'ESCALATED',
+        channelUsed: 'SMS',
+        scheduledAt: '2026-04-30T06:30:00.000Z',
+        sentAt: '2026-04-30T06:31:00.000Z',
+        escalationAttemptCount: 1,
+        successfulEscalationCount: 1,
+        escalations: [
+          {
+            id: 'escalation-1',
+            attemptNumber: 1,
+            channel: 'SMS',
+            startedAt: '2026-04-30T07:01:00.000Z',
+            completedAt: '2026-04-30T07:02:00.000Z',
+            result: 'SUCCESS',
+            senderNotifiedAt: '2026-04-30T07:03:00.000Z',
+            backupAlertedAt: '2026-04-30T07:04:00.000Z',
+          },
+        ],
+      },
+    });
+    expect(JSON.stringify(response)).not.toContain('phone');
+    expect(JSON.stringify(response)).not.toContain('name');
+    expect(JSON.stringify(response)).not.toContain('transcript');
+    expect(JSON.stringify(response)).not.toContain('message');
+  });
+
+  it('returns not found when a check-in detail is missing', async () => {
+    const controller = new OperationsController(
+      new FakeCheckInsService() as unknown as CheckInsService,
+      { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
+      new FakeOperationsVisibilityService() as unknown as OperationsVisibilityService,
+      new FakeAdminAuthService() as unknown as AdminAuthService,
+    );
+
+    await expect(controller.getCheckInDetail('Bearer admin-token', 'missing-check-in')).rejects.toMatchObject({
+      status: 404,
+    });
   });
 });

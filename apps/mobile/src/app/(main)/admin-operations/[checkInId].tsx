@@ -1,41 +1,45 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { getAdminMe, getOperationsCheckInSummary, type BackendAdminMe, type BackendOperationsSummary } from '../../services';
-import { colors, spacing, fontSize, borderRadius } from '../../theme';
-import { formatOperationsDateTime, operationsStatusLabel, sortStatusCounts } from '../../utils/adminOperations';
+import { getOperationsCheckInDetail, type BackendOperationsCheckInDetail } from '../../../services';
+import { borderRadius, colors, fontSize, spacing } from '../../../theme';
+import { escalationResultLabel, formatOperationsDateTime, operationsStatusLabel } from '../../../utils/adminOperations';
 
-export default function AdminOperationsScreen() {
+export default function AdminOperationsDetailScreen() {
   const router = useRouter();
-  const [admin, setAdmin] = useState<BackendAdminMe | null>(null);
-  const [summary, setSummary] = useState<BackendOperationsSummary | null>(null);
+  const { checkInId } = useLocalSearchParams<{ checkInId: string }>();
+  const [detail, setDetail] = useState<BackendOperationsCheckInDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadDashboard = useCallback(async () => {
+  const loadDetail = useCallback(async () => {
+    if (!checkInId) {
+      setError('Missing check-in ID');
+      setLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
     try {
       setError(null);
-      const [adminIdentity, operationsSummary] = await Promise.all([getAdminMe(), getOperationsCheckInSummary()]);
-      setAdmin(adminIdentity);
-      setSummary(operationsSummary);
+      setDetail(await getOperationsCheckInDetail(checkInId));
     } catch (err) {
-      setAdmin(null);
-      setSummary(null);
-      setError(err instanceof Error ? err.message : 'Unable to load admin operations');
+      setDetail(null);
+      setError(err instanceof Error ? err.message : 'Unable to load check-in detail');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [checkInId]);
 
   useEffect(() => {
-    loadDashboard();
-  }, [loadDashboard]);
+    loadDetail();
+  }, [loadDetail]);
 
   const refresh = () => {
     setRefreshing(true);
-    loadDashboard();
+    loadDetail();
   };
 
   if (loading) {
@@ -46,82 +50,76 @@ export default function AdminOperationsScreen() {
     );
   }
 
-  if (error || !admin || !summary) {
+  if (error || !detail) {
     return (
       <View style={styles.centered}>
-        <Text style={styles.errorTitle}>Admin access required</Text>
-        <Text style={styles.errorText}>{error ?? 'Sign in with an active admin account.'}</Text>
-        <Pressable style={styles.primaryButton} onPress={refresh} disabled={refreshing}>
-          <Text style={styles.primaryButtonText}>{refreshing ? 'Checking...' : 'Retry'}</Text>
-        </Pressable>
+        <Text style={styles.errorTitle}>Check-in detail unavailable</Text>
+        <Text style={styles.errorText}>{error ?? 'This operational check-in could not be found.'}</Text>
+        <View style={styles.actionRow}>
+          <Pressable style={styles.secondaryButton} onPress={() => router.push('/(main)/admin-operations')}>
+            <Text style={styles.secondaryButtonText}>Back</Text>
+          </Pressable>
+          <Pressable style={styles.primaryButton} onPress={refresh} disabled={refreshing}>
+            <Text style={styles.primaryButtonText}>{refreshing ? 'Checking...' : 'Retry'}</Text>
+          </Pressable>
+        </View>
       </View>
     );
   }
-
-  const statusCounts = sortStatusCounts(summary.statusCounts);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <View style={styles.header}>
         <View>
           <Text style={styles.eyebrow}>Operations</Text>
-          <Text style={styles.title}>Check-in Health</Text>
+          <Text style={styles.title}>Check-in Detail</Text>
         </View>
         <Pressable style={styles.refreshButton} onPress={refresh} disabled={refreshing}>
           <Text style={styles.refreshButtonText}>{refreshing ? 'Refreshing' : 'Refresh'}</Text>
         </Pressable>
       </View>
 
+      <Pressable style={styles.backButton} onPress={() => router.push('/(main)/admin-operations')}>
+        <Text style={styles.backButtonText}>Back to operations</Text>
+      </Pressable>
+
       <View style={styles.metaBand}>
-        <InfoBlock label="Admin role" value={admin.role.replace('_', ' ')} />
-        <InfoBlock label="Window" value={`${summary.windowHours} hours`} />
-        <InfoBlock label="Updated" value={formatOperationsDateTime(summary.generatedAt)} />
+        <InfoBlock label="Status" value={operationsStatusLabel(detail.status)} />
+        <InfoBlock label="Channel" value={detail.channelUsed ?? 'Not sent'} />
+        <InfoBlock label="Alerts" value={`${detail.successfulEscalationCount}/${detail.escalationAttemptCount} delivered`} />
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Status Counts</Text>
-        {statusCounts.length > 0 ? (
-          <View style={styles.countGrid}>
-            {statusCounts.map((item) => (
-              <View key={item.status} style={styles.countTile}>
-                <Text style={styles.countValue}>{item.count}</Text>
-                <Text style={styles.countLabel}>{operationsStatusLabel(item.status)}</Text>
+        <Text style={styles.sectionTitle}>Timeline</Text>
+        <InfoRow label="Scheduled" value={formatOperationsDateTime(detail.scheduledAt)} />
+        <InfoRow label="Sent" value={formatOperationsDateTime(detail.sentAt)} />
+        <InfoRow label="Responded" value={formatOperationsDateTime(detail.respondedAt)} />
+        <InfoRow label="Response" value={detail.responseDetectedAs ?? 'Not detected'} />
+        <InfoRow label="Resolved" value={formatOperationsDateTime(detail.resolvedAt)} />
+        <InfoRow label="Check-in ID" value={detail.checkInId} mono />
+        <InfoRow label="Receiver ID" value={detail.receiverId} mono />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Escalation Attempts</Text>
+        {detail.escalations.length > 0 ? (
+          <View style={styles.escalationList}>
+            {detail.escalations.map((escalation) => (
+              <View key={escalation.id} style={styles.escalationItem}>
+                <View style={styles.recentHeader}>
+                  <Text style={styles.statusText}>Attempt {escalation.attemptNumber}</Text>
+                  <Text style={styles.attemptText}>{escalationResultLabel(escalation.result)}</Text>
+                </View>
+                <InfoRow label="Channel" value={escalation.channel} />
+                <InfoRow label="Started" value={formatOperationsDateTime(escalation.startedAt)} />
+                <InfoRow label="Completed" value={formatOperationsDateTime(escalation.completedAt)} />
+                <InfoRow label="Sender notified" value={formatOperationsDateTime(escalation.senderNotifiedAt)} />
+                <InfoRow label="Backup alerted" value={formatOperationsDateTime(escalation.backupAlertedAt)} />
               </View>
             ))}
           </View>
         ) : (
-          <Text style={styles.emptyText}>No check-ins in this window.</Text>
-        )}
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Recent Operational Check-ins</Text>
-        {summary.recent.length > 0 ? (
-          <View style={styles.recentList}>
-            {summary.recent.map((checkIn) => (
-              <Pressable
-                key={checkIn.checkInId}
-                style={styles.recentItem}
-                onPress={() => router.push(`/(main)/admin-operations/${checkIn.checkInId}` as never)}
-              >
-                <View style={styles.recentHeader}>
-                  <Text style={styles.statusText}>{operationsStatusLabel(checkIn.status)}</Text>
-                  <Text style={styles.attemptText}>
-                    {checkIn.successfulEscalationCount}/{checkIn.escalationAttemptCount} alerts
-                  </Text>
-                </View>
-                <InfoRow label="Scheduled" value={formatOperationsDateTime(checkIn.scheduledAt)} />
-                <InfoRow label="Sent" value={formatOperationsDateTime(checkIn.sentAt)} />
-                <InfoRow label="Responded" value={formatOperationsDateTime(checkIn.respondedAt)} />
-                <InfoRow label="Resolved" value={formatOperationsDateTime(checkIn.resolvedAt)} />
-                <InfoRow label="Check-in ID" value={checkIn.checkInId} mono />
-                <InfoRow label="Receiver ID" value={checkIn.receiverId} mono />
-                <Text style={styles.openDetailText}>Open detail</Text>
-              </Pressable>
-            ))}
-          </View>
-        ) : (
-          <Text style={styles.emptyText}>No recent operational incidents.</Text>
+          <Text style={styles.emptyText}>No escalation attempts recorded.</Text>
         )}
       </View>
     </ScrollView>
@@ -167,7 +165,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: spacing.md,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
   },
   eyebrow: {
     color: colors.textSecondary,
@@ -178,6 +176,15 @@ const styles = StyleSheet.create({
   title: {
     color: colors.text,
     fontSize: 28,
+    fontWeight: '700',
+  },
+  backButton: {
+    alignSelf: 'flex-start',
+    marginBottom: spacing.md,
+  },
+  backButtonText: {
+    color: colors.primary,
+    fontSize: fontSize.sm,
     fontWeight: '700',
   },
   refreshButton: {
@@ -230,35 +237,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginBottom: spacing.md,
   },
-  countGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.sm,
-  },
-  countTile: {
-    minWidth: 136,
-    flexGrow: 1,
-    borderWidth: 1,
-    borderColor: colors.border,
-    borderRadius: borderRadius.md,
-    padding: spacing.md,
-    backgroundColor: colors.backgroundSecondary,
-  },
-  countValue: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: '700',
-    marginBottom: spacing.xs,
-  },
-  countLabel: {
-    color: colors.textSecondary,
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-  },
-  recentList: {
+  escalationList: {
     gap: spacing.md,
   },
-  recentItem: {
+  escalationItem: {
     borderWidth: 1,
     borderColor: colors.border,
     borderRadius: borderRadius.md,
@@ -303,26 +285,35 @@ const styles = StyleSheet.create({
     fontFamily: 'monospace',
     fontSize: fontSize.xs,
   },
-  openDetailText: {
-    color: colors.primary,
-    fontSize: fontSize.sm,
-    fontWeight: '700',
-    marginTop: spacing.sm,
-    textAlign: 'right',
-  },
   emptyText: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
   primaryButton: {
     backgroundColor: colors.primary,
     borderRadius: borderRadius.lg,
     paddingHorizontal: spacing.xl,
     paddingVertical: spacing.md,
-    marginTop: spacing.md,
   },
   primaryButtonText: {
     color: colors.textOnPrimary,
+    fontSize: fontSize.md,
+    fontWeight: '700',
+  },
+  secondaryButton: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.lg,
+    paddingHorizontal: spacing.xl,
+    paddingVertical: spacing.md,
+  },
+  secondaryButtonText: {
+    color: colors.primary,
     fontSize: fontSize.md,
     fontWeight: '700',
   },

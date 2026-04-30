@@ -21,6 +21,7 @@ export default function MainLayout() {
           <Stack.Screen name="escalations" />
           <Stack.Screen name="pairing" />
           <Stack.Screen name="admin-operations" />
+          <Stack.Screen name="admin-operations/[checkInId]" />
           <Stack.Screen name="receiver-setup" />
           <Stack.Screen name="receivers/[id]" />
           <Stack.Screen name="settings" />

@@ -1,5 +1,5 @@
 import { timingSafeEqual } from 'node:crypto';
-import { Controller, Get, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
+import { Controller, Get, Headers, Inject, NotFoundException, Param, Post, UnauthorizedException } from '@nestjs/common';
 import { AdminAuthService } from '../auth/admin-auth.service';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import { AppConfigService } from '../../shared/config/app-config.service';
@@ -13,7 +13,7 @@ export class OperationsController {
     @Inject(AppConfigService)
     private readonly config: Pick<AppConfigService, 'operationsCronSecret'>,
     @Inject(OperationsVisibilityService)
-    private readonly operationsVisibilityService: Pick<OperationsVisibilityService, 'getCheckInSummary'>,
+    private readonly operationsVisibilityService: Pick<OperationsVisibilityService, 'getCheckInSummary' | 'getCheckInDetail'>,
     @Inject(AdminAuthService)
     private readonly adminAuthService: Pick<AdminAuthService, 'verifyAdminAccessToken'>,
   ) {}
@@ -38,6 +38,22 @@ export class OperationsController {
     await this.adminAuthService.verifyAdminAccessToken(accessToken);
 
     return await this.operationsVisibilityService.getCheckInSummary();
+  }
+
+  @Get('check-ins/:checkInId')
+  async getCheckInDetail(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('checkInId') checkInId: string,
+  ) {
+    const accessToken = this.getBearerToken(authorization);
+    await this.adminAuthService.verifyAdminAccessToken(accessToken);
+
+    const detail = await this.operationsVisibilityService.getCheckInDetail(checkInId);
+    if (!detail) {
+      throw new NotFoundException('Check-in not found');
+    }
+
+    return detail;
   }
 
   private getBearerToken(authorization: string | undefined): string {
