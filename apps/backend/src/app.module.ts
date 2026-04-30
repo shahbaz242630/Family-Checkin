@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdminAbuseModule } from './modules/admin-abuse/admin-abuse.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BackupContactsModule } from './modules/backup-contacts/backup-contacts.module';
@@ -21,6 +22,7 @@ import { AppConfigModule } from './shared/config/app-config.module';
     ChannelsModule,
     CheckInsModule,
     EscalationsModule,
+    AdminAbuseModule,
     OperationsModule,
   ],
 })

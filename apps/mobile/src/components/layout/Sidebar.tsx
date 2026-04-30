@@ -13,6 +13,8 @@ const MENU_ITEMS = [
   { icon: '✓', label: 'Check-ins', path: '/(main)/check-ins' },
   { icon: '🔔', label: 'Escalations', path: '/(main)/escalations' },
   { icon: '🔗', label: 'Add Loved One', path: '/(main)/receiver-setup' },
+  { icon: 'A', label: 'Admin Operations', path: '/(main)/admin-operations' },
+  { icon: '!', label: 'Abuse Reports', path: '/(main)/admin-abuse-reports' },
 ];
 
 export function Sidebar() {

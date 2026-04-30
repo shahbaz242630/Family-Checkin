@@ -16,6 +16,7 @@ export type BackendCheckInStatus =
   | 'RESOLVED'
   | 'FAILED'
   | 'SKIPPED';
+export type BackendAbuseReportStatus = 'PENDING' | 'REVIEWED_SAFE' | 'REVIEWED_ACTION_TAKEN';
 
 export interface SyncedBackendUser {
   id: string;
@@ -75,6 +76,16 @@ export interface BackendOperationsCheckInDetail {
   escalationAttemptCount: number;
   successfulEscalationCount: number;
   escalations: BackendOperationsEscalationDetail[];
+}
+
+export interface BackendAdminAbuseReport {
+  id: string;
+  receiverId: string;
+  reportedAt: string;
+  reviewStatus: BackendAbuseReportStatus;
+  reviewerAdminId?: string;
+  reviewedAt?: string;
+  hasReportContent: boolean;
 }
 
 export interface ReceiverSetupInput {
@@ -277,6 +288,36 @@ export async function getOperationsCheckInDetail(checkInId: string): Promise<Bac
   );
 
   return response.checkIn;
+}
+
+export async function listAdminAbuseReports(): Promise<BackendAdminAbuseReport[]> {
+  const response = await backendRequest<{ ok: true; abuseReports: BackendAdminAbuseReport[] }>('/admin/abuse-reports', {
+    method: 'GET',
+  });
+
+  return response.abuseReports;
+}
+
+export async function markAdminAbuseReportSafe(abuseReportId: string): Promise<BackendAdminAbuseReport> {
+  const response = await backendRequest<{ ok: true; abuseReport: BackendAdminAbuseReport }>(
+    `/admin/abuse-reports/${encodeURIComponent(abuseReportId)}/review-safe`,
+    {
+      method: 'PATCH',
+    },
+  );
+
+  return response.abuseReport;
+}
+
+export async function markAdminAbuseReportActionTaken(abuseReportId: string): Promise<BackendAdminAbuseReport> {
+  const response = await backendRequest<{ ok: true; abuseReport: BackendAdminAbuseReport }>(
+    `/admin/abuse-reports/${encodeURIComponent(abuseReportId)}/review-action-taken`,
+    {
+      method: 'PATCH',
+    },
+  );
+
+  return response.abuseReport;
 }
 
 export async function resolveReceiverCheckIn(receiverId: string, checkInId: string): Promise<BackendReceiverDetail> {
