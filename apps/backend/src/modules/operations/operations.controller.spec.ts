@@ -28,14 +28,14 @@ class FakeCheckInsService {
 }
 
 describe('OperationsController', () => {
-  it('runs due check-ins and overdue escalation for a valid service-role bearer token', async () => {
+  it('runs due check-ins and overdue escalation for a valid operations cron bearer token', async () => {
     const checkIns = new FakeCheckInsService();
     const controller = new OperationsController(
       checkIns as unknown as CheckInsService,
-      { supabaseServiceRoleKey: 'service-role-secret' } as AppConfigService,
+      { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
     );
 
-    const response = await controller.runCheckIns('Bearer service-role-secret');
+    const response = await controller.runCheckIns('Bearer operations-cron-secret');
 
     expect(checkIns.calls).toEqual(['sendDueCheckIns', 'escalateOverdueCheckIns']);
     expect(response).toEqual({
@@ -56,14 +56,14 @@ describe('OperationsController', () => {
     expect(JSON.stringify(response)).not.toContain('phone');
   });
 
-  it('requires the configured service-role bearer token', async () => {
+  it('requires the configured operations cron bearer token', async () => {
     const controller = new OperationsController(
       new FakeCheckInsService() as unknown as CheckInsService,
-      { supabaseServiceRoleKey: 'service-role-secret' } as AppConfigService,
+      { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
     );
 
     await expect(controller.runCheckIns(undefined)).rejects.toBeInstanceOf(UnauthorizedException);
-    await expect(controller.runCheckIns('Basic service-role-secret')).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(controller.runCheckIns('Basic operations-cron-secret')).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(controller.runCheckIns('Bearer wrong-secret')).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });

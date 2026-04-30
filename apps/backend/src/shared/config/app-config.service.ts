@@ -7,6 +7,7 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url(),
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  OPERATIONS_CRON_SECRET: z.string().min(1),
   CHANNEL_PROVIDER_MODE: z.enum(['configured', 'fake']).default('configured'),
   SMS_PROVIDER_API_KEY: z.string().optional(),
   SMS_PROVIDER_FROM_NUMBER: z.string().optional(),
@@ -56,6 +57,10 @@ export class AppConfigService {
 
   get supabaseServiceRoleKey(): string {
     return this.env.SUPABASE_SERVICE_ROLE_KEY;
+  }
+
+  get operationsCronSecret(): string {
+    return this.env.OPERATIONS_CRON_SECRET;
   }
 
   get channelProviderMode(): 'configured' | 'fake' {

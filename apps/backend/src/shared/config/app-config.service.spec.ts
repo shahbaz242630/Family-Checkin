@@ -9,6 +9,7 @@ describe('AppConfigService', () => {
       SUPABASE_URL: 'https://nrohtflgytywovwabvdo.supabase.co',
       SUPABASE_ANON_KEY: 'anon-key',
       SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+      OPERATIONS_CRON_SECRET: 'operations-cron-secret',
       CHANNEL_PROVIDER_MODE: 'fake',
       SMS_PROVIDER_API_KEY: 'sms-key',
       WHATSAPP_ACCESS_TOKEN: 'whatsapp-token',
@@ -22,6 +23,7 @@ describe('AppConfigService', () => {
     expect(config.supabaseUrl).toBe('https://nrohtflgytywovwabvdo.supabase.co');
     expect(config.supabaseAnonKey).toBe('anon-key');
     expect(config.supabaseServiceRoleKey).toBe('service-role-key');
+    expect(config.operationsCronSecret).toBe('operations-cron-secret');
     expect(config.channelProviderMode).toBe('fake');
     expect(config.smsProviderApiKey).toBe('sms-key');
     expect(config.whatsappAccessToken).toBe('whatsapp-token');
@@ -39,6 +41,7 @@ describe('AppConfigService', () => {
           SUPABASE_URL: 'not-a-url',
           SUPABASE_ANON_KEY: '',
           SUPABASE_SERVICE_ROLE_KEY: '',
+          OPERATIONS_CRON_SECRET: '',
         }),
     ).toThrow('Invalid backend environment');
   });

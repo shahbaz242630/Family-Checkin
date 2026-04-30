@@ -1354,7 +1354,8 @@ Completed:
 - Added `OperationsModule`.
 - Added protected backend endpoint:
   - `POST /operations/check-ins/run`
-  - header: `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`
+  - header originally used `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`
+  - superseded on 2026-04-30 by dedicated `OPERATIONS_CRON_SECRET` scheduler auth
 - Endpoint runs:
   - `CheckInsService.sendDueCheckIns()`
   - `CheckInsService.escalateOverdueCheckIns()`
@@ -1417,14 +1418,14 @@ Completed:
 - Added a reusable operations runner:
   - `apps/backend/src/modules/operations/operations-runner.ts`
   - posts to the configured `POST /operations/check-ins/run` endpoint
-  - sends `Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>`
+  - sends `Authorization: Bearer <OPERATIONS_CRON_SECRET>`
   - validates required env-driven configuration
   - reconstructs aggregate output so unexpected response details are not logged
   - does not include response bodies in HTTP failure messages
 - Added CLI wrapper:
   - `apps/backend/scripts/run-operations-check-ins.ts`
   - reads `OPERATIONS_CHECK_INS_RUN_URL`
-  - reads `SUPABASE_SERVICE_ROLE_KEY`
+  - reads `OPERATIONS_CRON_SECRET`
   - logs only the aggregate endpoint response
 - Added backend package script:
   - `npm --prefix apps/backend run operations:check-ins`
@@ -1432,12 +1433,14 @@ Completed:
   - `.github/workflows/operations-check-ins.yml`
   - runs every 10 minutes
   - supports manual `workflow_dispatch`
-  - uses GitHub Secrets for `OPERATIONS_CHECK_INS_RUN_URL` and `SUPABASE_SERVICE_ROLE_KEY`
+  - uses GitHub Secrets for `OPERATIONS_CHECK_INS_RUN_URL` and `OPERATIONS_CRON_SECRET`
+  - does not require the Supabase service-role key in GitHub Actions
+  - skips cleanly with a GitHub Actions notice when the scheduler secrets are not configured yet
 
 Required GitHub repository secrets before enabling hosted runs:
 
 - `OPERATIONS_CHECK_INS_RUN_URL`: full deployed endpoint URL, e.g. `https://api.example.com/operations/check-ins/run`
-- `SUPABASE_SERVICE_ROLE_KEY`: the backend service-role bearer token
+- `OPERATIONS_CRON_SECRET`: random high-entropy token that also exists in the backend runtime environment
 
 Focused verification:
 
@@ -1446,6 +1449,25 @@ npm.cmd --prefix apps/backend test -- operations-runner.spec.ts
 ```
 
 Focused suite passed: 1 file, 4 tests.
+
+Scheduler auth hardening update - 2026-04-30:
+
+- Replaced scheduler authentication with a dedicated `OPERATIONS_CRON_SECRET`.
+- The backend operations endpoint now validates `Authorization: Bearer <OPERATIONS_CRON_SECRET>` using timing-safe comparison.
+- The GitHub Actions workflow now reads:
+  - `OPERATIONS_CHECK_INS_RUN_URL`
+  - `OPERATIONS_CRON_SECRET`
+- The GitHub Actions workflow no longer needs or receives `SUPABASE_SERVICE_ROLE_KEY`.
+- `SUPABASE_SERVICE_ROLE_KEY` remains a backend-only secret for Supabase/database operations.
+- Updated `apps/backend/.env.example` with `OPERATIONS_CRON_SECRET`.
+
+Focused verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- operations.controller.spec.ts operations-runner.spec.ts app-config.service.spec.ts
+```
+
+Focused suite passed: 3 files, 8 tests.
 
 ### 16. Next Planned Slice
 

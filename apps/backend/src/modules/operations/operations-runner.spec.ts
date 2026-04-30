@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runOperationsCheckIns } from './operations-runner';
 
 describe('runOperationsCheckIns', () => {
-  it('posts to the configured operations endpoint with the service-role bearer token', async () => {
+  it('posts to the configured operations endpoint with the operations cron bearer token', async () => {
     const fetchImpl = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -16,14 +16,14 @@ describe('runOperationsCheckIns', () => {
 
     const result = await runOperationsCheckIns({
       endpointUrl: 'https://api.nearby.example/operations/check-ins/run',
-      serviceRoleKey: 'service-role-secret',
+      operationsCronSecret: 'operations-cron-secret',
       fetchImpl,
     });
 
     expect(fetchImpl).toHaveBeenCalledWith('https://api.nearby.example/operations/check-ins/run', {
       method: 'POST',
       headers: {
-        authorization: 'Bearer service-role-secret',
+        authorization: 'Bearer operations-cron-secret',
         'content-type': 'application/json',
       },
     });
@@ -38,7 +38,7 @@ describe('runOperationsCheckIns', () => {
     await expect(
       runOperationsCheckIns({
         endpointUrl: '',
-        serviceRoleKey: 'service-role-secret',
+        operationsCronSecret: 'operations-cron-secret',
         fetchImpl: vi.fn(),
       }),
     ).rejects.toThrow('OPERATIONS_CHECK_INS_RUN_URL is required');
@@ -46,10 +46,10 @@ describe('runOperationsCheckIns', () => {
     await expect(
       runOperationsCheckIns({
         endpointUrl: 'https://api.nearby.example/operations/check-ins/run',
-        serviceRoleKey: '',
+        operationsCronSecret: '',
         fetchImpl: vi.fn(),
       }),
-    ).rejects.toThrow('SUPABASE_SERVICE_ROLE_KEY is required');
+    ).rejects.toThrow('OPERATIONS_CRON_SECRET is required');
   });
 
   it('rejects failed endpoint responses without including response bodies', async () => {
@@ -60,7 +60,7 @@ describe('runOperationsCheckIns', () => {
     await expect(
       runOperationsCheckIns({
         endpointUrl: 'https://api.nearby.example/operations/check-ins/run',
-        serviceRoleKey: 'wrong-secret',
+        operationsCronSecret: 'wrong-secret',
         fetchImpl,
       }),
     ).rejects.toThrow('Operations check-ins run failed with HTTP 401 Unauthorized');
@@ -82,7 +82,7 @@ describe('runOperationsCheckIns', () => {
 
     const result = await runOperationsCheckIns({
       endpointUrl: 'https://api.nearby.example/operations/check-ins/run',
-      serviceRoleKey: 'service-role-secret',
+      operationsCronSecret: 'operations-cron-secret',
       fetchImpl,
     });
 

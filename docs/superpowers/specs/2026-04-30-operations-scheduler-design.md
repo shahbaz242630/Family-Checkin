@@ -6,16 +6,16 @@ Run the existing protected operations trigger on a hosted schedule so due check-
 
 ## Approach
 
-Use GitHub Actions scheduled workflows as the first hosted scheduler. The workflow calls a small backend-owned runner script, and the script calls `POST /operations/check-ins/run` with the service-role bearer token.
+Use GitHub Actions scheduled workflows as the first hosted scheduler. The workflow calls a small backend-owned runner script, and the script calls `POST /operations/check-ins/run` with a dedicated operations cron bearer token.
 
-This keeps scheduling outside the NestJS process, avoids duplicate in-app timers when multiple backend instances are running, and does not bind the MVP to Railway, Fly.io, or another specific hosting provider.
+This keeps scheduling outside the NestJS process, avoids duplicate in-app timers when multiple backend instances are running, and does not bind the MVP to Railway, Fly.io, or another specific hosting provider. It also avoids putting the Supabase service-role key in GitHub Actions for this job.
 
 ## Configuration
 
 GitHub repository secrets:
 
 - `OPERATIONS_CHECK_INS_RUN_URL`: full deployed URL for the operations endpoint, for example `https://api.example.com/operations/check-ins/run`.
-- `SUPABASE_SERVICE_ROLE_KEY`: service-role token expected by the operations controller.
+- `OPERATIONS_CRON_SECRET`: random high-entropy token expected by the operations controller.
 
 Local development can run the same script with those environment variables set.
 
@@ -30,7 +30,8 @@ Local development can run the same script with those environment variables set.
 
 ## Security
 
-- The service-role key is read from GitHub Secrets only.
+- GitHub Actions uses only `OPERATIONS_CRON_SECRET`; it does not need the Supabase service-role key.
+- The cron secret is read from GitHub Secrets only.
 - The runner does not print secret values.
 - The runner reconstructs the aggregate response before logging, so unexpected response details are discarded.
 - Failed HTTP responses include status and status text only, not response bodies.

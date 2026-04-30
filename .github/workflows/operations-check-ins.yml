@@ -24,7 +24,13 @@ jobs:
         run: npm ci
 
       - name: Run operations check-ins
-        run: npm --prefix apps/backend run operations:check-ins
+        run: |
+          if [ -z "$OPERATIONS_CHECK_INS_RUN_URL" ] || [ -z "$OPERATIONS_CRON_SECRET" ]; then
+            echo "::notice::Operations scheduler secrets are not configured; skipping check-in run."
+            exit 0
+          fi
+
+          npm --prefix apps/backend run operations:check-ins
         env:
           OPERATIONS_CHECK_INS_RUN_URL: ${{ secrets.OPERATIONS_CHECK_INS_RUN_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          OPERATIONS_CRON_SECRET: ${{ secrets.OPERATIONS_CRON_SECRET }}

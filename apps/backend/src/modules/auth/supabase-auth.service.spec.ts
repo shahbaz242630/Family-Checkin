@@ -9,6 +9,7 @@ describe('SupabaseAuthService', () => {
     SUPABASE_URL: 'https://nrohtflgytywovwabvdo.supabase.co',
     SUPABASE_ANON_KEY: 'anon-key',
     SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+    OPERATIONS_CRON_SECRET: 'operations-cron-secret',
   });
 
   beforeEach(() => {

@@ -17,25 +17,25 @@ type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
 
 export async function runOperationsCheckIns(input: {
   endpointUrl: string;
-  serviceRoleKey: string;
+  operationsCronSecret: string;
   fetchImpl?: FetchLike;
 }): Promise<OperationsRunAggregate> {
   const endpointUrl = input.endpointUrl.trim();
-  const serviceRoleKey = input.serviceRoleKey.trim();
+  const operationsCronSecret = input.operationsCronSecret.trim();
 
   if (!endpointUrl) {
     throw new Error('OPERATIONS_CHECK_INS_RUN_URL is required');
   }
 
-  if (!serviceRoleKey) {
-    throw new Error('SUPABASE_SERVICE_ROLE_KEY is required');
+  if (!operationsCronSecret) {
+    throw new Error('OPERATIONS_CRON_SECRET is required');
   }
 
   const fetchImpl = input.fetchImpl ?? fetch;
   const response = await fetchImpl(endpointUrl, {
     method: 'POST',
     headers: {
-      authorization: `Bearer ${serviceRoleKey}`,
+      authorization: `Bearer ${operationsCronSecret}`,
       'content-type': 'application/json',
     },
   });

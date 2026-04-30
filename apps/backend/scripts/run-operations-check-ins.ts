@@ -3,7 +3,7 @@ import { runOperationsCheckIns } from '../src/modules/operations/operations-runn
 async function main(): Promise<void> {
   const result = await runOperationsCheckIns({
     endpointUrl: process.env.OPERATIONS_CHECK_INS_RUN_URL ?? '',
-    serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY ?? '',
+    operationsCronSecret: process.env.OPERATIONS_CRON_SECRET ?? '',
   });
 
   process.stdout.write(`${JSON.stringify(result)}\n`);
