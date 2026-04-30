@@ -80,4 +80,20 @@ describe('PrismaEscalationsRepository', () => {
       data: { status: CheckInStatus.ESCALATED },
     });
   });
+
+  it('marks a check-in terminal after a missed escalation cannot continue', async () => {
+    const update = vi.fn().mockResolvedValue({ id: 'check-in-1', status: CheckInStatus.SKIPPED });
+    const repository = new PrismaEscalationsRepository({
+      backupContact: { findMany: vi.fn() },
+      escalationEvent: { create: vi.fn() },
+      checkIn: { update },
+    });
+
+    await repository.markCheckInTerminal({ checkInId: 'check-in-1', status: CheckInStatus.SKIPPED });
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'check-in-1' },
+      data: { status: CheckInStatus.SKIPPED },
+    });
+  });
 });

@@ -116,6 +116,8 @@ export class CheckInsService {
 
         if (escalation?.status === CheckInStatus.ESCALATED) {
           result.escalated += 1;
+        } else if (escalation?.status === CheckInStatus.FAILED) {
+          result.failed += 1;
         } else {
           result.skipped += 1;
         }

@@ -20,6 +20,7 @@ class InMemoryEscalationsRepository implements EscalationsRepository {
   public backupContacts: EscalationBackupContactRecord[] = [];
   public createdEvents: CreateEscalationEventInput[] = [];
   public escalatedCheckIns: string[] = [];
+  public terminalStatuses: { checkInId: string; status: CheckInStatus }[] = [];
 
   async findActiveBackupContactsForReceiver(input: { receiverId: string }): Promise<EscalationBackupContactRecord[]> {
     return this.backupContacts
@@ -37,6 +38,10 @@ class InMemoryEscalationsRepository implements EscalationsRepository {
 
   async markCheckInEscalated(input: { checkInId: string }): Promise<void> {
     this.escalatedCheckIns.push(input.checkInId);
+  }
+
+  async markCheckInTerminal(input: { checkInId: string; status: CheckInStatus }): Promise<void> {
+    this.terminalStatuses.push(input);
   }
 }
 
@@ -68,6 +73,22 @@ class FailingFirstSmsProvider implements ChannelProvider {
       acceptedAt: new Date('2026-04-29T10:00:00.000Z'),
       providerStatus: 'accepted',
     };
+  }
+
+  async makeVoiceCall(_to: string, _script: VoiceScript): Promise<never> {
+    throw new Error('Voice not supported by this test provider');
+  }
+
+  async isAvailableForNumber(_phone: string): Promise<boolean> {
+    return true;
+  }
+}
+
+class AlwaysFailingSmsProvider implements ChannelProvider {
+  public readonly channel = Channel.SMS;
+
+  async sendMessage(_to: string, _message: TemplatedMessage): Promise<never> {
+    throw new Error('provider unavailable');
   }
 
   async makeVoiceCall(_to: string, _script: VoiceScript): Promise<never> {
@@ -380,6 +401,138 @@ describe('EscalationsService', () => {
     });
     expect(JSON.stringify(audit.events)).not.toContain('+971502222222');
     expect(JSON.stringify(audit.events)).not.toContain('First Backup');
+  });
+
+  it('marks missed check-ins skipped when there are no active backup contacts', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const audit = new InMemoryAuditService();
+    const sms = new FakeChannelProvider(Channel.SMS);
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms]),
+      audit as unknown as AuditService,
+      () => new Date('2026-04-29T10:45:00.000Z'),
+    );
+
+    const result = await service.escalateMissedCheckIn({
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      sentAt: new Date('2026-04-29T10:00:00.000Z'),
+      responseWindowMinutes: 30,
+    });
+
+    expect(result).toEqual({
+      checkInId: 'check-in-1',
+      status: CheckInStatus.SKIPPED,
+      attempted: 0,
+      succeeded: 0,
+      failed: 0,
+    });
+    expect(repository.terminalStatuses).toEqual([{ checkInId: 'check-in-1', status: CheckInStatus.SKIPPED }]);
+    expect(audit.events).toEqual([
+      {
+        entityType: 'check_in',
+        entityId: 'check-in-1',
+        action: 'escalation.no_backup_contacts',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: 'receiver-1',
+          escalationReason: 'missed_check_in',
+          sentAt: '2026-04-29T10:00:00.000Z',
+          responseWindowMinutes: 30,
+        },
+      },
+      {
+        entityType: 'check_in',
+        entityId: 'check-in-1',
+        action: 'check_in.escalation_skipped',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: 'receiver-1',
+          reason: 'no_backup_contacts',
+          escalationReason: 'missed_check_in',
+        },
+      },
+    ]);
+  });
+
+  it('marks missed check-ins failed when every backup contact alert fails', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const audit = new InMemoryAuditService();
+    const sms = new AlwaysFailingSmsProvider();
+    repository.backupContacts = [
+      backupContactFixture(crypto, {
+        id: 'backup-contact-first',
+        phone: '+971502222222',
+        priorityOrder: 1,
+        createdAt: new Date('2026-04-29T08:20:00.000Z'),
+      }),
+      backupContactFixture(crypto, {
+        id: 'backup-contact-second',
+        phone: '+971501111111',
+        priorityOrder: 2,
+        createdAt: new Date('2026-04-29T08:10:00.000Z'),
+      }),
+    ];
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms]),
+      audit as unknown as AuditService,
+      () => new Date('2026-04-29T10:45:00.000Z'),
+    );
+
+    const result = await service.escalateMissedCheckIn({
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      sentAt: new Date('2026-04-29T10:00:00.000Z'),
+      responseWindowMinutes: 30,
+    });
+
+    expect(result).toEqual({
+      checkInId: 'check-in-1',
+      status: CheckInStatus.FAILED,
+      attempted: 2,
+      succeeded: 0,
+      failed: 2,
+    });
+    expect(repository.terminalStatuses).toEqual([{ checkInId: 'check-in-1', status: CheckInStatus.FAILED }]);
+    expect(repository.createdEvents).toEqual([
+      {
+        checkInId: 'check-in-1',
+        attemptNumber: 1,
+        channel: Channel.SMS,
+        startedAt: new Date('2026-04-29T10:45:00.000Z'),
+        completedAt: new Date('2026-04-29T10:45:00.000Z'),
+        result: EscalationResult.ERROR,
+        errorDetails: 'provider_send_failed',
+      },
+      {
+        checkInId: 'check-in-1',
+        attemptNumber: 2,
+        channel: Channel.SMS,
+        startedAt: new Date('2026-04-29T10:45:00.000Z'),
+        completedAt: new Date('2026-04-29T10:45:00.000Z'),
+        result: EscalationResult.ERROR,
+        errorDetails: 'provider_send_failed',
+      },
+    ]);
+    expect(audit.events.at(-1)).toMatchObject({
+      entityType: 'check_in',
+      entityId: 'check-in-1',
+      action: 'check_in.escalation_failed',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: 'receiver-1',
+        failedAlerts: 2,
+        escalationReason: 'missed_check_in',
+      },
+    });
+    expect(JSON.stringify(audit.events)).not.toContain('+971502222222');
+    expect(JSON.stringify(audit.events)).not.toContain('+971501111111');
   });
 });
 

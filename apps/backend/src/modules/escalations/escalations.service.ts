@@ -59,6 +59,8 @@ export class EscalationsService {
       receiverId: input.receiverId,
       checkInId: input.checkInId,
       templateKey: 'backup_contact_missed_checkin_alert',
+      terminalNoContactsStatus: CheckInStatus.SKIPPED,
+      terminalFailureStatus: CheckInStatus.FAILED,
       auditMetadata: {
         escalationReason: 'missed_check_in',
         sentAt: input.sentAt.toISOString(),
@@ -76,6 +78,8 @@ export class EscalationsService {
     receiverId: string;
     checkInId: string;
     templateKey: string;
+    terminalNoContactsStatus?: CheckInStatus;
+    terminalFailureStatus?: CheckInStatus;
     auditMetadata: Record<string, string | number>;
     noContactsMetadata: Record<string, string | number>;
   }): Promise<EscalateHelpResponseResult> {
@@ -89,15 +93,33 @@ export class EscalationsService {
         entityId: input.checkInId,
         action: 'escalation.no_backup_contacts',
         actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: input.receiverId,
+          ...input.noContactsMetadata,
+        },
+      });
+
+      if (input.terminalNoContactsStatus) {
+        await this.escalationsRepository.markCheckInTerminal({
+          checkInId: input.checkInId,
+          status: input.terminalNoContactsStatus,
+        });
+        await this.auditService.append({
+          entityType: 'check_in',
+          entityId: input.checkInId,
+          action: 'check_in.escalation_skipped',
+          actorType: ActorType.SYSTEM,
           metadata: {
             receiverId: input.receiverId,
-            ...input.noContactsMetadata,
+            reason: 'no_backup_contacts',
+            escalationReason: 'missed_check_in',
           },
         });
+      }
 
       return {
         checkInId: input.checkInId,
-        status: CheckInStatus.RESPONDED_HELP,
+        status: input.terminalNoContactsStatus ?? CheckInStatus.RESPONDED_HELP,
         attempted: 0,
         succeeded: 0,
         failed: 0,
@@ -188,11 +210,30 @@ export class EscalationsService {
           failedAlerts: failed,
         },
       });
+    } else if (input.terminalFailureStatus) {
+      await this.escalationsRepository.markCheckInTerminal({
+        checkInId: input.checkInId,
+        status: input.terminalFailureStatus,
+      });
+      await this.auditService.append({
+        entityType: 'check_in',
+        entityId: input.checkInId,
+        action: 'check_in.escalation_failed',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: input.receiverId,
+          failedAlerts: failed,
+          escalationReason: 'missed_check_in',
+        },
+      });
     }
 
     return {
       checkInId: input.checkInId,
-      status: succeeded > 0 ? CheckInStatus.ESCALATED : CheckInStatus.RESPONDED_HELP,
+      status:
+        succeeded > 0
+          ? CheckInStatus.ESCALATED
+          : (input.terminalFailureStatus ?? CheckInStatus.RESPONDED_HELP),
       attempted: backupContacts.length,
       succeeded,
       failed,

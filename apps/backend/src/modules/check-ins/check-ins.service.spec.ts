@@ -95,6 +95,7 @@ class InMemoryAuditService {
 }
 
 class InMemoryEscalationsService {
+  public nextStatus: CheckInStatus = CheckInStatus.ESCALATED;
   public missedEscalations: {
     receiverId: string;
     checkInId: string;
@@ -111,10 +112,10 @@ class InMemoryEscalationsService {
     this.missedEscalations.push(input);
     return {
       checkInId: input.checkInId,
-      status: CheckInStatus.ESCALATED,
-      attempted: 1,
-      succeeded: 1,
-      failed: 0,
+      status: this.nextStatus,
+      attempted: this.nextStatus === CheckInStatus.SKIPPED ? 0 : 1,
+      succeeded: this.nextStatus === CheckInStatus.ESCALATED ? 1 : 0,
+      failed: this.nextStatus === CheckInStatus.FAILED ? 1 : 0,
     };
   }
 }
@@ -265,6 +266,44 @@ describe('CheckInsService', () => {
       escalated: 1,
       skipped: 0,
       failed: 0,
+    });
+  });
+
+  it('counts terminal missed escalation failures separately from skipped outcomes', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
+    const escalations = new InMemoryEscalationsService();
+    escalations.nextStatus = CheckInStatus.FAILED;
+    repository.overdueCheckIns = [
+      {
+        id: 'check-in-overdue',
+        receiverId: 'receiver-1',
+        scheduledAt: new Date('2026-04-29T09:55:00.000Z'),
+        status: CheckInStatus.SENT,
+        channelUsed: Channel.WHATSAPP,
+        sentAt: new Date('2026-04-29T10:00:00.000Z'),
+        createdAt: new Date('2026-04-29T09:55:00.000Z'),
+        updatedAt: new Date('2026-04-29T10:00:00.000Z'),
+      },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([whatsapp]),
+      audit as unknown as AuditService,
+      escalations,
+      () => new Date('2026-04-29T10:31:00.000Z'),
+    );
+
+    const result = await service.escalateOverdueCheckIns();
+
+    expect(result).toEqual({
+      checked: 1,
+      escalated: 0,
+      skipped: 0,
+      failed: 1,
     });
   });
 });

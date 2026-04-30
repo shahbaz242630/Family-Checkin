@@ -1469,7 +1469,38 @@ npm.cmd --prefix apps/backend test -- operations.controller.spec.ts operations-r
 
 Focused suite passed: 3 files, 8 tests.
 
-### 16. Next Planned Slice
+### 16. Missed escalation terminal outcomes - completed 2026-04-30
+
+Completed:
+
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-04-30-missed-escalation-terminal-outcomes-design.md`
+  - `docs/superpowers/plans/2026-04-30-missed-escalation-terminal-outcomes.md`
+- Fixed missed-check-in escalation terminal outcomes so the 10-minute operations scheduler does not repeatedly process the same overdue `SENT` check-in.
+- Missed check-in with no active backup contacts now:
+  - audits `escalation.no_backup_contacts`
+  - marks the check-in `SKIPPED`
+  - audits `check_in.escalation_skipped`
+- Missed check-in where every backup alert fails now:
+  - creates failed `escalation_events`
+  - marks the check-in `FAILED`
+  - audits `check_in.escalation_failed`
+- Missed check-in with at least one successful backup alert keeps existing `ESCALATED` behavior.
+- Explicit receiver HELP response behavior is unchanged:
+  - no backup contacts still leaves the check-in as `RESPONDED_HELP`
+  - all provider failures still leave the check-in as `RESPONDED_HELP`
+- `CheckInsService.escalateOverdueCheckIns()` now counts terminal `FAILED` outcomes as `failed`, not `skipped`.
+- Audit metadata remains PII-safe: IDs, statuses, counts, channels, and operational reasons only.
+
+Focused verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- check-ins.service.spec.ts escalations.service.spec.ts prisma-escalations.repository.spec.ts
+```
+
+Focused suite passed: 3 files, 14 tests.
+
+### 17. Next Planned Slice
 
 Finish smoke-test cleanup before moving into new product behavior:
 
@@ -1479,7 +1510,7 @@ Finish smoke-test cleanup before moving into new product behavior:
   - keep provider sends behind the channel-router abstraction
   - audit escalation events without raw PII
 
-### 17. Production readiness checklist
+### 18. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:
 
@@ -1509,7 +1540,7 @@ Use this before beta, production launch, or inviting real users into the hosted 
   - confirm admin abuse-monitoring workflow exists before real users
   - confirm payment/tier gating is enabled before charging users
 
-### 18. Later, after local fake flow is proven
+### 19. Later, after local fake flow is proven
 
 - Real WhatsApp/SMS/Voice webhook adapter controllers.
 - Real provider implementations after vendor selection.

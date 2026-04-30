@@ -28,4 +28,5 @@ export interface EscalationsRepository {
   findActiveBackupContactsForReceiver(input: { receiverId: string }): Promise<EscalationBackupContactRecord[]>;
   createEvent(input: CreateEscalationEventInput): Promise<EscalationEventRecord>;
   markCheckInEscalated(input: { checkInId: string }): Promise<void>;
+  markCheckInTerminal(input: { checkInId: string; status: CheckInStatus }): Promise<void>;
 }

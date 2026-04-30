@@ -91,4 +91,11 @@ export class PrismaEscalationsRepository implements EscalationsRepository {
       data: { status: CheckInStatus.ESCALATED },
     });
   }
+
+  async markCheckInTerminal(input: { checkInId: string; status: CheckInStatus }): Promise<void> {
+    await this.prisma.checkIn.update({
+      where: { id: input.checkInId },
+      data: { status: input.status },
+    });
+  }
 }
