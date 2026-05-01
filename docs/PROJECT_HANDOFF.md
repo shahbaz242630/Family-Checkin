@@ -1860,6 +1860,57 @@ In-app browser smoke passed on `http://localhost:8084/admin-operations/7e207653-
 - displayed check-in and receiver UUIDs only
 - no names, phone numbers, transcripts, or message body content appeared in the DOM snapshot
 
+### 26b. Admin abuse review queue - completed 2026-04-30
+
+Completed admin abuse monitoring slice:
+
+- Added backend admin abuse module:
+  - `AdminAbuseController`
+  - `AdminAbuseService`
+  - `PrismaAdminAbuseRepository`
+  - `AdminAbuseModule`
+- Added active-admin protected endpoints:
+  - `GET /admin/abuse-reports`
+  - `GET /admin/abuse-reports/:abuseReportId`
+  - `PATCH /admin/abuse-reports/:abuseReportId/review-safe`
+  - `PATCH /admin/abuse-reports/:abuseReportId/review-action-taken`
+- Listing/detail responses expose only operational review fields:
+  - abuse report id
+  - receiver id
+  - reported timestamp
+  - review status
+  - reviewer admin id
+  - reviewed timestamp
+  - whether encrypted report content exists
+- Responses intentionally do not expose raw receiver names, phone numbers, report bodies, transcripts, encrypted content, hashes, or provider payloads.
+- Review mutations require `SUPER_ADMIN` or `OPERATOR`.
+- Review mutations append PII-safe admin audit events:
+  - `reviewed_safe`
+  - `reviewed_action_taken`
+- Added Expo admin route:
+  - `/admin-abuse-reports`
+  - shows admin role, pending report count, read-only/review access state, and pending abuse report rows
+  - provides `Mark safe` and `Action taken` actions for review-capable admins
+- Added sidebar and stack route wiring for the abuse queue.
+
+Files changed for this slice:
+
+- `apps/backend/src/app.module.ts`
+- `apps/backend/src/modules/admin-abuse/admin-abuse.controller.ts`
+- `apps/backend/src/modules/admin-abuse/admin-abuse.controller.spec.ts`
+- `apps/backend/src/modules/admin-abuse/admin-abuse.module.ts`
+- `apps/backend/src/modules/admin-abuse/admin-abuse.repository.ts`
+- `apps/backend/src/modules/admin-abuse/admin-abuse.service.ts`
+- `apps/backend/src/modules/admin-abuse/admin-abuse.service.spec.ts`
+- `apps/backend/src/modules/admin-abuse/admin-abuse.tokens.ts`
+- `apps/backend/src/modules/admin-abuse/prisma-admin-abuse.repository.ts`
+- `apps/backend/src/modules/admin-abuse/prisma-admin-abuse.repository.spec.ts`
+- `apps/mobile/src/app/(main)/admin-abuse-reports.tsx`
+- `apps/mobile/src/app/(main)/_layout.tsx`
+- `apps/mobile/src/components/layout/Sidebar.tsx`
+- `apps/mobile/src/services/backendApi.ts`
+- `apps/mobile/src/services/index.ts`
+
 ### 27. Sender escalation actions - completed 2026-04-30
 
 Completed sender-facing escalation decision actions from receiver detail:
@@ -1942,16 +1993,84 @@ npm.cmd --prefix apps/backend run build
 
 Full backend suite passed: 34 files, 149 tests.
 
-### 29. Next Planned Slice
+### 29. Provider webhook adapter controllers - completed 2026-05-01
 
-Finish smoke-test cleanup before moving into new product behavior:
+Completed protected inbound webhook adapter slice:
 
-- Add real provider webhook adapter controllers:
-  - WhatsApp/SMS inbound receiver replies
-  - WhatsApp/SMS inbound backup contact replies
-  - keep all vendor payload parsing at the edge
-  - route normalized replies into existing reply services
-  - keep audit metadata free of raw PII
+- Added backend provider webhook module:
+  - `ProviderWebhooksModule`
+  - `ProviderWebhooksController`
+- Added protected endpoints:
+  - `POST /provider-webhooks/whatsapp`
+  - `POST /provider-webhooks/sms`
+- Both endpoints require:
+  - `x-nearby-webhook-secret: <CHANNEL_WEBHOOK_SECRET>`
+- WhatsApp endpoint:
+  - accepts Meta-shaped `entry[].changes[].value.messages[]` payloads
+  - processes only text messages with a sender and text body
+  - normalizes sender phone numbers into international format when needed
+  - maps payloads into the existing normalized reply service with `Channel.WHATSAPP`
+  - ignores non-text messages without echoing payload details
+- SMS endpoint:
+  - accepts generic lowercase fields (`from`, `body`, `messageId`, `receivedAt`)
+  - accepts Twilio-style fields (`From`, `Body`, `MessageSid`)
+  - maps payloads into the existing normalized reply service with `Channel.SMS`
+- Existing `ReceiverReplyService.handleInboundReply` remains the single business-logic path for:
+  - receiver consent replies
+  - receiver STOP / REPORT replies
+  - check-in OK / HELP replies
+  - backup contact DONE / CHECKED / RESOLVED replies
+- Responses return only aggregate counts:
+  - `{ ok: true, processed: number }`
+- Responses intentionally exclude raw phone numbers, names, message bodies, transcripts, encrypted content, hashes, and provider payloads.
+- Added config:
+  - `CHANNEL_WEBHOOK_SECRET`
+- Added design and implementation plan:
+  - `docs/superpowers/specs/2026-05-01-provider-webhooks-design.md`
+  - `docs/superpowers/plans/2026-05-01-provider-webhooks.md`
+
+Files changed for this slice:
+
+- `apps/backend/src/modules/provider-webhooks/provider-webhooks.controller.ts`
+- `apps/backend/src/modules/provider-webhooks/provider-webhooks.controller.spec.ts`
+- `apps/backend/src/modules/provider-webhooks/provider-webhooks.module.ts`
+- `apps/backend/src/shared/config/app-config.service.ts`
+- `apps/backend/src/shared/config/app-config.service.spec.ts`
+- `apps/backend/src/app.module.ts`
+- `apps/backend/.env.example`
+- `docs/superpowers/specs/2026-05-01-provider-webhooks-design.md`
+- `docs/superpowers/plans/2026-05-01-provider-webhooks.md`
+- `docs/PROJECT_HANDOFF.md`
+
+Focused verification:
+
+```powershell
+npm.cmd --prefix apps/backend test -- provider-webhooks.controller.spec.ts app-config.service.spec.ts
+```
+
+Full backend verification:
+
+```powershell
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/backend run build
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+```
+
+Backend full suite passed: 35 files, 153 tests.
+
+`apps/backend/dist` was removed after build verification.
+
+### 29b. Next Planned Slice
+
+Harden and expand provider integration after the adapter endpoints:
+
+- Add vendor-specific signature verification:
+  - Meta WhatsApp app secret signature validation
+  - selected SMS provider signature validation after vendor selection
+- Add WhatsApp GET verification challenge endpoint if using Meta direct webhooks.
+- Add delivery/status webhook handling only if product or ops workflows need it.
+- Add voice webhook handling after voice provider selection.
 
 ### 30. Production readiness checklist
 

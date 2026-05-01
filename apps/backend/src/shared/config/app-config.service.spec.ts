@@ -14,6 +14,7 @@ describe('AppConfigService', () => {
       SMS_PROVIDER_API_KEY: 'sms-key',
       WHATSAPP_ACCESS_TOKEN: 'whatsapp-token',
       WHATSAPP_PHONE_NUMBER_ID: 'phone-number-id',
+      CHANNEL_WEBHOOK_SECRET: 'provider-webhook-secret',
       VOICE_PROVIDER_API_KEY: 'voice-key',
       PORT: '4000',
     });
@@ -28,6 +29,7 @@ describe('AppConfigService', () => {
     expect(config.smsProviderApiKey).toBe('sms-key');
     expect(config.whatsappAccessToken).toBe('whatsapp-token');
     expect(config.whatsappPhoneNumberId).toBe('phone-number-id');
+    expect(config.channelWebhookSecret).toBe('provider-webhook-secret');
     expect(config.voiceProviderApiKey).toBe('voice-key');
     expect(config.port).toBe(4000);
   });

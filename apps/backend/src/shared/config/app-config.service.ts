@@ -13,6 +13,7 @@ const envSchema = z.object({
   SMS_PROVIDER_FROM_NUMBER: z.string().optional(),
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  CHANNEL_WEBHOOK_SECRET: z.string().optional(),
   VOICE_PROVIDER_API_KEY: z.string().optional(),
   VOICE_PROVIDER_FROM_NUMBER: z.string().optional(),
   PORT: z.coerce.number().int().positive().optional(),
@@ -81,6 +82,10 @@ export class AppConfigService {
 
   get whatsappPhoneNumberId(): string | undefined {
     return this.env.WHATSAPP_PHONE_NUMBER_ID;
+  }
+
+  get channelWebhookSecret(): string | undefined {
+    return this.env.CHANNEL_WEBHOOK_SECRET;
   }
 
   get voiceProviderApiKey(): string | undefined {
