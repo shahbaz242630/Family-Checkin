@@ -3,13 +3,13 @@ import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Refre
 import { useRouter } from 'expo-router';
 import { useState, useCallback } from 'react';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
-import { useProfile, useLovedOnes, LovedOne } from '../../hooks';
+import { useProfile, useReceivers, type ReceiverDashboardItem } from '../../hooks';
 import { getReceiverStatusDisplay, type ReceiverStatusTone } from '../../utils/receiverStatus';
 
 export default function DashboardScreen() {
   const router = useRouter();
   const { profile } = useProfile();
-  const { lovedOnes, loading, refreshLovedOnes } = useLovedOnes();
+  const { receivers, loading, refreshReceivers } = useReceivers();
   const [refreshing, setRefreshing] = useState(false);
 
   const greeting = getGreeting();
@@ -17,11 +17,11 @@ export default function DashboardScreen() {
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    await refreshLovedOnes();
+    await refreshReceivers();
     setRefreshing(false);
-  }, [refreshLovedOnes]);
+  }, [refreshReceivers]);
 
-  const hasLovedOnes = lovedOnes.length > 0;
+  const hasReceivers = receivers.length > 0;
 
   return (
     <ScrollView
@@ -43,41 +43,41 @@ export default function DashboardScreen() {
         <View style={styles.quickActions}>
           <QuickActionCard
             icon="👨‍👩‍👧‍👦"
-            title="Add Loved One"
-            subtitle="Connect with family"
+            title="Add receiver"
+            subtitle="Set up check-ins"
             onPress={() => router.push('/(main)/receiver-setup')}
           />
           <QuickActionCard
             icon="✓"
-            title="View Check-ins"
-            subtitle="Recent activity"
-            onPress={() => router.push('/(main)/check-ins')}
+            title="Review receivers"
+            subtitle="Latest check-in status"
+            onPress={() => router.push('/(main)')}
           />
         </View>
       </View>
 
-      {/* Status Overview / Loved Ones List */}
+      {/* Status Overview / Receiver List */}
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>
-          {hasLovedOnes ? 'Your Loved Ones' : 'Status Overview'}
+          {hasReceivers ? 'Receivers' : 'Status Overview'}
         </Text>
 
         {loading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
           </View>
-        ) : hasLovedOnes ? (
+        ) : hasReceivers ? (
           <View style={styles.lovedOnesList}>
-            {lovedOnes.map((lovedOne) => (
-              <LovedOneCard key={lovedOne.id} lovedOne={lovedOne} />
+            {receivers.map((receiver) => (
+              <ReceiverCard key={receiver.id} receiver={receiver} />
             ))}
           </View>
         ) : (
           <View style={styles.statusCard}>
             <Text style={styles.statusIcon}>👋</Text>
-            <Text style={styles.statusTitle}>No loved ones yet</Text>
+            <Text style={styles.statusTitle}>No receivers yet</Text>
             <Text style={styles.statusSubtitle}>
-              Add your first loved one to start receiving check-in updates
+              Add your first receiver to start daily check-ins.
             </Text>
             <Pressable
               style={styles.statusButton}
@@ -92,24 +92,24 @@ export default function DashboardScreen() {
   );
 }
 
-// Loved One Card Component
-interface LovedOneCardProps {
-  lovedOne: LovedOne;
+// Receiver Card Component
+interface ReceiverCardProps {
+  receiver: ReceiverDashboardItem;
 }
 
-function LovedOneCard({ lovedOne }: LovedOneCardProps) {
+function ReceiverCard({ receiver }: ReceiverCardProps) {
   const router = useRouter();
 
   // Format schedule display
-  const scheduleText = lovedOne.schedule
-    ? `Daily at ${formatTime(lovedOne.schedule.time_local)}`
+  const scheduleText = receiver.schedule
+    ? `Daily at ${formatTime(receiver.schedule.time_local)}`
     : 'No schedule set';
-  const isPaused = Boolean(lovedOne.paused_reason || lovedOne.paused_until);
-  const status = getReceiverStatusDisplay(lovedOne.consent_status, lovedOne.latest_check_in_status, isPaused);
+  const isPaused = Boolean(receiver.paused_reason || receiver.paused_until);
+  const status = getReceiverStatusDisplay(receiver.consent_status, receiver.latest_check_in_status, isPaused);
   const statusColor = receiverStatusColor(status.tone);
 
   // Get preferred channel
-  const channels = lovedOne.preferred_channels;
+  const channels = receiver.preferred_channels;
   const preferredChannel = channels.push
     ? 'Push'
     : channels.whatsapp
@@ -121,18 +121,18 @@ function LovedOneCard({ lovedOne }: LovedOneCardProps) {
   return (
     <Pressable
       style={styles.lovedOneCard}
-      onPress={() => router.push(`/(main)/receivers/${lovedOne.id}` as never)}
+      onPress={() => router.push(`/(main)/receivers/${receiver.id}` as never)}
     >
       <View style={styles.lovedOneHeader}>
         <View style={styles.lovedOneAvatar}>
           <Text style={styles.lovedOneAvatarText}>
-            {lovedOne.display_name.charAt(0).toUpperCase()}
+            {receiver.display_name.charAt(0).toUpperCase()}
           </Text>
         </View>
         <View style={styles.lovedOneInfo}>
-          <Text style={styles.lovedOneName}>{lovedOne.display_name}</Text>
+          <Text style={styles.lovedOneName}>{receiver.display_name}</Text>
           <Text style={styles.lovedOneRelation}>
-            {formatRelationship(lovedOne.relationship_type)}
+            {formatRelationship(receiver.relationship_type)}
           </Text>
         </View>
         <View style={styles.lovedOneStatus}>

@@ -16,10 +16,6 @@ export default function MainLayout() {
           }}
         >
           <Stack.Screen name="index" />
-          <Stack.Screen name="loved-ones" />
-          <Stack.Screen name="check-ins" />
-          <Stack.Screen name="escalations" />
-          <Stack.Screen name="pairing" />
           <Stack.Screen name="admin-abuse-reports" />
           <Stack.Screen name="admin-operations" />
           <Stack.Screen name="admin-operations/[checkInId]" />

@@ -2103,6 +2103,27 @@ Harden and expand provider integration after the adapter endpoints:
 - Add delivery/status webhook handling only if product or ops workflows need it.
 - Add voice webhook handling after voice provider selection.
 
+### 29c. Dashboard and operations hardening - completed 2026-05-01
+
+Completed existing-surface hardening after full cascade correctness:
+
+- Sender dashboard uses receiver terminology instead of legacy loved-one labels.
+- Sidebar active navigation now points only at real Nearby receiver/admin surfaces.
+- Legacy placeholder routes redirect to the main dashboard.
+- Receiver detail shows `NEEDS_ATTENTION` as an actionable state with retry, backup alert, and resolve choices.
+- Admin operations detail shows receiver cascade attempts separately from backup escalation attempts.
+- Mobile operation types include cascade attempt records from the backend detail endpoint.
+- Admin operations formatting includes attempt statuses and operational failure reasons.
+
+Verification:
+
+```powershell
+npx vitest run apps/mobile/src/utils/adminOperations.spec.ts
+npm.cmd --prefix apps/mobile run type-check
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/backend test
+```
+
 ### 30. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:

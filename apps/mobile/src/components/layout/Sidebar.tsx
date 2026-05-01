@@ -1,19 +1,16 @@
 // Sidebar component - left drawer menu with check-in features
-import { View, Text, Pressable, StyleSheet, Modal, Animated } from 'react-native';
 import { useEffect, useRef } from 'react';
-import { useRouter, usePathname } from 'expo-router';
+import { usePathname, useRouter } from 'expo-router';
+import { Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { MenuItem } from '../common';
 import { useDrawer } from '../../contexts/DrawerContext';
+import { colors, fontSize, spacing } from '../../theme';
 
 const MENU_ITEMS = [
-  { icon: '🏠', label: 'Dashboard', path: '/(main)' },
-  { icon: '👨‍👩‍👧‍👦', label: 'Loved Ones', path: '/(main)/loved-ones' },
-  { icon: '✓', label: 'Check-ins', path: '/(main)/check-ins' },
-  { icon: '🔔', label: 'Escalations', path: '/(main)/escalations' },
-  { icon: '🔗', label: 'Add Loved One', path: '/(main)/receiver-setup' },
-  { icon: 'A', label: 'Admin Operations', path: '/(main)/admin-operations' },
+  { icon: 'H', label: 'Dashboard', path: '/(main)' },
+  { icon: '+', label: 'Add receiver', path: '/(main)/receiver-setup' },
+  { icon: 'O', label: 'Admin Operations', path: '/(main)/admin-operations' },
   { icon: '!', label: 'Abuse Reports', path: '/(main)/admin-abuse-reports' },
 ];
 
@@ -43,28 +40,19 @@ export function Sidebar() {
   };
 
   return (
-    <Modal
-      visible={isSidebarOpen}
-      transparent
-      animationType="none"
-      onRequestClose={closeSidebar}
-    >
-      {/* Backdrop */}
+    <Modal visible={isSidebarOpen} transparent animationType="none" onRequestClose={closeSidebar}>
       <Pressable style={styles.backdrop} onPress={closeSidebar} />
 
-      {/* Sidebar Content */}
       <Animated.View
         style={[
           styles.sidebar,
           { paddingTop: insets.top + spacing.md, transform: [{ translateX: slideAnim }] },
         ]}
       >
-        {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.logo}>Family Check-In</Text>
+          <Text style={styles.logo}>Nearby</Text>
         </View>
 
-        {/* Menu Items */}
         <View style={styles.menu}>
           {MENU_ITEMS.map((item) => (
             <MenuItem
@@ -77,7 +65,6 @@ export function Sidebar() {
           ))}
         </View>
 
-        {/* Footer */}
         <View style={styles.footer}>
           <Text style={styles.version}>Version 1.0.0</Text>
         </View>

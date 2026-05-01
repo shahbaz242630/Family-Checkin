@@ -3,7 +3,13 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { getOperationsCheckInDetail, type BackendOperationsCheckInDetail } from '../../../services';
 import { borderRadius, colors, fontSize, spacing } from '../../../theme';
-import { escalationResultLabel, formatOperationsDateTime, operationsStatusLabel } from '../../../utils/adminOperations';
+import {
+  attemptStatusLabel,
+  escalationResultLabel,
+  failureReasonLabel,
+  formatOperationsDateTime,
+  operationsStatusLabel,
+} from '../../../utils/adminOperations';
 
 export default function AdminOperationsDetailScreen() {
   const router = useRouter();
@@ -101,7 +107,32 @@ export default function AdminOperationsDetailScreen() {
       </View>
 
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Escalation Attempts</Text>
+        <Text style={styles.sectionTitle}>Cascade Attempts</Text>
+        {detail.attempts.length > 0 ? (
+          <View style={styles.escalationList}>
+            {detail.attempts.map((attempt) => (
+              <View key={attempt.id} style={styles.escalationItem}>
+                <View style={styles.recentHeader}>
+                  <Text style={styles.statusText}>
+                    {attempt.channel} attempt {attempt.attemptNumber}
+                  </Text>
+                  <Text style={styles.attemptText}>{attemptStatusLabel(attempt.status)}</Text>
+                </View>
+                <InfoRow label="Scheduled" value={formatOperationsDateTime(attempt.scheduledAt)} />
+                <InfoRow label="Sent" value={formatOperationsDateTime(attempt.sentAt)} />
+                <InfoRow label="Completed" value={formatOperationsDateTime(attempt.completedAt)} />
+                <InfoRow label="Provider status" value={attempt.providerStatus ?? 'Not reported'} />
+                <InfoRow label="Failure reason" value={failureReasonLabel(attempt.failureReason)} />
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Text style={styles.emptyText}>No cascade attempts recorded.</Text>
+        )}
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Backup Escalation Attempts</Text>
         {detail.escalations.length > 0 ? (
           <View style={styles.escalationList}>
             {detail.escalations.map((escalation) => (

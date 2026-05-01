@@ -7,6 +7,7 @@ export type BackendRelationshipType = 'PARENT' | 'GRANDPARENT' | 'SIBLING' | 'SP
 export type BackendTechProfile = 'WHATSAPP' | 'SMS' | 'VOICE_ONLY';
 export type BackendChannel = 'WHATSAPP' | 'SMS' | 'VOICE';
 export type BackendConsentStatus = 'PENDING' | 'GRANTED' | 'DECLINED' | 'REVOKED';
+export type BackendCheckInAttemptStatus = 'PENDING' | 'SENT' | 'RESPONDED' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED';
 export type BackendCheckInStatus =
   | 'PENDING'
   | 'SENT'
@@ -64,6 +65,18 @@ export interface BackendOperationsEscalationDetail {
   backupAlertedAt?: string;
 }
 
+export interface BackendOperationsCheckInAttemptDetail {
+  id: string;
+  attemptNumber: number;
+  channel: BackendChannel;
+  status: BackendCheckInAttemptStatus;
+  scheduledAt: string;
+  sentAt?: string;
+  completedAt?: string;
+  providerStatus?: string;
+  failureReason?: string;
+}
+
 export interface BackendOperationsCheckInDetail {
   checkInId: string;
   receiverId: string;
@@ -76,6 +89,7 @@ export interface BackendOperationsCheckInDetail {
   resolvedAt?: string;
   escalationAttemptCount: number;
   successfulEscalationCount: number;
+  attempts: BackendOperationsCheckInAttemptDetail[];
   escalations: BackendOperationsEscalationDetail[];
 }
 

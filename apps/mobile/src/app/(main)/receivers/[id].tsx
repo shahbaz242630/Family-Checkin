@@ -190,9 +190,11 @@ export default function ReceiverDetailScreen() {
     }
   };
 
-  const canResolveLatestCheckIn = ['RESPONDED_HELP', 'ESCALATED', 'FAILED', 'SKIPPED'].includes(receiver.latestCheckIn?.status ?? '');
-  const canAlertBackupForLatestCheckIn = ['RESPONDED_HELP', 'FAILED', 'SKIPPED'].includes(receiver.latestCheckIn?.status ?? '');
-  const canTryLatestCheckInLater = ['SENT', 'RESPONDED_HELP', 'FAILED', 'SKIPPED'].includes(receiver.latestCheckIn?.status ?? '');
+  const latestStatus = receiver.latestCheckIn?.status ?? '';
+  const needsAttention = latestStatus === 'NEEDS_ATTENTION';
+  const canResolveLatestCheckIn = ['RESPONDED_HELP', 'ESCALATED', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(latestStatus);
+  const canAlertBackupForLatestCheckIn = ['RESPONDED_HELP', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(latestStatus);
+  const canTryLatestCheckInLater = ['SENT', 'RESPONDED_HELP', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(latestStatus);
 
   const resolveLatestCheckIn = async () => {
     if (!id || !receiver.latestCheckIn || !canResolveLatestCheckIn) return;
@@ -520,6 +522,14 @@ export default function ReceiverDetailScreen() {
 
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Latest Check-in</Text>
+        {needsAttention ? (
+          <View style={styles.attentionPanel}>
+            <Text style={styles.attentionTitle}>Receiver did not respond</Text>
+            <Text style={styles.attentionText}>
+              Nearby tried the available check-in channels. Choose whether to retry, alert backup contacts, or close this check-in.
+            </Text>
+          </View>
+        ) : null}
         <InfoRow label="Status" value={formatCheckInStatus(receiver.latestCheckIn?.status)} />
         <InfoRow label="Scheduled" value={formatDateTime(receiver.latestCheckIn?.scheduledAt)} />
         <InfoRow label="Sent" value={formatDateTime(receiver.latestCheckIn?.sentAt)} />
@@ -863,6 +873,25 @@ const styles = StyleSheet.create({
   placeholderText: {
     color: colors.textSecondary,
     fontSize: fontSize.sm,
+  },
+  attentionPanel: {
+    borderWidth: 1,
+    borderColor: colors.warning,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.warning + '12',
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  attentionTitle: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: '700',
+    marginBottom: spacing.xs,
+  },
+  attentionText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    lineHeight: 20,
   },
   backupContactList: {
     gap: spacing.sm,

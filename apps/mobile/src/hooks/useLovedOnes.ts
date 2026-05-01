@@ -1,9 +1,9 @@
-// useLovedOnes hook - manages loved ones data
+// Receiver dashboard hook - manages receiver summary data.
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './useAuth';
 import { listReceivers, type BackendReceiverSummary } from '../services';
 
-export interface LovedOne {
+export interface ReceiverDashboardItem {
   id: string;
   display_name: string;
   relationship_type: string;
@@ -36,22 +36,29 @@ export interface LovedOne {
   };
 }
 
+interface UseReceiversReturn {
+  receivers: ReceiverDashboardItem[];
+  loading: boolean;
+  error: Error | null;
+  refreshReceivers: () => Promise<void>;
+}
+
 interface UseLovedOnesReturn {
-  lovedOnes: LovedOne[];
+  lovedOnes: ReceiverDashboardItem[];
   loading: boolean;
   error: Error | null;
   refreshLovedOnes: () => Promise<void>;
 }
 
-export function useLovedOnes(): UseLovedOnesReturn {
+export function useReceivers(): UseReceiversReturn {
   const { user } = useAuth();
-  const [lovedOnes, setLovedOnes] = useState<LovedOne[]>([]);
+  const [receivers, setReceivers] = useState<ReceiverDashboardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
 
-  const fetchLovedOnes = useCallback(async () => {
+  const fetchReceivers = useCallback(async () => {
     if (!user?.id) {
-      setLovedOnes([]);
+      setReceivers([]);
       setLoading(false);
       return;
     }
@@ -60,29 +67,29 @@ export function useLovedOnes(): UseLovedOnesReturn {
       setLoading(true);
       setError(null);
 
-      const receivers = await listReceivers();
-      setLovedOnes(receivers.map(toLovedOne));
+      const receiversFromBackend = await listReceivers();
+      setReceivers(receiversFromBackend.map(toReceiverDashboardItem));
     } catch (err) {
-      console.error('Error fetching loved ones:', err);
-      setError(err instanceof Error ? err : new Error('Failed to fetch loved ones'));
+      console.error('Error fetching receivers:', err);
+      setError(err instanceof Error ? err : new Error('Failed to fetch receivers'));
     } finally {
       setLoading(false);
     }
   }, [user?.id]);
 
   useEffect(() => {
-    fetchLovedOnes();
-  }, [fetchLovedOnes]);
+    fetchReceivers();
+  }, [fetchReceivers]);
 
   return {
-    lovedOnes,
+    receivers,
     loading,
     error,
-    refreshLovedOnes: fetchLovedOnes,
+    refreshReceivers: fetchReceivers,
   };
 }
 
-function toLovedOne(receiver: BackendReceiverSummary): LovedOne {
+function toReceiverDashboardItem(receiver: BackendReceiverSummary): ReceiverDashboardItem {
   return {
     id: receiver.id,
     display_name: receiver.displayName,
@@ -113,5 +120,18 @@ function toLovedOne(receiver: BackendReceiverSummary): LovedOne {
       days_of_week: [0, 1, 2, 3, 4, 5, 6],
       is_enabled: receiver.consentStatus === 'GRANTED',
     },
+  };
+}
+
+export type LovedOne = ReceiverDashboardItem;
+
+export function useLovedOnes(): UseLovedOnesReturn {
+  const { receivers, loading, error, refreshReceivers } = useReceivers();
+
+  return {
+    lovedOnes: receivers,
+    loading,
+    error,
+    refreshLovedOnes: refreshReceivers,
   };
 }

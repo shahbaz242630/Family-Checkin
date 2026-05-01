@@ -53,6 +53,40 @@ export function escalationResultLabel(result?: string): string {
   }
 }
 
+export function attemptStatusLabel(status?: string): string {
+  switch (status) {
+    case 'PENDING':
+      return 'Scheduled';
+    case 'SENT':
+      return 'Sent';
+    case 'RESPONDED':
+      return 'Responded';
+    case 'FAILED':
+      return 'Failed';
+    case 'TIMED_OUT':
+      return 'Timed out';
+    case 'SKIPPED':
+      return 'Skipped';
+    default:
+      return status ? operationsStatusLabel(status) : 'Unknown';
+  }
+}
+
+export function failureReasonLabel(reason?: string): string {
+  switch (reason) {
+    case 'response_window_elapsed':
+      return 'Response window elapsed';
+    case 'provider_send_failed':
+      return 'Provider send failed';
+    case 'cascade_closed':
+      return 'Check-in already closed';
+    case 'superseded_by_response':
+      return 'Receiver responded';
+    default:
+      return reason ? operationsStatusLabel(reason) : 'None';
+  }
+}
+
 export function formatOperationsDateTime(value?: string): string {
   if (!value) return 'Not yet';
   return new Date(value).toLocaleString();

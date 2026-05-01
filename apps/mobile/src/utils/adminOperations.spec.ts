@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { escalationResultLabel, formatOperationsDateTime, operationsStatusLabel, sortStatusCounts } from './adminOperations';
+import {
+  attemptStatusLabel,
+  escalationResultLabel,
+  failureReasonLabel,
+  formatOperationsDateTime,
+  operationsStatusLabel,
+  sortStatusCounts,
+} from './adminOperations';
 
 describe('admin operations formatting', () => {
   it('maps operational check-in statuses to readable labels', () => {
@@ -29,5 +36,25 @@ describe('admin operations formatting', () => {
     expect(escalationResultLabel('NO_RESPONSE')).toBe('No response');
     expect(escalationResultLabel('ERROR')).toBe('Error');
     expect(escalationResultLabel(undefined)).toBe('Pending');
+  });
+
+  it('maps cascade attempt statuses and failure reasons to readable labels', () => {
+    expect(attemptStatusLabel('PENDING')).toBe('Scheduled');
+    expect(attemptStatusLabel('SENT')).toBe('Sent');
+    expect(attemptStatusLabel('RESPONDED')).toBe('Responded');
+    expect(attemptStatusLabel('FAILED')).toBe('Failed');
+    expect(attemptStatusLabel('TIMED_OUT')).toBe('Timed out');
+    expect(attemptStatusLabel('SKIPPED')).toBe('Skipped');
+    expect(failureReasonLabel('response_window_elapsed')).toBe('Response window elapsed');
+    expect(failureReasonLabel('provider_send_failed')).toBe('Provider send failed');
+    expect(failureReasonLabel(undefined)).toBe('None');
+  });
+
+  it('sorts needs-attention before failed and skipped operational states', () => {
+    expect(sortStatusCounts({ SKIPPED: 1, NEEDS_ATTENTION: 2, FAILED: 3 }).map((item) => item.status)).toEqual([
+      'NEEDS_ATTENTION',
+      'FAILED',
+      'SKIPPED',
+    ]);
   });
 });
