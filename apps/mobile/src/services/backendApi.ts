@@ -8,6 +8,7 @@ export type BackendTechProfile = 'WHATSAPP' | 'SMS' | 'VOICE_ONLY';
 export type BackendChannel = 'WHATSAPP' | 'SMS' | 'VOICE';
 export type BackendConsentStatus = 'PENDING' | 'GRANTED' | 'DECLINED' | 'REVOKED';
 export type BackendCheckInAttemptStatus = 'PENDING' | 'SENT' | 'RESPONDED' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED';
+export type BackendSensitiveAction = 'EXPORT_DATA' | 'DELETE_ACCOUNT';
 export type BackendCheckInStatus =
   | 'PENDING'
   | 'SENT'
@@ -30,6 +31,20 @@ export interface SyncedBackendUser {
 export interface BackendAdminMe {
   id: string;
   role: 'SUPER_ADMIN' | 'OPERATOR' | 'SUPPORT_READONLY';
+}
+
+export interface BackendStepUpRequestResult {
+  ok: true;
+  challengeId: string;
+  action: BackendSensitiveAction;
+  expiresAt: string;
+}
+
+export interface BackendStepUpVerifyResult {
+  ok: true;
+  stepUpToken: string;
+  action: BackendSensitiveAction;
+  expiresAt: string;
 }
 
 export interface BackendOperationsRecentCheckIn {
@@ -286,6 +301,38 @@ export async function getAdminMe(): Promise<BackendAdminMe> {
   });
 
   return response.admin;
+}
+
+export async function requestAccountStepUp(action: BackendSensitiveAction): Promise<BackendStepUpRequestResult> {
+  return await backendRequest<BackendStepUpRequestResult>('/account/step-up/request', {
+    method: 'POST',
+    body: JSON.stringify({ action }),
+  });
+}
+
+export async function verifyAccountStepUp(input: { challengeId: string; code: string }): Promise<BackendStepUpVerifyResult> {
+  return await backendRequest<BackendStepUpVerifyResult>('/account/step-up/verify', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function exportAccountData(stepUpToken: string): Promise<unknown> {
+  return await backendRequest<unknown>('/account/export', {
+    method: 'GET',
+    headers: {
+      'x-nearby-step-up-token': stepUpToken,
+    },
+  });
+}
+
+export async function deleteAccount(stepUpToken: string): Promise<{ ok: true; deletedAt: string }> {
+  return await backendRequest<{ ok: true; deletedAt: string }>('/account', {
+    method: 'DELETE',
+    headers: {
+      'x-nearby-step-up-token': stepUpToken,
+    },
+  });
 }
 
 export async function getOperationsCheckInSummary(): Promise<BackendOperationsSummary> {

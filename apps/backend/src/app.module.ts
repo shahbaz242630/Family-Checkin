@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AccountModule } from './modules/account/account.module';
 import { AdminAbuseModule } from './modules/admin-abuse/admin-abuse.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -15,6 +16,7 @@ import { AppConfigModule } from './shared/config/app-config.module';
 @Module({
   imports: [
     AppConfigModule,
+    AccountModule,
     UsersModule,
     AuthModule,
     AuditModule,

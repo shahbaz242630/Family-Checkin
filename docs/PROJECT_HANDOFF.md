@@ -2124,6 +2124,26 @@ npm.cmd --prefix apps/backend run type-check
 npm.cmd --prefix apps/backend test
 ```
 
+### 29d. Account data privacy and step-up - completed 2026-05-01
+
+Completed backend-owned account data privacy foundation:
+
+- Added OTP step-up challenge/token flow for `EXPORT_DATA` and `DELETE_ACCOUNT`.
+- Added account export endpoint protected by action-scoped one-time step-up tokens.
+- Added account deletion endpoint protected by action-scoped one-time step-up tokens.
+- Mobile Data & Privacy actions now call the backend instead of legacy Supabase Edge Function hooks.
+- Step-up OTP is sent by SMS through the existing channel provider path.
+
+Verification:
+
+```powershell
+$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
+npm.cmd --prefix apps/backend test -- src/modules/account
+npm.cmd --prefix apps/backend test
+npm.cmd --prefix apps/backend run type-check
+npm.cmd --prefix apps/mobile run type-check
+```
+
 ### 30. Production readiness checklist
 
 Use this before beta, production launch, or inviting real users into the hosted environment:

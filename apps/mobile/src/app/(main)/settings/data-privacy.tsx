@@ -16,6 +16,9 @@ import {
   downloadUserData,
   deleteUserDataOnly,
   deleteUserAccount,
+  requestAccountStepUp,
+  verifyAccountStepUp,
+  type BackendSensitiveAction,
 } from '../../../services';
 
 export default function DataPrivacyScreen() {
@@ -30,7 +33,10 @@ export default function DataPrivacyScreen() {
 
     setIsExporting(true);
     try {
-      const success = await downloadUserData();
+      const stepUpToken = await completeStepUp('EXPORT_DATA');
+      if (!stepUpToken) return;
+
+      const success = await downloadUserData(stepUpToken);
       if (success) {
         Alert.alert('Success', 'Your data has been exported successfully.');
       } else {
@@ -126,7 +132,13 @@ export default function DataPrivacyScreen() {
 
     setIsDeletingAccount(true);
     try {
-      const result = await deleteUserAccount();
+      const stepUpToken = await completeStepUp('DELETE_ACCOUNT');
+      if (!stepUpToken) {
+        setIsDeletingAccount(false);
+        return;
+      }
+
+      const result = await deleteUserAccount(stepUpToken);
       if (result.success) {
         // User will be signed out automatically
         router.replace('/(auth)/welcome');
@@ -138,6 +150,19 @@ export default function DataPrivacyScreen() {
       Alert.alert('Error', 'Failed to delete account. Please try again.');
       setIsDeletingAccount(false);
     }
+  };
+
+  const completeStepUp = async (action: BackendSensitiveAction): Promise<string | null> => {
+    const requested = await requestAccountStepUp(action);
+    const code = await promptForOtp(action, requested.expiresAt);
+
+    if (!code) {
+      Alert.alert('Verification required', 'Enter the SMS code to continue.');
+      return null;
+    }
+
+    const verified = await verifyAccountStepUp({ challengeId: requested.challengeId, code });
+    return verified.stepUpToken;
   };
 
   return (
@@ -366,3 +391,31 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+
+async function promptForOtp(action: BackendSensitiveAction, expiresAt: string): Promise<string | null> {
+  const title = action === 'DELETE_ACCOUNT' ? 'Confirm account deletion' : 'Confirm data export';
+  const message = `Enter the SMS verification code. It expires at ${new Date(expiresAt).toLocaleTimeString()}.`;
+  const browserPrompt = globalThis.prompt;
+
+  if (typeof browserPrompt === 'function') {
+    return browserPrompt(`${title}\n\n${message}`)?.trim() || null;
+  }
+
+  const nativePrompt = (Alert as unknown as { prompt?: Function }).prompt;
+  if (typeof nativePrompt === 'function') {
+    return await new Promise((resolve) => {
+      nativePrompt(
+        title,
+        message,
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
+          { text: 'Verify', onPress: (value?: string) => resolve(value?.trim() || null) },
+        ],
+        'plain-text',
+      );
+    });
+  }
+
+  Alert.alert('Verification required', 'SMS code entry is not available on this platform yet.');
+  return null;
+}

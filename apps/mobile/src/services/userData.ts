@@ -1,37 +1,28 @@
 // User data service - export, delete data, delete account
-// Uses Edge Functions for server-side operations
 import { supabase } from './supabase';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import { deleteAccount, exportAccountData } from './backendApi';
 
 export interface UserDataExport {
   exportedAt: string;
   exportVersion: string;
   user: any;
-  lovedOnes: any[];
-  relationships: any[];
-  checkinSchedules: any[];
+  receivers?: any[];
+  backupContacts?: any[];
   checkins: any[];
-  escalationPlans: any[];
+  attempts?: any[];
   escalationEvents: any[];
-  contactPoints: any[];
   subscriptions: any[];
-  deviceTokens: any[];
+  auditLogs?: any[];
 }
 
 /**
- * Export all user data via Edge Function
+ * Export all user data via backend account privacy endpoint.
  */
-export async function exportUserData(): Promise<UserDataExport | null> {
+export async function exportUserData(stepUpToken: string): Promise<UserDataExport | null> {
   try {
-    const { data, error } = await supabase.functions.invoke('export-data');
-
-    if (error) {
-      console.error('Export function error:', error);
-      return null;
-    }
-
-    return data as UserDataExport;
+    return (await exportAccountData(stepUpToken)) as UserDataExport;
   } catch (error) {
     console.error('Error exporting user data:', error);
     return null;
@@ -41,9 +32,9 @@ export async function exportUserData(): Promise<UserDataExport | null> {
 /**
  * Save exported data to file and share
  */
-export async function downloadUserData(): Promise<boolean> {
+export async function downloadUserData(stepUpToken: string): Promise<boolean> {
   try {
-    const data = await exportUserData();
+    const data = await exportUserData(stepUpToken);
     if (!data) return false;
 
     const fileName = `family-checkin-data-${new Date().toISOString().split('T')[0]}.json`;
@@ -69,40 +60,23 @@ export async function downloadUserData(): Promise<boolean> {
 }
 
 /**
- * Delete all user data but keep the account via Edge Function
+ * Delete all user data but keep the account is intentionally not exposed until
+ * backend retention rules are defined separately from full account deletion.
  */
 export async function deleteUserDataOnly(): Promise<{ success: boolean; message?: string; error?: string }> {
-  try {
-    const { data, error } = await supabase.functions.invoke('delete-data');
-
-    if (error) {
-      console.error('Delete data function error:', error);
-      return { success: false, error: error.message || 'Failed to delete data' };
-    }
-
-    return { success: true, message: data?.message || 'Data deleted successfully' };
-  } catch (error) {
-    console.error('Error deleting user data:', error);
-    return { success: false, error: 'An unexpected error occurred' };
-  }
+  return { success: false, error: 'Delete data only is not available yet. Use Delete Account for full account deletion.' };
 }
 
 /**
- * Delete entire account and all data via Edge Function
+ * Delete entire account and all data via backend account privacy endpoint.
  */
-export async function deleteUserAccount(): Promise<{ success: boolean; message?: string; error?: string }> {
+export async function deleteUserAccount(stepUpToken: string): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
-    const { data, error } = await supabase.functions.invoke('delete-account');
-
-    if (error) {
-      console.error('Delete account function error:', error);
-      return { success: false, error: error.message || 'Failed to delete account' };
-    }
-
+    const data = await deleteAccount(stepUpToken);
     // Sign out locally after successful deletion
     await supabase.auth.signOut();
 
-    return { success: true, message: data?.message || 'Account deleted successfully' };
+    return { success: true, message: `Account deleted successfully at ${data.deletedAt}` };
   } catch (error) {
     console.error('Error deleting user account:', error);
     return { success: false, error: 'An unexpected error occurred' };

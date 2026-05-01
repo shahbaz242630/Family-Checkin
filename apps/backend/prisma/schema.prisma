@@ -94,6 +94,11 @@ enum AdminRole {
   SUPPORT_READONLY
 }
 
+enum SensitiveAction {
+  EXPORT_DATA
+  DELETE_ACCOUNT
+}
+
 model User {
   id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   emailEncrypted    String
@@ -115,6 +120,7 @@ model User {
   receivers      Receiver[]
   subscriptions  Subscription[]
   coMonitorships CoMonitor[]  @relation("CoMonitorUser")
+  stepUpChallenges StepUpChallenge[]
 
   @@index([emailHash])
   @@index([phoneHash])
@@ -377,4 +383,24 @@ model IdempotencyKey {
 
   @@index([expiresAt])
   @@map("idempotency_keys")
+}
+
+model StepUpChallenge {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String          @db.Uuid
+  action         SensitiveAction
+  codeHash       String
+  tokenHash      String?
+  expiresAt      DateTime
+  verifiedAt     DateTime?
+  tokenExpiresAt DateTime?
+  consumedAt     DateTime?
+  attemptCount   Int             @default(0)
+  createdAt      DateTime        @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, action, expiresAt])
+  @@index([tokenHash])
+  @@map("step_up_challenges")
 }
