@@ -13,6 +13,10 @@ describe('AppConfigService', () => {
       PUBLIC_API_BASE_URL: 'https://api.nearby.test/',
       CHANNEL_PROVIDER_MODE: 'fake',
       SMS_PROVIDER_API_KEY: 'sms-key',
+      TWILIO_ACCOUNT_SID: 'AC123',
+      TWILIO_SMS_FROM_NUMBER: '+15550001111',
+      TWILIO_WHATSAPP_FROM_NUMBER: '+15550002222',
+      TWILIO_VOICE_FROM_NUMBER: '+15550003333',
       WHATSAPP_ACCESS_TOKEN: 'whatsapp-token',
       WHATSAPP_PHONE_NUMBER_ID: 'phone-number-id',
       TWILIO_AUTH_TOKEN: 'twilio-auth-token',
@@ -30,7 +34,11 @@ describe('AppConfigService', () => {
     expect(config.publicApiBaseUrl).toBe('https://api.nearby.test');
     expect(config.channelProviderMode).toBe('fake');
     expect(config.smsProviderApiKey).toBe('sms-key');
+    expect(config.twilioAccountSid).toBe('AC123');
     expect(config.twilioAuthToken).toBe('twilio-auth-token');
+    expect(config.twilioSmsFromNumber).toBe('+15550001111');
+    expect(config.twilioWhatsappFromNumber).toBe('+15550002222');
+    expect(config.twilioVoiceFromNumber).toBe('+15550003333');
     expect(config.whatsappAccessToken).toBe('whatsapp-token');
     expect(config.whatsappPhoneNumberId).toBe('phone-number-id');
     expect(config.channelWebhookSecret).toBe('provider-webhook-secret');

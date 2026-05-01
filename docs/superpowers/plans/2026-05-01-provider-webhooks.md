@@ -64,3 +64,27 @@
 - [x] Normalize Twilio WhatsApp `From=whatsapp:+E164` to `Channel.WHATSAPP`.
 - [x] Normalize Twilio SMS `From=+E164` to `Channel.SMS`.
 - [x] Normalize Twilio voice `Digits` or `SpeechResult` to `Channel.VOICE`.
+
+### Task 5: Twilio Outbound Providers
+
+**Files:**
+- Modify: `apps/backend/src/modules/channels/configured-channel-providers.spec.ts`
+- Modify: `apps/backend/src/modules/channels/sms.provider.ts`
+- Modify: `apps/backend/src/modules/channels/whatsapp.provider.ts`
+- Modify: `apps/backend/src/modules/channels/voice.provider.ts`
+- Create: `apps/backend/src/modules/channels/twilio-http-client.ts`
+- Create: `apps/backend/src/modules/channels/twilio-rendering.ts`
+- Modify: `apps/backend/src/modules/channels/channel-providers.factory.ts`
+- Modify: `apps/backend/src/shared/config/app-config.service.ts`
+- Modify: `apps/backend/src/shared/config/app-config.service.spec.ts`
+- Modify: `apps/backend/.env.example`
+
+- [x] Write failing tests for Twilio SMS `Messages.json` requests.
+- [x] Write failing tests for Twilio WhatsApp `Messages.json` requests with `whatsapp:` addresses.
+- [x] Write failing tests for Twilio voice `Calls.json` requests with inline TwiML `Gather`.
+- [x] Run `npm.cmd --prefix apps/backend test -- configured-channel-providers.spec.ts` and verify RED against the existing stubs.
+- [x] Add a tiny `TwilioHttpClient` boundary for form POSTs.
+- [x] Implement SMS provider send through Twilio Messages API.
+- [x] Implement WhatsApp provider send through Twilio Messages API.
+- [x] Implement voice provider call creation through Twilio Calls API.
+- [x] Wire configured providers from Twilio env vars while leaving fake mode unchanged.

@@ -2027,6 +2027,12 @@ Completed protected inbound webhook adapter slice:
   - validates `X-Twilio-Signature`
   - maps `Digits` first, then `SpeechResult`, to `Channel.VOICE`
   - uses `CallSid` as the provider message id when present
+- Configured outbound providers now use Twilio:
+  - `SmsProvider` sends through `Messages.json`
+  - `WhatsappProvider` sends through `Messages.json` with `whatsapp:` addresses
+  - `VoiceProvider` starts calls through `Calls.json`
+  - voice calls send inline TwiML with a `Gather` posting back to `/provider-webhooks/twilio/voice`
+  - fake providers remain unchanged for local full-journey testing
 - Existing `ReceiverReplyService.handleInboundReply` remains the single business-logic path for:
   - receiver consent replies
   - receiver STOP / REPORT replies
@@ -2037,7 +2043,11 @@ Completed protected inbound webhook adapter slice:
 - Responses intentionally exclude raw phone numbers, names, message bodies, transcripts, encrypted content, hashes, and provider payloads.
 - Added config:
   - `CHANNEL_WEBHOOK_SECRET`
+  - `TWILIO_ACCOUNT_SID`
   - `TWILIO_AUTH_TOKEN`
+  - `TWILIO_SMS_FROM_NUMBER`
+  - `TWILIO_WHATSAPP_FROM_NUMBER`
+  - `TWILIO_VOICE_FROM_NUMBER`
   - `PUBLIC_API_BASE_URL`
 - Added design and implementation plan:
   - `docs/superpowers/specs/2026-05-01-provider-webhooks-design.md`
@@ -2048,6 +2058,12 @@ Files changed for this slice:
 - `apps/backend/src/modules/provider-webhooks/provider-webhooks.controller.ts`
 - `apps/backend/src/modules/provider-webhooks/provider-webhooks.controller.spec.ts`
 - `apps/backend/src/modules/provider-webhooks/provider-webhooks.module.ts`
+- `apps/backend/src/modules/channels/sms.provider.ts`
+- `apps/backend/src/modules/channels/whatsapp.provider.ts`
+- `apps/backend/src/modules/channels/voice.provider.ts`
+- `apps/backend/src/modules/channels/twilio-http-client.ts`
+- `apps/backend/src/modules/channels/twilio-rendering.ts`
+- `apps/backend/src/modules/channels/channel-providers.factory.ts`
 - `apps/backend/src/shared/config/app-config.service.ts`
 - `apps/backend/src/shared/config/app-config.service.spec.ts`
 - `apps/backend/src/app.module.ts`
@@ -2060,6 +2076,7 @@ Focused verification:
 
 ```powershell
 npm.cmd --prefix apps/backend test -- provider-webhooks.controller.spec.ts app-config.service.spec.ts
+npm.cmd --prefix apps/backend test -- configured-channel-providers.spec.ts channel-providers.factory.spec.ts app-config.service.spec.ts
 ```
 
 Full backend verification:
@@ -2071,7 +2088,7 @@ npm.cmd --prefix apps/backend run build
 $env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate
 ```
 
-Backend full suite passed: 35 files, 153 tests.
+Backend full suite passed: 35 files, 160 tests.
 
 `apps/backend/dist` was removed after build verification.
 

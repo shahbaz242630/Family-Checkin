@@ -31,8 +31,14 @@ The selected vendor for phone calls, SMS, and WhatsApp is Twilio. Twilio messagi
 
 Twilio endpoints validate `X-Twilio-Signature` with `TWILIO_AUTH_TOKEN`, `PUBLIC_API_BASE_URL`, the endpoint path, and all submitted form parameters.
 
+Outbound configured providers also use Twilio:
+
+- SMS and WhatsApp use Twilio `Messages.json`.
+- WhatsApp addresses are sent as `whatsapp:+E164`.
+- Voice calls use Twilio `Calls.json` with inline TwiML containing a `Gather` that posts to `/provider-webhooks/twilio/voice`.
+- Fake providers remain the local default and are unchanged.
+
 ## Out Of Scope
 
 - Non-Twilio vendor signature validation.
-- Outbound provider API implementation.
 - Provider status/delivery receipt handling.

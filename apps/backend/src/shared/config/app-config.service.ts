@@ -12,6 +12,10 @@ const envSchema = z.object({
   CHANNEL_PROVIDER_MODE: z.enum(['configured', 'fake']).default('configured'),
   SMS_PROVIDER_API_KEY: z.string().optional(),
   SMS_PROVIDER_FROM_NUMBER: z.string().optional(),
+  TWILIO_ACCOUNT_SID: z.string().optional(),
+  TWILIO_SMS_FROM_NUMBER: z.string().optional(),
+  TWILIO_WHATSAPP_FROM_NUMBER: z.string().optional(),
+  TWILIO_VOICE_FROM_NUMBER: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
@@ -82,8 +86,24 @@ export class AppConfigService {
     return this.env.SMS_PROVIDER_FROM_NUMBER;
   }
 
+  get twilioAccountSid(): string | undefined {
+    return this.env.TWILIO_ACCOUNT_SID;
+  }
+
   get twilioAuthToken(): string | undefined {
     return this.env.TWILIO_AUTH_TOKEN;
+  }
+
+  get twilioSmsFromNumber(): string | undefined {
+    return this.env.TWILIO_SMS_FROM_NUMBER;
+  }
+
+  get twilioWhatsappFromNumber(): string | undefined {
+    return this.env.TWILIO_WHATSAPP_FROM_NUMBER;
+  }
+
+  get twilioVoiceFromNumber(): string | undefined {
+    return this.env.TWILIO_VOICE_FROM_NUMBER;
   }
 
   get whatsappAccessToken(): string | undefined {

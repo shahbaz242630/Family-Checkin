@@ -17,16 +17,20 @@ export function createChannelProviders(config: AppConfigService): ChannelProvide
 
   return [
     new WhatsappProvider({
-      accessToken: config.whatsappAccessToken,
-      phoneNumberId: config.whatsappPhoneNumberId,
+      accountSid: config.twilioAccountSid,
+      authToken: config.twilioAuthToken,
+      fromNumber: config.twilioWhatsappFromNumber,
     }),
     new SmsProvider({
-      apiKey: config.smsProviderApiKey,
-      fromNumber: config.smsProviderFromNumber,
+      accountSid: config.twilioAccountSid,
+      authToken: config.twilioAuthToken,
+      fromNumber: config.twilioSmsFromNumber,
     }),
     new VoiceProvider({
-      apiKey: config.voiceProviderApiKey,
-      fromNumber: config.voiceProviderFromNumber,
+      accountSid: config.twilioAccountSid,
+      authToken: config.twilioAuthToken,
+      fromNumber: config.twilioVoiceFromNumber,
+      publicApiBaseUrl: config.publicApiBaseUrl,
     }),
   ];
 }
