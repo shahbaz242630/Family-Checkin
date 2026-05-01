@@ -2003,6 +2003,8 @@ Completed protected inbound webhook adapter slice:
 - Added protected endpoints:
   - `POST /provider-webhooks/whatsapp`
   - `POST /provider-webhooks/sms`
+  - `POST /provider-webhooks/twilio/messaging`
+  - `POST /provider-webhooks/twilio/voice`
 - Both endpoints require:
   - `x-nearby-webhook-secret: <CHANNEL_WEBHOOK_SECRET>`
 - WhatsApp endpoint:
@@ -2015,6 +2017,16 @@ Completed protected inbound webhook adapter slice:
   - accepts generic lowercase fields (`from`, `body`, `messageId`, `receivedAt`)
   - accepts Twilio-style fields (`From`, `Body`, `MessageSid`)
   - maps payloads into the existing normalized reply service with `Channel.SMS`
+- Twilio messaging endpoint:
+  - validates `X-Twilio-Signature`
+  - uses `TWILIO_AUTH_TOKEN` and `PUBLIC_API_BASE_URL`
+  - accepts Twilio inbound SMS and WhatsApp message webhooks
+  - maps `From=whatsapp:+E164` to `Channel.WHATSAPP`
+  - maps plain `From=+E164` to `Channel.SMS`
+- Twilio voice endpoint:
+  - validates `X-Twilio-Signature`
+  - maps `Digits` first, then `SpeechResult`, to `Channel.VOICE`
+  - uses `CallSid` as the provider message id when present
 - Existing `ReceiverReplyService.handleInboundReply` remains the single business-logic path for:
   - receiver consent replies
   - receiver STOP / REPORT replies
@@ -2025,6 +2037,8 @@ Completed protected inbound webhook adapter slice:
 - Responses intentionally exclude raw phone numbers, names, message bodies, transcripts, encrypted content, hashes, and provider payloads.
 - Added config:
   - `CHANNEL_WEBHOOK_SECRET`
+  - `TWILIO_AUTH_TOKEN`
+  - `PUBLIC_API_BASE_URL`
 - Added design and implementation plan:
   - `docs/superpowers/specs/2026-05-01-provider-webhooks-design.md`
   - `docs/superpowers/plans/2026-05-01-provider-webhooks.md`

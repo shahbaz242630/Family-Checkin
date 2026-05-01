@@ -22,11 +22,17 @@ Add provider-shaped inbound webhook endpoints for WhatsApp and SMS without chang
 
 - `POST /provider-webhooks/whatsapp`
 - `POST /provider-webhooks/sms`
+- `POST /provider-webhooks/twilio/messaging`
+- `POST /provider-webhooks/twilio/voice`
+
+## Twilio Direction
+
+The selected vendor for phone calls, SMS, and WhatsApp is Twilio. Twilio messaging webhooks are used for both SMS and WhatsApp inbound replies. WhatsApp sender addresses use the `whatsapp:+E164` prefix; SMS sender addresses use plain E.164. Voice replies are normalized from `Digits` first, then `SpeechResult`.
+
+Twilio endpoints validate `X-Twilio-Signature` with `TWILIO_AUTH_TOKEN`, `PUBLIC_API_BASE_URL`, the endpoint path, and all submitted form parameters.
 
 ## Out Of Scope
 
-- Vendor-specific signature validation.
-- WhatsApp GET verification challenge.
+- Non-Twilio vendor signature validation.
 - Outbound provider API implementation.
-- Voice webhook handling.
 - Provider status/delivery receipt handling.

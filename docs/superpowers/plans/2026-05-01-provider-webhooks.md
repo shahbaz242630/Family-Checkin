@@ -46,3 +46,21 @@
 - [x] Run backend build.
 - [x] Validate Prisma schema with a dummy `DATABASE_URL`.
 - [x] Update handoff with endpoints, auth, PII boundary, and verification.
+
+### Task 4: Twilio Webhook Hardening
+
+**Files:**
+- Modify: `apps/backend/src/modules/provider-webhooks/provider-webhooks.controller.spec.ts`
+- Modify: `apps/backend/src/modules/provider-webhooks/provider-webhooks.controller.ts`
+- Modify: `apps/backend/src/shared/config/app-config.service.ts`
+- Modify: `apps/backend/src/shared/config/app-config.service.spec.ts`
+- Modify: `apps/backend/.env.example`
+
+- [x] Write failing tests for Twilio SMS, Twilio WhatsApp, Twilio voice, and invalid Twilio signatures.
+- [x] Run `npm.cmd --prefix apps/backend test -- provider-webhooks.controller.spec.ts` and verify RED because Twilio endpoints do not exist.
+- [x] Add `POST /provider-webhooks/twilio/messaging`.
+- [x] Add `POST /provider-webhooks/twilio/voice`.
+- [x] Validate `X-Twilio-Signature` using `TWILIO_AUTH_TOKEN`, `PUBLIC_API_BASE_URL`, endpoint path, and submitted params.
+- [x] Normalize Twilio WhatsApp `From=whatsapp:+E164` to `Channel.WHATSAPP`.
+- [x] Normalize Twilio SMS `From=+E164` to `Channel.SMS`.
+- [x] Normalize Twilio voice `Digits` or `SpeechResult` to `Channel.VOICE`.

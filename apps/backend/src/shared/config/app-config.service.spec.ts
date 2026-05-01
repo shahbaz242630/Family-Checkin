@@ -10,10 +10,12 @@ describe('AppConfigService', () => {
       SUPABASE_ANON_KEY: 'anon-key',
       SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
       OPERATIONS_CRON_SECRET: 'operations-cron-secret',
+      PUBLIC_API_BASE_URL: 'https://api.nearby.test/',
       CHANNEL_PROVIDER_MODE: 'fake',
       SMS_PROVIDER_API_KEY: 'sms-key',
       WHATSAPP_ACCESS_TOKEN: 'whatsapp-token',
       WHATSAPP_PHONE_NUMBER_ID: 'phone-number-id',
+      TWILIO_AUTH_TOKEN: 'twilio-auth-token',
       CHANNEL_WEBHOOK_SECRET: 'provider-webhook-secret',
       VOICE_PROVIDER_API_KEY: 'voice-key',
       PORT: '4000',
@@ -25,8 +27,10 @@ describe('AppConfigService', () => {
     expect(config.supabaseAnonKey).toBe('anon-key');
     expect(config.supabaseServiceRoleKey).toBe('service-role-key');
     expect(config.operationsCronSecret).toBe('operations-cron-secret');
+    expect(config.publicApiBaseUrl).toBe('https://api.nearby.test');
     expect(config.channelProviderMode).toBe('fake');
     expect(config.smsProviderApiKey).toBe('sms-key');
+    expect(config.twilioAuthToken).toBe('twilio-auth-token');
     expect(config.whatsappAccessToken).toBe('whatsapp-token');
     expect(config.whatsappPhoneNumberId).toBe('phone-number-id');
     expect(config.channelWebhookSecret).toBe('provider-webhook-secret');

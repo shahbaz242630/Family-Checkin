@@ -8,9 +8,11 @@ const envSchema = z.object({
   SUPABASE_ANON_KEY: z.string().min(1),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   OPERATIONS_CRON_SECRET: z.string().min(1),
+  PUBLIC_API_BASE_URL: z.string().url().optional(),
   CHANNEL_PROVIDER_MODE: z.enum(['configured', 'fake']).default('configured'),
   SMS_PROVIDER_API_KEY: z.string().optional(),
   SMS_PROVIDER_FROM_NUMBER: z.string().optional(),
+  TWILIO_AUTH_TOKEN: z.string().optional(),
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   CHANNEL_WEBHOOK_SECRET: z.string().optional(),
@@ -64,6 +66,10 @@ export class AppConfigService {
     return this.env.OPERATIONS_CRON_SECRET;
   }
 
+  get publicApiBaseUrl(): string | undefined {
+    return this.env.PUBLIC_API_BASE_URL?.replace(/\/$/, '');
+  }
+
   get channelProviderMode(): 'configured' | 'fake' {
     return this.env.CHANNEL_PROVIDER_MODE;
   }
@@ -74,6 +80,10 @@ export class AppConfigService {
 
   get smsProviderFromNumber(): string | undefined {
     return this.env.SMS_PROVIDER_FROM_NUMBER;
+  }
+
+  get twilioAuthToken(): string | undefined {
+    return this.env.TWILIO_AUTH_TOKEN;
   }
 
   get whatsappAccessToken(): string | undefined {
