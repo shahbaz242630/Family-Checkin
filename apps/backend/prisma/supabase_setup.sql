@@ -22,6 +22,7 @@ ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE receivers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE backup_contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE check_ins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE check_in_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE escalation_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE co_monitors ENABLE ROW LEVEL SECURITY;
@@ -80,6 +81,32 @@ CREATE POLICY check_ins_read_co_monitor ON check_ins
     )
   );
 
+CREATE POLICY check_in_attempts_read_own ON check_in_attempts
+  FOR SELECT USING (
+    "checkInId" IN (
+      SELECT check_ins.id
+      FROM check_ins
+      JOIN receivers ON receivers.id = check_ins."receiverId"
+      WHERE receivers."userId" IN (
+        SELECT users.id FROM users WHERE users."authProviderId" = auth.uid()::text
+      )
+    )
+  );
+
+CREATE POLICY check_in_attempts_read_co_monitor ON check_in_attempts
+  FOR SELECT USING (
+    "checkInId" IN (
+      SELECT check_ins.id
+      FROM check_ins
+      WHERE check_ins."receiverId" IN (
+        SELECT "receiverId" FROM co_monitors
+        WHERE "userId" IN (SELECT id FROM users WHERE "authProviderId" = auth.uid()::text)
+          AND "acceptedAt" IS NOT NULL
+          AND "revokedAt" IS NULL
+      )
+    )
+  );
+
 CREATE POLICY audit_logs_read_own ON audit_logs
   FOR SELECT USING (
     "actorId" IN (SELECT id FROM users WHERE "authProviderId" = auth.uid()::text)
@@ -91,6 +118,10 @@ CREATE POLICY audit_logs_read_own ON audit_logs
 
 CREATE INDEX idx_checkins_pending_scheduled
   ON check_ins ("scheduledAt")
+  WHERE status = 'PENDING';
+
+CREATE INDEX idx_check_in_attempts_pending_scheduled
+  ON check_in_attempts ("scheduledAt")
   WHERE status = 'PENDING';
 
 CREATE INDEX idx_subscriptions_active

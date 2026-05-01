@@ -5,11 +5,21 @@ export type OperationsRunAggregate = {
     sent: number;
     skipped: number;
   };
-  overdueEscalations: {
-    checked: number;
-    escalated: number;
+  overdueEscalations?: {
+    checked?: number;
+    escalated?: number;
+    sent?: number;
+    timedOut?: number;
+    needsAttention?: number;
     skipped: number;
     failed: number;
+  };
+  cascadeAttempts?: {
+    sent: number;
+    timedOut: number;
+    failed: number;
+    needsAttention: number;
+    skipped: number;
   };
 };
 
@@ -45,6 +55,20 @@ export async function runOperationsCheckIns(input: {
   }
 
   const body = (await response.json()) as OperationsRunAggregate;
+  const legacyEscalations = body.overdueEscalations ?? {
+    sent: 0,
+    timedOut: 0,
+    failed: 0,
+    needsAttention: 0,
+    skipped: 0,
+  };
+  const cascadeAttempts = body.cascadeAttempts ?? {
+    sent: legacyEscalations.sent ?? 0,
+    timedOut: legacyEscalations.timedOut ?? 0,
+    failed: legacyEscalations.failed,
+    needsAttention: legacyEscalations.needsAttention ?? 0,
+    skipped: legacyEscalations.skipped,
+  };
 
   return {
     ok: true,
@@ -53,11 +77,12 @@ export async function runOperationsCheckIns(input: {
       sent: body.dueCheckIns.sent,
       skipped: body.dueCheckIns.skipped,
     },
-    overdueEscalations: {
-      checked: body.overdueEscalations.checked,
-      escalated: body.overdueEscalations.escalated,
-      skipped: body.overdueEscalations.skipped,
-      failed: body.overdueEscalations.failed,
+    cascadeAttempts: {
+      sent: cascadeAttempts.sent,
+      timedOut: cascadeAttempts.timedOut,
+      failed: cascadeAttempts.failed,
+      needsAttention: cascadeAttempts.needsAttention,
+      skipped: cascadeAttempts.skipped,
     },
   };
 }

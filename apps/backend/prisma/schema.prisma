@@ -55,8 +55,18 @@ enum CheckInStatus {
   RESPONDED_OK
   RESPONDED_HELP
   ESCALATED
+  NEEDS_ATTENTION
   RESOLVED
   FAILED
+  SKIPPED
+}
+
+enum CheckInAttemptStatus {
+  PENDING
+  SENT
+  RESPONDED
+  FAILED
+  TIMED_OUT
   SKIPPED
 }
 
@@ -206,12 +216,36 @@ model CheckIn {
   updatedAt          DateTime      @updatedAt
 
   receiver    Receiver          @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+  attempts    CheckInAttempt[]
   escalations EscalationEvent[]
 
   @@index([receiverId, scheduledAt])
   @@index([status])
   @@index([scheduledAt])
   @@map("check_ins")
+}
+
+model CheckInAttempt {
+  id                String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  checkInId         String               @db.Uuid
+  attemptNumber     Int
+  channel           Channel
+  status            CheckInAttemptStatus @default(PENDING)
+  scheduledAt       DateTime
+  sentAt            DateTime?
+  completedAt       DateTime?
+  providerMessageId String?
+  providerStatus    String?
+  failureReason     String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  checkIn CheckIn @relation(fields: [checkInId], references: [id], onDelete: Cascade)
+
+  @@unique([checkInId, attemptNumber])
+  @@index([checkInId])
+  @@index([status, scheduledAt])
+  @@map("check_in_attempts")
 }
 
 model EscalationEvent {

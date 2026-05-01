@@ -13,6 +13,7 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 DROP TABLE IF EXISTS public.edge_rate_limits CASCADE;
 DROP TABLE IF EXISTS public.device_tokens CASCADE;
 DROP TABLE IF EXISTS public.escalation_events CASCADE;
+DROP TABLE IF EXISTS public.check_in_attempts CASCADE;
 DROP TABLE IF EXISTS public.escalation_plans CASCADE;
 DROP TABLE IF EXISTS public.checkins CASCADE;
 DROP TABLE IF EXISTS public.checkin_schedules CASCADE;
@@ -60,6 +61,7 @@ DROP TYPE IF EXISTS public."TechProfile" CASCADE;
 DROP TYPE IF EXISTS public."Channel" CASCADE;
 DROP TYPE IF EXISTS public."ConsentStatus" CASCADE;
 DROP TYPE IF EXISTS public."CheckInStatus" CASCADE;
+DROP TYPE IF EXISTS public."CheckInAttemptStatus" CASCADE;
 DROP TYPE IF EXISTS public."EscalationResult" CASCADE;
 DROP TYPE IF EXISTS public."AbuseReportStatus" CASCADE;
 DROP TYPE IF EXISTS public."ActorType" CASCADE;
@@ -87,7 +89,10 @@ CREATE TYPE "Channel" AS ENUM ('WHATSAPP', 'SMS', 'VOICE');
 CREATE TYPE "ConsentStatus" AS ENUM ('PENDING', 'GRANTED', 'DECLINED', 'REVOKED');
 
 -- CreateEnum
-CREATE TYPE "CheckInStatus" AS ENUM ('PENDING', 'SENT', 'RESPONDED_OK', 'RESPONDED_HELP', 'ESCALATED', 'RESOLVED', 'FAILED', 'SKIPPED');
+CREATE TYPE "CheckInStatus" AS ENUM ('PENDING', 'SENT', 'NEEDS_ATTENTION', 'RESPONDED_OK', 'RESPONDED_HELP', 'ESCALATED', 'RESOLVED', 'FAILED', 'SKIPPED');
+
+-- CreateEnum
+CREATE TYPE "CheckInAttemptStatus" AS ENUM ('PENDING', 'SENT', 'RESPONDED', 'FAILED', 'TIMED_OUT', 'SKIPPED');
 
 -- CreateEnum
 CREATE TYPE "EscalationResult" AS ENUM ('SUCCESS', 'NO_RESPONSE', 'ERROR');
@@ -202,6 +207,25 @@ CREATE TABLE "check_ins" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "check_ins_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "check_in_attempts" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "checkInId" UUID NOT NULL,
+    "attemptNumber" INTEGER NOT NULL,
+    "channel" "Channel" NOT NULL,
+    "status" "CheckInAttemptStatus" NOT NULL DEFAULT 'PENDING',
+    "scheduledAt" TIMESTAMP(3) NOT NULL,
+    "sentAt" TIMESTAMP(3),
+    "completedAt" TIMESTAMP(3),
+    "providerMessageId" TEXT,
+    "providerStatus" TEXT,
+    "failureReason" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "check_in_attempts_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -380,6 +404,15 @@ CREATE INDEX "check_ins_status_idx" ON "check_ins"("status");
 CREATE INDEX "check_ins_scheduledAt_idx" ON "check_ins"("scheduledAt");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "check_in_attempts_checkInId_attemptNumber_key" ON "check_in_attempts"("checkInId", "attemptNumber");
+
+-- CreateIndex
+CREATE INDEX "check_in_attempts_checkInId_idx" ON "check_in_attempts"("checkInId");
+
+-- CreateIndex
+CREATE INDEX "check_in_attempts_status_scheduledAt_idx" ON "check_in_attempts"("status", "scheduledAt");
+
+-- CreateIndex
 CREATE INDEX "escalation_events_checkInId_idx" ON "escalation_events"("checkInId");
 
 -- CreateIndex
@@ -437,6 +470,9 @@ ALTER TABLE "co_monitors" ADD CONSTRAINT "co_monitors_userId_fkey" FOREIGN KEY (
 ALTER TABLE "check_ins" ADD CONSTRAINT "check_ins_receiverId_fkey" FOREIGN KEY ("receiverId") REFERENCES "receivers"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "check_in_attempts" ADD CONSTRAINT "check_in_attempts_checkInId_fkey" FOREIGN KEY ("checkInId") REFERENCES "check_ins"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "escalation_events" ADD CONSTRAINT "escalation_events_checkInId_fkey" FOREIGN KEY ("checkInId") REFERENCES "check_ins"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -473,6 +509,7 @@ ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE receivers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE backup_contacts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE check_ins ENABLE ROW LEVEL SECURITY;
+ALTER TABLE check_in_attempts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE escalation_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE subscriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE co_monitors ENABLE ROW LEVEL SECURITY;
@@ -507,6 +544,26 @@ CREATE POLICY receivers_read_co_monitor ON receivers
     )
   );
 
+CREATE POLICY check_in_attempts_read_own ON check_in_attempts
+  FOR SELECT USING (
+    "checkInId" IN (
+      SELECT ci.id FROM check_ins ci
+      JOIN receivers r ON r.id = ci."receiverId"
+      WHERE r."userId" IN (SELECT id FROM users WHERE "authProviderId" = auth.uid()::text)
+    )
+  );
+
+CREATE POLICY check_in_attempts_read_co_monitor ON check_in_attempts
+  FOR SELECT USING (
+    "checkInId" IN (
+      SELECT ci.id FROM check_ins ci
+      JOIN co_monitors cm ON cm."receiverId" = ci."receiverId"
+      WHERE cm."userId" IN (SELECT id FROM users WHERE "authProviderId" = auth.uid()::text)
+        AND cm."acceptedAt" IS NOT NULL
+        AND cm."revokedAt" IS NULL
+    )
+  );
+
 CREATE POLICY audit_logs_read_own ON audit_logs
   FOR SELECT USING (
     "actorId" IN (SELECT id FROM users WHERE "authProviderId" = auth.uid()::text)
@@ -518,6 +575,10 @@ CREATE POLICY audit_logs_read_own ON audit_logs
 
 CREATE INDEX idx_checkins_pending_scheduled
   ON check_ins ("scheduledAt")
+  WHERE status = 'PENDING';
+
+CREATE INDEX idx_check_in_attempts_pending_scheduled
+  ON check_in_attempts ("scheduledAt")
   WHERE status = 'PENDING';
 
 CREATE INDEX idx_subscriptions_active

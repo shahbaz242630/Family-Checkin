@@ -522,7 +522,15 @@ describe('PrismaReceiversRepository', () => {
       where: {
         id: 'check-in-1',
         receiverId: 'receiver-1',
-        status: { in: [CheckInStatus.RESPONDED_HELP, CheckInStatus.ESCALATED, CheckInStatus.FAILED, CheckInStatus.SKIPPED] },
+        status: {
+          in: [
+            CheckInStatus.RESPONDED_HELP,
+            CheckInStatus.ESCALATED,
+            CheckInStatus.NEEDS_ATTENTION,
+            CheckInStatus.FAILED,
+            CheckInStatus.SKIPPED,
+          ],
+        },
         receiver: {
           userId: 'user-1',
           deletedAt: null,

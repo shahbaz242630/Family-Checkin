@@ -38,6 +38,17 @@ export interface OperationsCheckInDetail {
     resolvedAt?: string;
     escalationAttemptCount: number;
     successfulEscalationCount: number;
+    attempts: Array<{
+      id: string;
+      attemptNumber: number;
+      channel: string;
+      status: string;
+      scheduledAt: string;
+      sentAt?: string;
+      completedAt?: string;
+      providerStatus?: string;
+      failureReason?: string;
+    }>;
     escalations: Array<{
       id: string;
       attemptNumber: number;
@@ -109,6 +120,17 @@ export class OperationsVisibilityService {
         resolvedAt: checkIn.resolvedAt?.toISOString(),
         escalationAttemptCount: checkIn.escalationAttemptCount,
         successfulEscalationCount: checkIn.successfulEscalationCount,
+        attempts: (checkIn.attempts ?? []).map((attempt) => ({
+          id: attempt.id,
+          attemptNumber: attempt.attemptNumber,
+          channel: attempt.channel,
+          status: attempt.status,
+          scheduledAt: attempt.scheduledAt.toISOString(),
+          sentAt: attempt.sentAt?.toISOString(),
+          completedAt: attempt.completedAt?.toISOString(),
+          providerStatus: attempt.providerStatus,
+          failureReason: attempt.failureReason,
+        })),
         escalations: checkIn.escalations.map((escalation) => ({
           id: escalation.id,
           attemptNumber: escalation.attemptNumber,

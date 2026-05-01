@@ -114,6 +114,7 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     const actionableStatuses: CheckInStatus[] = [
       CheckInStatus.RESPONDED_HELP,
       CheckInStatus.ESCALATED,
+      CheckInStatus.NEEDS_ATTENTION,
       CheckInStatus.FAILED,
       CheckInStatus.SKIPPED,
     ];

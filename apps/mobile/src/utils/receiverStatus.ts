@@ -24,6 +24,8 @@ export function getReceiverStatusDisplay(
       return { label: 'Needs help', tone: 'error' };
     case 'ESCALATED':
       return { label: 'Backup alerted', tone: 'error' };
+    case 'NEEDS_ATTENTION':
+      return { label: 'Needs attention', tone: 'error' };
     case 'FAILED':
       return { label: 'Escalation failed', tone: 'error' };
     case 'SKIPPED':

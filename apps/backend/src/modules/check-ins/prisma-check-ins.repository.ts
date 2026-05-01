@@ -1,15 +1,22 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { CheckInStatus, ConsentStatus } from '@prisma/client';
-import type { Channel, CheckIn, Prisma, Receiver } from '@prisma/client';
+import { CheckInAttemptStatus, CheckInStatus, ConsentStatus } from '@prisma/client';
+import type { Channel, CheckIn, CheckInAttempt, Prisma, Receiver } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import type {
+  CheckInAttemptRecord,
+  CheckInAttemptWithCheckInRecord,
   CheckInReceiverCandidate,
   CheckInRecord,
   CheckInsRepository,
+  CreateCheckInAttemptInput,
   CreatePendingCheckInInput,
-  MarkCheckInSentInput,
-  MarkCheckInRespondedInput,
   FindOverdueSentCheckInsInput,
+  MarkCheckInAttemptFailedInput,
+  MarkCheckInAttemptSentInput,
+  MarkCheckInAttemptTimedOutInput,
+  MarkCheckInRespondedInput,
+  MarkCheckInSentInput,
+  SkipPendingCheckInAttemptsInput,
 } from './check-ins.repository';
 
 type ReceiverDueForCheckIn = Pick<
@@ -18,7 +25,9 @@ type ReceiverDueForCheckIn = Pick<
   | 'phoneEncrypted'
   | 'language'
   | 'timezone'
+  | 'techProfile'
   | 'primaryChannel'
+  | 'fallbackChannels'
   | 'scheduleFrequency'
   | 'scheduleTimeWindow'
   | 'consentStatus'
@@ -76,6 +85,37 @@ interface CheckInsPrismaClient {
       }>;
     }): Promise<CheckIn>;
   };
+  checkInAttempt: {
+    createManyAndReturn(args: { data: CreateCheckInAttemptInput[] }): Promise<CheckInAttempt[]>;
+    findMany(args: {
+      where: {
+        status: CheckInAttemptStatus;
+        scheduledAt?: { lte: Date };
+        sentAt?: { lte: Date };
+      };
+      include: { checkIn: { include: { receiver: { select: { phoneEncrypted: true; language: true } } } } };
+      orderBy: Array<{ scheduledAt?: 'asc' } | { attemptNumber?: 'asc' }>;
+    }): Promise<Array<CheckInAttempt & { checkIn: CheckIn & { receiver: { phoneEncrypted: string; language: string } } }>>;
+    findFirst(args: {
+      where: { checkInId: string; status: CheckInAttemptStatus };
+      orderBy: { attemptNumber: 'desc' };
+    }): Promise<CheckInAttempt | null>;
+    update(args: {
+      where: { id: string };
+      data: Partial<{
+        status: CheckInAttemptStatus;
+        sentAt: Date;
+        completedAt: Date;
+        providerMessageId: string;
+        providerStatus: string;
+        failureReason: string;
+      }>;
+    }): Promise<CheckInAttempt>;
+    updateMany(args: {
+      where: { checkInId: string; status: CheckInAttemptStatus };
+      data: { status: CheckInAttemptStatus; completedAt: Date; failureReason: string };
+    }): Promise<{ count: number }>;
+  };
 }
 
 @Injectable()
@@ -108,7 +148,9 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       phoneEncrypted: receiver.phoneEncrypted,
       language: receiver.language,
       timezone: receiver.timezone,
+      techProfile: receiver.techProfile,
       primaryChannel: receiver.primaryChannel,
+      fallbackChannels: receiver.fallbackChannels,
       scheduleFrequency: receiver.scheduleFrequency,
       scheduleTimeWindow: this.toScheduleTimeWindow(receiver.scheduleTimeWindow),
       consentStatus: receiver.consentStatus,
@@ -129,6 +171,20 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return this.toCheckInRecord(checkIn);
   }
 
+  async createAttempts(input: CreateCheckInAttemptInput[]): Promise<CheckInAttemptRecord[]> {
+    if (input.length === 0) {
+      return [];
+    }
+
+    const attempts = await this.prisma.checkInAttempt.createManyAndReturn({
+      data: input,
+    });
+
+    return attempts
+      .sort((left, right) => left.attemptNumber - right.attemptNumber)
+      .map((attempt) => this.toCheckInAttemptRecord(attempt));
+  }
+
   async markSent(input: MarkCheckInSentInput): Promise<CheckInRecord> {
     const checkIn = await this.prisma.checkIn.update({
       where: { id: input.checkInId },
@@ -142,11 +198,122 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return this.toCheckInRecord(checkIn);
   }
 
+  async findDuePendingAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]> {
+    const attempts = await this.prisma.checkInAttempt.findMany({
+      where: {
+        status: CheckInAttemptStatus.PENDING,
+        scheduledAt: { lte: input.now },
+      },
+      include: { checkIn: { include: { receiver: { select: { phoneEncrypted: true, language: true } } } } },
+      orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
+    });
+
+    return attempts.map((attempt) => this.toAttemptWithCheckInRecord(attempt));
+  }
+
+  async findTimedOutSentAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]> {
+    const attempts = await this.prisma.checkInAttempt.findMany({
+      where: {
+        status: CheckInAttemptStatus.SENT,
+        sentAt: { lte: input.now },
+      },
+      include: { checkIn: { include: { receiver: { select: { phoneEncrypted: true, language: true } } } } },
+      orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
+    });
+
+    return attempts.map((attempt) => this.toAttemptWithCheckInRecord(attempt));
+  }
+
+  async markAttemptSent(input: MarkCheckInAttemptSentInput): Promise<CheckInAttemptRecord> {
+    const attempt = await this.prisma.checkInAttempt.update({
+      where: { id: input.attemptId },
+      data: {
+        status: CheckInAttemptStatus.SENT,
+        sentAt: input.sentAt,
+        providerMessageId: input.providerMessageId,
+        providerStatus: input.providerStatus,
+      },
+    });
+
+    return this.toCheckInAttemptRecord(attempt);
+  }
+
+  async markAttemptFailed(input: MarkCheckInAttemptFailedInput): Promise<CheckInAttemptRecord> {
+    const attempt = await this.prisma.checkInAttempt.update({
+      where: { id: input.attemptId },
+      data: {
+        status: CheckInAttemptStatus.FAILED,
+        completedAt: input.completedAt,
+        failureReason: input.failureReason,
+      },
+    });
+
+    return this.toCheckInAttemptRecord(attempt);
+  }
+
+  async markAttemptTimedOut(input: MarkCheckInAttemptTimedOutInput): Promise<CheckInAttemptRecord> {
+    const attempt = await this.prisma.checkInAttempt.update({
+      where: { id: input.attemptId },
+      data: {
+        status: CheckInAttemptStatus.TIMED_OUT,
+        completedAt: input.completedAt,
+        failureReason: 'response_window_elapsed',
+      },
+    });
+
+    return this.toCheckInAttemptRecord(attempt);
+  }
+
+  async markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }): Promise<CheckInAttemptRecord | null> {
+    const latest = await this.prisma.checkInAttempt.findFirst({
+      where: { checkInId: input.checkInId, status: CheckInAttemptStatus.SENT },
+      orderBy: { attemptNumber: 'desc' },
+    });
+
+    if (!latest) {
+      return null;
+    }
+
+    const attempt = await this.prisma.checkInAttempt.update({
+      where: { id: latest.id },
+      data: {
+        status: CheckInAttemptStatus.RESPONDED,
+        completedAt: input.completedAt,
+      },
+    });
+
+    return this.toCheckInAttemptRecord(attempt);
+  }
+
+  async skipPendingAttemptsForCheckIn(input: SkipPendingCheckInAttemptsInput): Promise<number> {
+    const result = await this.prisma.checkInAttempt.updateMany({
+      where: { checkInId: input.checkInId, status: CheckInAttemptStatus.PENDING },
+      data: {
+        status: CheckInAttemptStatus.SKIPPED,
+        completedAt: input.completedAt,
+        failureReason: input.failureReason,
+      },
+    });
+
+    return result.count;
+  }
+
+  async markNeedsAttention(input: { checkInId: string }): Promise<CheckInRecord> {
+    const checkIn = await this.prisma.checkIn.update({
+      where: { id: input.checkInId },
+      data: {
+        status: CheckInStatus.NEEDS_ATTENTION,
+      },
+    });
+
+    return this.toCheckInRecord(checkIn);
+  }
+
   async findLatestOpenForReceiver(receiverId: string): Promise<CheckInRecord | null> {
     const checkIn = await this.prisma.checkIn.findFirst({
       where: {
         receiverId,
-        status: { in: [CheckInStatus.PENDING, CheckInStatus.SENT] },
+        status: { in: [CheckInStatus.PENDING, CheckInStatus.SENT, CheckInStatus.NEEDS_ATTENTION] },
       },
       orderBy: { scheduledAt: 'desc' },
     });
@@ -158,7 +325,15 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     const checkIn = await this.prisma.checkIn.findFirst({
       where: {
         receiverId,
-        status: { in: [CheckInStatus.RESPONDED_HELP, CheckInStatus.ESCALATED, CheckInStatus.FAILED, CheckInStatus.SKIPPED] },
+        status: {
+          in: [
+            CheckInStatus.RESPONDED_HELP,
+            CheckInStatus.ESCALATED,
+            CheckInStatus.NEEDS_ATTENTION,
+            CheckInStatus.FAILED,
+            CheckInStatus.SKIPPED,
+          ],
+        },
       },
       orderBy: { scheduledAt: 'desc' },
     });
@@ -289,6 +464,37 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       resolutionByUserId: checkIn.resolutionByUserId ?? undefined,
       createdAt: checkIn.createdAt,
       updatedAt: checkIn.updatedAt,
+    };
+  }
+
+  private toCheckInAttemptRecord(attempt: CheckInAttempt): CheckInAttemptRecord {
+    return {
+      id: attempt.id,
+      checkInId: attempt.checkInId,
+      attemptNumber: attempt.attemptNumber,
+      channel: attempt.channel,
+      status: attempt.status,
+      scheduledAt: attempt.scheduledAt,
+      sentAt: attempt.sentAt ?? undefined,
+      completedAt: attempt.completedAt ?? undefined,
+      providerMessageId: attempt.providerMessageId ?? undefined,
+      providerStatus: attempt.providerStatus ?? undefined,
+      failureReason: attempt.failureReason ?? undefined,
+      createdAt: attempt.createdAt,
+      updatedAt: attempt.updatedAt,
+    };
+  }
+
+  private toAttemptWithCheckInRecord(
+    attempt: CheckInAttempt & { checkIn: CheckIn & { receiver: { phoneEncrypted: string; language: string } } },
+  ): CheckInAttemptWithCheckInRecord {
+    return {
+      ...this.toCheckInAttemptRecord(attempt),
+      checkIn: {
+        ...this.toCheckInRecord(attempt.checkIn),
+        receiverPhoneEncrypted: attempt.checkIn.receiver.phoneEncrypted,
+        receiverLanguage: attempt.checkIn.receiver.language,
+      },
     };
   }
 }

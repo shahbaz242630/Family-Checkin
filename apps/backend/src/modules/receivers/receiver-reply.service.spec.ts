@@ -2,6 +2,7 @@ import {
   AbuseReportStatus,
   ActorType,
   Channel,
+  CheckInAttemptStatus,
   CheckInStatus,
   ConsentStatus,
   RelationshipType,
@@ -260,6 +261,8 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
       }
     | null = null;
   public backupResolution: ResolveCheckInByBackupContactInput | null = null;
+  public respondedAttempt: { checkInId: string; completedAt: Date } | null = null;
+  public skippedAttempts: { checkInId: string; completedAt: Date; failureReason: string } | null = null;
 
   async findReceiversDueForCheckIn(_now: Date): Promise<CheckInReceiverCandidate[]> {
     return [];
@@ -291,6 +294,111 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
 
   async findLatestOpenForReceiver(receiverId: string): Promise<CheckInRecord | null> {
     return this.openCheckIn?.receiverId === receiverId ? this.openCheckIn : null;
+  }
+
+  async createAttempts(): Promise<[]> {
+    return [];
+  }
+
+  async findDuePendingAttempts(): Promise<[]> {
+    return [];
+  }
+
+  async findTimedOutSentAttempts(): Promise<[]> {
+    return [];
+  }
+
+  async markAttemptSent(input: {
+    attemptId: string;
+    sentAt: Date;
+    providerMessageId: string;
+    providerStatus: string;
+  }): Promise<{
+    id: string;
+    checkInId: string;
+    attemptNumber: number;
+    channel: Channel;
+    status: CheckInAttemptStatus;
+    scheduledAt: Date;
+    sentAt: Date;
+    providerMessageId: string;
+    providerStatus: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }> {
+    return {
+      id: input.attemptId,
+      checkInId: 'check-in-1',
+      attemptNumber: 1,
+      channel: Channel.WHATSAPP,
+      status: CheckInAttemptStatus.SENT,
+      scheduledAt: input.sentAt,
+      sentAt: input.sentAt,
+      providerMessageId: input.providerMessageId,
+      providerStatus: input.providerStatus,
+      createdAt: input.sentAt,
+      updatedAt: input.sentAt,
+    };
+  }
+
+  async markAttemptFailed(input: { attemptId: string; completedAt: Date; failureReason: string }) {
+    return {
+      id: input.attemptId,
+      checkInId: 'check-in-1',
+      attemptNumber: 1,
+      channel: Channel.WHATSAPP,
+      status: CheckInAttemptStatus.FAILED,
+      scheduledAt: input.completedAt,
+      completedAt: input.completedAt,
+      failureReason: input.failureReason,
+      createdAt: input.completedAt,
+      updatedAt: input.completedAt,
+    };
+  }
+
+  async markAttemptTimedOut(input: { attemptId: string; completedAt: Date }) {
+    return {
+      id: input.attemptId,
+      checkInId: 'check-in-1',
+      attemptNumber: 1,
+      channel: Channel.WHATSAPP,
+      status: CheckInAttemptStatus.TIMED_OUT,
+      scheduledAt: input.completedAt,
+      completedAt: input.completedAt,
+      createdAt: input.completedAt,
+      updatedAt: input.completedAt,
+    };
+  }
+
+  async markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }) {
+    this.respondedAttempt = input;
+    return {
+      id: 'attempt-1',
+      checkInId: input.checkInId,
+      attemptNumber: 1,
+      channel: Channel.WHATSAPP,
+      status: CheckInAttemptStatus.RESPONDED,
+      scheduledAt: input.completedAt,
+      completedAt: input.completedAt,
+      createdAt: input.completedAt,
+      updatedAt: input.completedAt,
+    };
+  }
+
+  async skipPendingAttemptsForCheckIn(input: { checkInId: string; completedAt: Date; failureReason: string }): Promise<number> {
+    this.skippedAttempts = input;
+    return 1;
+  }
+
+  async markNeedsAttention(input: { checkInId: string }): Promise<CheckInRecord> {
+    return {
+      id: input.checkInId,
+      receiverId: 'receiver-1',
+      scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+      status: CheckInStatus.NEEDS_ATTENTION,
+      createdAt: new Date('2026-04-27T05:30:00.000Z'),
+      updatedAt: new Date('2026-04-27T05:30:00.000Z'),
+    };
   }
 
   async findLatestActionableForReceiver(receiverId: string): Promise<CheckInRecord | null> {

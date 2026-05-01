@@ -675,6 +675,7 @@ function receiverStatusColor(tone: ReceiverStatusTone): string {
 
 function formatCheckInStatus(status?: string): string {
   if (!status) return 'No check-ins yet';
+  if (status === 'NEEDS_ATTENTION') return 'Needs attention';
   return status
     .split('_')
     .map(capitalize)

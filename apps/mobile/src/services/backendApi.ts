@@ -13,6 +13,7 @@ export type BackendCheckInStatus =
   | 'RESPONDED_OK'
   | 'RESPONDED_HELP'
   | 'ESCALATED'
+  | 'NEEDS_ATTENTION'
   | 'RESOLVED'
   | 'FAILED'
   | 'SKIPPED';

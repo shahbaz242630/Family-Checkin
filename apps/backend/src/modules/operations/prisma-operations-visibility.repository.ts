@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { CheckInStatus, EscalationResult } from '@prisma/client';
-import type { CheckIn, EscalationEvent } from '@prisma/client';
+import type { CheckIn, CheckInAttempt, EscalationEvent } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import type {
   OperationsRecentCheckInRecord,
@@ -17,6 +17,12 @@ type CheckInDetail = Pick<
   CheckIn,
   'id' | 'receiverId' | 'status' | 'channelUsed' | 'scheduledAt' | 'sentAt' | 'respondedAt' | 'responseDetectedAs' | 'resolvedAt'
 > & {
+  attempts: Array<
+    Pick<
+      CheckInAttempt,
+      'id' | 'attemptNumber' | 'channel' | 'status' | 'scheduledAt' | 'sentAt' | 'completedAt' | 'providerStatus' | 'failureReason'
+    >
+  >;
   escalations: Array<
     Pick<
       EscalationEvent,
@@ -75,6 +81,20 @@ interface OperationsVisibilityPrismaClient {
         respondedAt: true;
         responseDetectedAs: true;
         resolvedAt: true;
+        attempts: {
+          select: {
+            id: true;
+            attemptNumber: true;
+            channel: true;
+            status: true;
+            scheduledAt: true;
+            sentAt: true;
+            completedAt: true;
+            providerStatus: true;
+            failureReason: true;
+          };
+          orderBy: { attemptNumber: 'asc' };
+        };
         escalations: {
           select: {
             id: true;
@@ -101,6 +121,7 @@ export class PrismaOperationsVisibilityRepository implements OperationsVisibilit
   private static readonly operationalStatuses = [
     CheckInStatus.RESPONDED_HELP,
     CheckInStatus.ESCALATED,
+    CheckInStatus.NEEDS_ATTENTION,
     CheckInStatus.FAILED,
     CheckInStatus.SKIPPED,
     CheckInStatus.RESOLVED,
@@ -180,6 +201,20 @@ export class PrismaOperationsVisibilityRepository implements OperationsVisibilit
         respondedAt: true,
         responseDetectedAs: true,
         resolvedAt: true,
+        attempts: {
+          select: {
+            id: true,
+            attemptNumber: true,
+            channel: true,
+            status: true,
+            scheduledAt: true,
+            sentAt: true,
+            completedAt: true,
+            providerStatus: true,
+            failureReason: true,
+          },
+          orderBy: { attemptNumber: 'asc' },
+        },
         escalations: {
           select: {
             id: true,
@@ -216,6 +251,17 @@ export class PrismaOperationsVisibilityRepository implements OperationsVisibilit
       escalationAttemptCount: checkIn._count.escalations,
       successfulEscalationCount: checkIn.escalations.filter((escalation) => escalation.result === EscalationResult.SUCCESS)
         .length,
+      attempts: (checkIn.attempts ?? []).map((attempt) => ({
+        id: attempt.id,
+        attemptNumber: attempt.attemptNumber,
+        channel: attempt.channel,
+        status: attempt.status,
+        scheduledAt: attempt.scheduledAt,
+        sentAt: attempt.sentAt ?? undefined,
+        completedAt: attempt.completedAt ?? undefined,
+        providerStatus: attempt.providerStatus ?? undefined,
+        failureReason: attempt.failureReason ?? undefined,
+      })),
       escalations: checkIn.escalations.map((escalation) => ({
         id: escalation.id,
         attemptNumber: escalation.attemptNumber,

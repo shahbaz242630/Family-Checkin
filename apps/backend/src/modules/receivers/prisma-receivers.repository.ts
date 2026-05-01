@@ -274,7 +274,7 @@ export class PrismaReceiversRepository implements ReceiversRepository {
       where: {
         id: input.checkInId,
         receiverId: input.receiverId,
-        status: { in: ['RESPONDED_HELP', 'ESCALATED', 'FAILED', 'SKIPPED'] },
+        status: { in: ['RESPONDED_HELP', 'ESCALATED', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'] },
         receiver: {
           userId: input.userId,
           deletedAt: null,

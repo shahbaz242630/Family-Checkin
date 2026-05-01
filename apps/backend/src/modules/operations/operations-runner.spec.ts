@@ -8,7 +8,7 @@ describe('runOperationsCheckIns', () => {
         JSON.stringify({
           ok: true,
           dueCheckIns: { created: 1, sent: 1, skipped: 0 },
-          overdueEscalations: { checked: 2, escalated: 1, skipped: 1, failed: 0 },
+          cascadeAttempts: { sent: 2, timedOut: 1, failed: 0, needsAttention: 0, skipped: 1 },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
@@ -30,7 +30,7 @@ describe('runOperationsCheckIns', () => {
     expect(result).toEqual({
       ok: true,
       dueCheckIns: { created: 1, sent: 1, skipped: 0 },
-      overdueEscalations: { checked: 2, escalated: 1, skipped: 1, failed: 0 },
+      cascadeAttempts: { sent: 2, timedOut: 1, failed: 0, needsAttention: 0, skipped: 1 },
     });
   });
 
@@ -74,7 +74,7 @@ describe('runOperationsCheckIns', () => {
           receiverId: 'receiver-id-that-must-not-be-logged',
           phone: '+971501234567',
           dueCheckIns: { created: 1, sent: 1, skipped: 0, receiverId: 'nested-receiver-id' },
-          overdueEscalations: { checked: 1, escalated: 0, skipped: 1, failed: 0, transcript: 'raw body' },
+          cascadeAttempts: { sent: 0, timedOut: 1, failed: 0, needsAttention: 1, skipped: 1, transcript: 'raw body' },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
       );
@@ -89,7 +89,7 @@ describe('runOperationsCheckIns', () => {
     expect(result).toEqual({
       ok: true,
       dueCheckIns: { created: 1, sent: 1, skipped: 0 },
-      overdueEscalations: { checked: 1, escalated: 0, skipped: 1, failed: 0 },
+      cascadeAttempts: { sent: 0, timedOut: 1, failed: 0, needsAttention: 1, skipped: 1 },
     });
     expect(JSON.stringify(result)).not.toContain('receiver');
     expect(JSON.stringify(result)).not.toContain('phone');

@@ -3,6 +3,7 @@ import type { BackendCheckInStatus } from '../services/backendApi';
 const statusPriority: BackendCheckInStatus[] = [
   'RESPONDED_HELP',
   'ESCALATED',
+  'NEEDS_ATTENTION',
   'FAILED',
   'SKIPPED',
   'SENT',
@@ -17,6 +18,8 @@ export function operationsStatusLabel(status: BackendCheckInStatus | string): st
       return 'Needs help';
     case 'ESCALATED':
       return 'Backup alerted';
+    case 'NEEDS_ATTENTION':
+      return 'Needs attention';
     case 'FAILED':
       return 'Escalation failed';
     case 'SKIPPED':

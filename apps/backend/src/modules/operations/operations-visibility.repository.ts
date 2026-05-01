@@ -1,4 +1,4 @@
-import type { Channel, CheckInStatus, EscalationResult } from '@prisma/client';
+import type { Channel, CheckInAttemptStatus, CheckInStatus, EscalationResult } from '@prisma/client';
 
 export interface OperationsStatusCountRecord {
   status: CheckInStatus;
@@ -28,6 +28,18 @@ export interface OperationsEscalationDetailRecord {
   backupAlertedAt?: Date;
 }
 
+export interface OperationsCheckInAttemptDetailRecord {
+  id: string;
+  attemptNumber: number;
+  channel: Channel;
+  status: CheckInAttemptStatus;
+  scheduledAt: Date;
+  sentAt?: Date;
+  completedAt?: Date;
+  providerStatus?: string;
+  failureReason?: string;
+}
+
 export interface OperationsCheckInDetailRecord {
   checkInId: string;
   receiverId: string;
@@ -40,6 +52,7 @@ export interface OperationsCheckInDetailRecord {
   resolvedAt?: Date;
   escalationAttemptCount: number;
   successfulEscalationCount: number;
+  attempts: OperationsCheckInAttemptDetailRecord[];
   escalations: OperationsEscalationDetailRecord[];
 }
 

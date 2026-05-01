@@ -265,6 +265,15 @@ export class ReceiverReplyService {
         }),
       ),
     });
+    await this.checkInsRepository.markLatestSentAttemptResponded({
+      checkInId: openCheckIn.id,
+      completedAt: input.receivedAt,
+    });
+    await this.checkInsRepository.skipPendingAttemptsForCheckIn({
+      checkInId: openCheckIn.id,
+      completedAt: input.receivedAt,
+      failureReason: 'superseded_by_response',
+    });
 
     await this.auditService.append({
       entityType: 'check_in',

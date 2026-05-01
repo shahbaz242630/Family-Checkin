@@ -1,4 +1,4 @@
-import { ActorType, Channel, CheckInStatus, ConsentStatus } from '@prisma/client';
+import { ActorType, Channel, CheckInAttemptStatus, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
@@ -13,6 +13,9 @@ import type {
   MarkCheckInSentInput,
   MarkCheckInRespondedInput,
   FindOverdueSentCheckInsInput,
+  CreateCheckInAttemptInput,
+  CheckInAttemptRecord,
+  CheckInAttemptWithCheckInRecord,
 } from './check-ins.repository';
 import { CheckInsService } from './check-ins.service';
 
@@ -24,6 +27,8 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
   public overdueQueries: FindOverdueSentCheckInsInput[] = [];
   public created: CreatePendingCheckInInput[] = [];
   public sent: MarkCheckInSentInput[] = [];
+  public attempts: CheckInAttemptRecord[] = [];
+  public attemptsSent: string[] = [];
 
   async findReceiversDueForCheckIn(_now: Date): Promise<CheckInReceiverCandidate[]> {
     return this.candidates;
@@ -61,6 +66,107 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     return null;
   }
 
+  async createAttempts(input: CreateCheckInAttemptInput[]): Promise<CheckInAttemptRecord[]> {
+    const created = input.map((attempt, index) => ({
+      id: `attempt-${this.attempts.length + index + 1}`,
+      checkInId: attempt.checkInId,
+      attemptNumber: attempt.attemptNumber,
+      channel: attempt.channel,
+      status: CheckInAttemptStatus.PENDING,
+      scheduledAt: attempt.scheduledAt,
+      createdAt: attempt.scheduledAt,
+      updatedAt: attempt.scheduledAt,
+    }));
+    this.attempts.push(...created);
+    return created;
+  }
+
+  async findDuePendingAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]> {
+    return this.attempts
+      .filter((attempt) => attempt.status === CheckInAttemptStatus.PENDING && attempt.scheduledAt <= input.now)
+      .map((attempt) => this.withCheckIn(attempt));
+  }
+
+  async findTimedOutSentAttempts(_input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]> {
+    return this.attempts
+      .filter((attempt) => attempt.status === CheckInAttemptStatus.SENT)
+      .map((attempt) => this.withCheckIn(attempt));
+  }
+
+  async markAttemptSent(input: {
+    attemptId: string;
+    sentAt: Date;
+    providerMessageId: string;
+    providerStatus: string;
+  }): Promise<CheckInAttemptRecord> {
+    this.attemptsSent.push(input.attemptId);
+    return this.updateAttempt(input.attemptId, {
+      status: CheckInAttemptStatus.SENT,
+      sentAt: input.sentAt,
+      providerMessageId: input.providerMessageId,
+      providerStatus: input.providerStatus,
+      updatedAt: input.sentAt,
+    });
+  }
+
+  async markAttemptFailed(input: { attemptId: string; completedAt: Date; failureReason: string }): Promise<CheckInAttemptRecord> {
+    return this.updateAttempt(input.attemptId, {
+      status: CheckInAttemptStatus.FAILED,
+      completedAt: input.completedAt,
+      failureReason: input.failureReason,
+      updatedAt: input.completedAt,
+    });
+  }
+
+  async markAttemptTimedOut(input: { attemptId: string; completedAt: Date }): Promise<CheckInAttemptRecord> {
+    return this.updateAttempt(input.attemptId, {
+      status: CheckInAttemptStatus.TIMED_OUT,
+      completedAt: input.completedAt,
+      failureReason: 'response_window_elapsed',
+      updatedAt: input.completedAt,
+    });
+  }
+
+  async markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }): Promise<CheckInAttemptRecord | null> {
+    const attempt = [...this.attempts]
+      .filter((candidate) => candidate.checkInId === input.checkInId && candidate.status === CheckInAttemptStatus.SENT)
+      .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
+    if (!attempt) {
+      return null;
+    }
+    return this.updateAttempt(attempt.id, {
+      status: CheckInAttemptStatus.RESPONDED,
+      completedAt: input.completedAt,
+      updatedAt: input.completedAt,
+    });
+  }
+
+  async skipPendingAttemptsForCheckIn(input: { checkInId: string; completedAt: Date; failureReason: string }): Promise<number> {
+    const attempts = this.attempts.filter(
+      (attempt) => attempt.checkInId === input.checkInId && attempt.status === CheckInAttemptStatus.PENDING,
+    );
+    attempts.forEach((attempt) => {
+      Object.assign(attempt, {
+        status: CheckInAttemptStatus.SKIPPED,
+        completedAt: input.completedAt,
+        failureReason: input.failureReason,
+        updatedAt: input.completedAt,
+      });
+    });
+    return attempts.length;
+  }
+
+  async markNeedsAttention(input: { checkInId: string }): Promise<CheckInRecord> {
+    return {
+      id: input.checkInId,
+      receiverId: 'receiver-1',
+      scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+      status: CheckInStatus.NEEDS_ATTENTION,
+      createdAt: new Date('2026-04-27T05:30:00.000Z'),
+      updatedAt: new Date('2026-04-27T05:30:00.000Z'),
+    };
+  }
+
   async findLatestActionableForReceiver(_receiverId: string): Promise<CheckInRecord | null> {
     return null;
   }
@@ -94,6 +200,31 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
   async findOverdueSentCheckIns(input: FindOverdueSentCheckInsInput): Promise<CheckInRecord[]> {
     this.overdueQueries.push(input);
     return this.overdueCheckIns;
+  }
+
+  private updateAttempt(id: string, patch: Partial<CheckInAttemptRecord>): CheckInAttemptRecord {
+    const attempt = this.attempts.find((candidate) => candidate.id === id);
+    if (!attempt) {
+      throw new Error(`Attempt ${id} not found`);
+    }
+    Object.assign(attempt, patch);
+    return attempt;
+  }
+
+  private withCheckIn(attempt: CheckInAttemptRecord): CheckInAttemptWithCheckInRecord {
+    return {
+      ...attempt,
+      checkIn: {
+        id: attempt.checkInId,
+        receiverId: 'receiver-1',
+        scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+        status: CheckInStatus.SENT,
+        createdAt: new Date('2026-04-27T05:30:00.000Z'),
+        updatedAt: new Date('2026-04-27T05:30:00.000Z'),
+        receiverPhoneEncrypted: new CryptoService(masterKey).encrypt('+971501234567'),
+        receiverLanguage: 'en',
+      },
+    };
   }
 }
 
@@ -330,7 +461,9 @@ function receiverCandidate(crypto: CryptoService): CheckInReceiverCandidate {
     phoneEncrypted: crypto.encrypt('+971501234567'),
     language: 'en',
     timezone: 'Asia/Dubai',
+    techProfile: TechProfile.WHATSAPP,
     primaryChannel: Channel.WHATSAPP,
+    fallbackChannels: [Channel.SMS, Channel.VOICE],
     scheduleFrequency: 'daily',
     scheduleTimeWindow: {
       start: '09:00',

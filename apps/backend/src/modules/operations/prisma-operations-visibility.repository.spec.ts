@@ -1,4 +1,4 @@
-import { Channel, CheckInStatus, EscalationResult } from '@prisma/client';
+import { Channel, CheckInAttemptStatus, CheckInStatus, EscalationResult } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import { PrismaOperationsVisibilityRepository } from './prisma-operations-visibility.repository';
 
@@ -75,6 +75,7 @@ describe('PrismaOperationsVisibilityRepository', () => {
             in: [
               CheckInStatus.RESPONDED_HELP,
               CheckInStatus.ESCALATED,
+              CheckInStatus.NEEDS_ATTENTION,
               CheckInStatus.FAILED,
               CheckInStatus.SKIPPED,
               CheckInStatus.RESOLVED,
@@ -137,6 +138,19 @@ describe('PrismaOperationsVisibilityRepository', () => {
             respondedAt: null,
             responseDetectedAs: null,
             resolvedAt: null,
+            attempts: [
+              {
+                id: 'attempt-1',
+                attemptNumber: 1,
+                channel: Channel.WHATSAPP,
+                status: CheckInAttemptStatus.TIMED_OUT,
+                scheduledAt: new Date('2026-04-30T06:30:00.000Z'),
+                sentAt: new Date('2026-04-30T06:31:00.000Z'),
+                completedAt: new Date('2026-04-30T06:46:00.000Z'),
+                providerStatus: 'accepted',
+                failureReason: 'response_window_elapsed',
+              },
+            ],
             escalations: [
               {
                 id: 'escalation-1',
@@ -184,6 +198,20 @@ describe('PrismaOperationsVisibilityRepository', () => {
           respondedAt: true,
           responseDetectedAs: true,
           resolvedAt: true,
+          attempts: {
+            select: {
+              id: true,
+              attemptNumber: true,
+              channel: true,
+              status: true,
+              scheduledAt: true,
+              sentAt: true,
+              completedAt: true,
+              providerStatus: true,
+              failureReason: true,
+            },
+            orderBy: { attemptNumber: 'asc' },
+          },
           escalations: {
             select: {
               id: true,
@@ -215,6 +243,19 @@ describe('PrismaOperationsVisibilityRepository', () => {
       resolvedAt: undefined,
       escalationAttemptCount: 2,
       successfulEscalationCount: 1,
+      attempts: [
+        {
+          id: 'attempt-1',
+          attemptNumber: 1,
+          channel: Channel.WHATSAPP,
+          status: CheckInAttemptStatus.TIMED_OUT,
+          scheduledAt: new Date('2026-04-30T06:30:00.000Z'),
+          sentAt: new Date('2026-04-30T06:31:00.000Z'),
+          completedAt: new Date('2026-04-30T06:46:00.000Z'),
+          providerStatus: 'accepted',
+          failureReason: 'response_window_elapsed',
+        },
+      ],
       escalations: [
         {
           id: 'escalation-1',

@@ -1,4 +1,4 @@
-import { Channel, CheckInStatus, EscalationResult } from '@prisma/client';
+import { Channel, CheckInAttemptStatus, CheckInStatus, EscalationResult } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import type { OperationsVisibilityRepository } from './operations-visibility.repository';
 import { OperationsVisibilityService } from './operations-visibility.service';
@@ -50,6 +50,19 @@ class FakeOperationsVisibilityRepository implements OperationsVisibilityReposito
       resolvedAt: undefined,
       escalationAttemptCount: 2,
       successfulEscalationCount: 1,
+      attempts: [
+        {
+          id: 'attempt-1',
+          attemptNumber: 1,
+          channel: Channel.WHATSAPP,
+          status: CheckInAttemptStatus.TIMED_OUT,
+          scheduledAt: new Date('2026-04-30T06:30:00.000Z'),
+          sentAt: new Date('2026-04-30T06:31:00.000Z'),
+          completedAt: new Date('2026-04-30T06:46:00.000Z'),
+          providerStatus: 'accepted',
+          failureReason: 'response_window_elapsed',
+        },
+      ],
       escalations: [
         {
           id: 'escalation-1',
@@ -137,6 +150,19 @@ describe('OperationsVisibilityService', () => {
         resolvedAt: undefined,
         escalationAttemptCount: 2,
         successfulEscalationCount: 1,
+        attempts: [
+          {
+            id: 'attempt-1',
+            attemptNumber: 1,
+            channel: Channel.WHATSAPP,
+            status: CheckInAttemptStatus.TIMED_OUT,
+            scheduledAt: '2026-04-30T06:30:00.000Z',
+            sentAt: '2026-04-30T06:31:00.000Z',
+            completedAt: '2026-04-30T06:46:00.000Z',
+            providerStatus: 'accepted',
+            failureReason: 'response_window_elapsed',
+          },
+        ],
         escalations: [
           {
             id: 'escalation-1',

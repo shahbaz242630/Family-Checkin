@@ -1,5 +1,5 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { ActorType, Channel, CheckInStatus, ConsentStatus } from '@prisma/client';
+import { ActorType, Channel, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { EscalationsService } from '../escalations/escalations.service';
@@ -18,6 +18,14 @@ export interface EscalateOverdueCheckInsResult {
   escalated: number;
   skipped: number;
   failed: number;
+}
+
+export interface ProcessCascadeAttemptsResult {
+  sent: number;
+  timedOut: number;
+  failed: number;
+  needsAttention: number;
+  skipped: number;
 }
 
 @Injectable()
@@ -54,6 +62,7 @@ export class CheckInsService {
         scheduledAt: now,
       });
       result.created += 1;
+      const attempts = await this.checkInsRepository.createAttempts(this.buildCascadeAttempts(receiver, checkIn.id, now));
 
       await this.auditService.append({
         entityType: 'check_in',
@@ -67,6 +76,14 @@ export class CheckInsService {
       });
 
       const providerResult = await this.sendInitialCheckIn(receiver);
+      if (attempts[0]) {
+        await this.checkInsRepository.markAttemptSent({
+          attemptId: attempts[0].id,
+          sentAt: now,
+          providerMessageId: providerResult.providerId,
+          providerStatus: providerResult.providerStatus,
+        });
+      }
       await this.checkInsRepository.markSent({
         checkInId: checkIn.id,
         channel: receiver.primaryChannel,
@@ -129,6 +146,70 @@ export class CheckInsService {
     return result;
   }
 
+  async processCascadeAttempts(): Promise<ProcessCascadeAttemptsResult> {
+    const now = this.now();
+    const result: ProcessCascadeAttemptsResult = { sent: 0, timedOut: 0, failed: 0, needsAttention: 0, skipped: 0 };
+
+    for (const attempt of await this.checkInsRepository.findTimedOutSentAttempts({ now })) {
+      if (!this.isAttemptTimedOut(attempt, now)) {
+        continue;
+      }
+
+      await this.checkInsRepository.markAttemptTimedOut({ attemptId: attempt.id, completedAt: now });
+      result.timedOut += 1;
+
+      if (await this.sendNextPendingAttempt(attempt.checkIn.id, now)) {
+        result.sent += 1;
+      } else {
+        await this.checkInsRepository.markNeedsAttention({ checkInId: attempt.checkIn.id });
+        await this.auditService.append({
+          entityType: 'check_in',
+          entityId: attempt.checkIn.id,
+          action: 'check_in.needs_attention',
+          actorType: ActorType.SYSTEM,
+          metadata: {
+            receiverId: attempt.checkIn.receiverId,
+            reason: 'cascade_exhausted',
+          },
+        });
+        result.needsAttention += 1;
+      }
+    }
+
+    for (const attempt of await this.checkInsRepository.findDuePendingAttempts({ now })) {
+      if (this.isClosed(attempt.checkIn.status)) {
+        const skipped = await this.checkInsRepository.skipPendingAttemptsForCheckIn({
+          checkInId: attempt.checkIn.id,
+          completedAt: now,
+          failureReason: 'cascade_closed',
+        });
+        result.skipped += skipped;
+        continue;
+      }
+
+      try {
+        await this.sendAttempt(attempt, now);
+        result.sent += 1;
+      } catch {
+        await this.checkInsRepository.markAttemptFailed({
+          attemptId: attempt.id,
+          completedAt: now,
+          failureReason: 'provider_send_failed',
+        });
+        result.failed += 1;
+
+        if (await this.sendNextPendingAttempt(attempt.checkIn.id, now)) {
+          result.sent += 1;
+        } else {
+          await this.checkInsRepository.markNeedsAttention({ checkInId: attempt.checkIn.id });
+          result.needsAttention += 1;
+        }
+      }
+    }
+
+    return result;
+  }
+
   private isEligible(receiver: CheckInReceiverCandidate, now: Date): boolean {
     if (receiver.consentStatus !== ConsentStatus.GRANTED) {
       return false;
@@ -171,5 +252,95 @@ export class CheckInsService {
       providerId: result.providerMessageId,
       providerStatus: result.providerStatus,
     };
+  }
+
+  private buildCascadeAttempts(
+    receiver: CheckInReceiverCandidate,
+    checkInId: string,
+    scheduledAt: Date,
+  ): Array<{ checkInId: string; attemptNumber: number; channel: Channel; scheduledAt: Date }> {
+    const channels =
+      receiver.techProfile === TechProfile.VOICE_ONLY
+        ? [Channel.VOICE]
+        : [receiver.primaryChannel, ...(receiver.fallbackChannels ?? [])].filter(
+            (channel, index, all) => all.indexOf(channel) === index,
+          );
+    const offsets = channels.map((channel, index) => {
+      if (index === 0) {
+        return 0;
+      }
+      const previous = channels[index - 1];
+      return previous === Channel.WHATSAPP ? 15 : index === 1 ? 30 : 45;
+    });
+
+    return channels.map((channel, index) => ({
+      checkInId,
+      attemptNumber: index + 1,
+      channel,
+      scheduledAt: new Date(scheduledAt.getTime() + (offsets[index] ?? 0) * 60 * 1000),
+    }));
+  }
+
+  private async sendAttempt(attempt: Awaited<ReturnType<CheckInsRepository['findDuePendingAttempts']>>[number], now: Date): Promise<void> {
+    const to = this.cryptoService.decrypt(attempt.checkIn.receiverPhoneEncrypted);
+    const result =
+      attempt.channel === Channel.VOICE
+        ? await this.channelRouter.makeVoiceCall(Channel.VOICE, to, {
+            scriptKey: 'checkin_daily_voice',
+            language: attempt.checkIn.receiverLanguage,
+            variables: {},
+          })
+        : await this.channelRouter.sendMessage(attempt.channel, to, {
+            templateKey: 'checkin_daily',
+            language: attempt.checkIn.receiverLanguage,
+            variables: {},
+          });
+
+    await this.checkInsRepository.markAttemptSent({
+      attemptId: attempt.id,
+      sentAt: now,
+      providerMessageId: 'providerMessageId' in result ? result.providerMessageId : result.providerCallId,
+      providerStatus: result.providerStatus,
+    });
+    await this.checkInsRepository.markSent({
+      checkInId: attempt.checkIn.id,
+      channel: attempt.channel,
+      sentAt: now,
+      providerMessageId: 'providerMessageId' in result ? result.providerMessageId : result.providerCallId,
+      providerStatus: result.providerStatus,
+    });
+  }
+
+  private async sendNextPendingAttempt(checkInId: string, now: Date): Promise<boolean> {
+    const next = (await this.checkInsRepository.findDuePendingAttempts({ now: new Date('9999-12-31T23:59:59.999Z') })).find(
+      (attempt) => attempt.checkIn.id === checkInId,
+    );
+    if (!next) {
+      return false;
+    }
+
+    await this.sendAttempt(next, now);
+    return true;
+  }
+
+  private isAttemptTimedOut(attempt: { channel: Channel; sentAt?: Date }, now: Date): boolean {
+    if (!attempt.sentAt) {
+      return false;
+    }
+    const windowMinutes = attempt.channel === Channel.WHATSAPP ? 15 : 30;
+    return attempt.sentAt.getTime() + windowMinutes * 60 * 1000 <= now.getTime();
+  }
+
+  private isClosed(status: CheckInStatus): boolean {
+    const terminalStatuses: CheckInStatus[] = [
+      CheckInStatus.RESPONDED_OK,
+      CheckInStatus.RESPONDED_HELP,
+      CheckInStatus.ESCALATED,
+      CheckInStatus.RESOLVED,
+      CheckInStatus.FAILED,
+      CheckInStatus.SKIPPED,
+    ];
+
+    return terminalStatuses.includes(status);
   }
 }

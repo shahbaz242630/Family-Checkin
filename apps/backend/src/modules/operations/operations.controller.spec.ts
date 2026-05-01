@@ -18,13 +18,14 @@ class FakeCheckInsService {
     };
   }
 
-  async escalateOverdueCheckIns() {
-    this.calls.push('escalateOverdueCheckIns');
+  async processCascadeAttempts() {
+    this.calls.push('processCascadeAttempts');
     return {
-      checked: 3,
-      escalated: 1,
-      skipped: 1,
+      sent: 3,
+      timedOut: 2,
       failed: 1,
+      needsAttention: 1,
+      skipped: 1,
     };
   }
 }
@@ -106,7 +107,7 @@ class FakeAdminAuthService {
 }
 
 describe('OperationsController', () => {
-  it('runs due check-ins and overdue escalation for a valid operations cron bearer token', async () => {
+  it('runs due check-ins and cascade attempts for a valid operations cron bearer token', async () => {
     const checkIns = new FakeCheckInsService();
     const controller = new OperationsController(
       checkIns as unknown as CheckInsService,
@@ -117,7 +118,7 @@ describe('OperationsController', () => {
 
     const response = await controller.runCheckIns('Bearer operations-cron-secret');
 
-    expect(checkIns.calls).toEqual(['sendDueCheckIns', 'escalateOverdueCheckIns']);
+    expect(checkIns.calls).toEqual(['sendDueCheckIns', 'processCascadeAttempts']);
     expect(response).toEqual({
       ok: true,
       dueCheckIns: {
@@ -125,11 +126,12 @@ describe('OperationsController', () => {
         sent: 2,
         skipped: 1,
       },
-      overdueEscalations: {
-        checked: 3,
-        escalated: 1,
-        skipped: 1,
+      cascadeAttempts: {
+        sent: 3,
+        timedOut: 2,
         failed: 1,
+        needsAttention: 1,
+        skipped: 1,
       },
     });
     expect(JSON.stringify(response)).not.toContain('receiver');

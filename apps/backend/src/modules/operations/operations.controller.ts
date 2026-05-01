@@ -9,7 +9,7 @@ import { OperationsVisibilityService } from './operations-visibility.service';
 export class OperationsController {
   constructor(
     @Inject(CheckInsService)
-    private readonly checkInsService: Pick<CheckInsService, 'sendDueCheckIns' | 'escalateOverdueCheckIns'>,
+    private readonly checkInsService: Pick<CheckInsService, 'sendDueCheckIns' | 'processCascadeAttempts'>,
     @Inject(AppConfigService)
     private readonly config: Pick<AppConfigService, 'operationsCronSecret'>,
     @Inject(OperationsVisibilityService)
@@ -23,12 +23,12 @@ export class OperationsController {
     this.assertOperationsCronBearer(authorization);
 
     const dueCheckIns = await this.checkInsService.sendDueCheckIns();
-    const overdueEscalations = await this.checkInsService.escalateOverdueCheckIns();
+    const cascadeAttempts = await this.checkInsService.processCascadeAttempts();
 
     return {
       ok: true,
       dueCheckIns,
-      overdueEscalations,
+      cascadeAttempts,
     };
   }
 

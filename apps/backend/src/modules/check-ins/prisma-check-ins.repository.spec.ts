@@ -1,6 +1,16 @@
-import { Channel, CheckInStatus, ConsentStatus } from '@prisma/client';
+import { Channel, CheckInAttemptStatus, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { PrismaCheckInsRepository } from './prisma-check-ins.repository';
+
+function checkInAttemptMock() {
+  return {
+    createManyAndReturn: vi.fn(),
+    findMany: vi.fn(),
+    findFirst: vi.fn(),
+    update: vi.fn(),
+    updateMany: vi.fn(),
+  };
+}
 
 describe('PrismaCheckInsRepository', () => {
   it('returns granted, unpaused receivers whose schedule is due in their local timezone', async () => {
@@ -10,7 +20,9 @@ describe('PrismaCheckInsRepository', () => {
         phoneEncrypted: 'encrypted-phone',
         language: 'en',
         timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
         primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS, Channel.VOICE],
         scheduleFrequency: 'daily',
         scheduleTimeWindow: { start: '09:00', end: '11:00' },
         consentStatus: ConsentStatus.GRANTED,
@@ -28,6 +40,7 @@ describe('PrismaCheckInsRepository', () => {
         findMany: vi.fn(),
         update: vi.fn(),
       },
+      checkInAttempt: checkInAttemptMock(),
     });
 
     const receivers = await repository.findReceiversDueForCheckIn(new Date('2026-04-27T05:30:00.000Z'));
@@ -56,7 +69,9 @@ describe('PrismaCheckInsRepository', () => {
         phoneEncrypted: 'encrypted-phone',
         language: 'en',
         timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
         primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS, Channel.VOICE],
         scheduleFrequency: 'daily',
         scheduleTimeWindow: { start: '09:00', end: '11:00' },
         consentStatus: ConsentStatus.GRANTED,
@@ -109,6 +124,7 @@ describe('PrismaCheckInsRepository', () => {
         findMany: vi.fn(),
         update,
       },
+      checkInAttempt: checkInAttemptMock(),
     });
 
     await repository.createPending({
@@ -183,6 +199,7 @@ describe('PrismaCheckInsRepository', () => {
         findMany: vi.fn(),
         update,
       },
+      checkInAttempt: checkInAttemptMock(),
     });
 
     await repository.findLatestOpenForReceiver('1aef91f9-64c9-4548-baa5-d70b52386efb');
@@ -197,7 +214,7 @@ describe('PrismaCheckInsRepository', () => {
     expect(findFirst).toHaveBeenCalledWith({
       where: {
         receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
-        status: { in: ['PENDING', 'SENT'] },
+        status: { in: [CheckInStatus.PENDING, CheckInStatus.SENT, CheckInStatus.NEEDS_ATTENTION] },
       },
       orderBy: { scheduledAt: 'desc' },
     });
@@ -255,6 +272,7 @@ describe('PrismaCheckInsRepository', () => {
         findMany: vi.fn(),
         update,
       },
+      checkInAttempt: checkInAttemptMock(),
     });
 
     await repository.findLatestActionableForReceiver('receiver-1');
@@ -266,7 +284,15 @@ describe('PrismaCheckInsRepository', () => {
     expect(findFirst).toHaveBeenCalledWith({
       where: {
         receiverId: 'receiver-1',
-        status: { in: [CheckInStatus.RESPONDED_HELP, CheckInStatus.ESCALATED, CheckInStatus.FAILED, CheckInStatus.SKIPPED] },
+        status: {
+          in: [
+            CheckInStatus.RESPONDED_HELP,
+            CheckInStatus.ESCALATED,
+            CheckInStatus.NEEDS_ATTENTION,
+            CheckInStatus.FAILED,
+            CheckInStatus.SKIPPED,
+          ],
+        },
       },
       orderBy: { scheduledAt: 'desc' },
     });
@@ -313,6 +339,7 @@ describe('PrismaCheckInsRepository', () => {
         findMany,
         update: vi.fn(),
       },
+      checkInAttempt: checkInAttemptMock(),
     });
 
     const overdue = await repository.findOverdueSentCheckIns({

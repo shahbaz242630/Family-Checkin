@@ -1,12 +1,20 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { ActorType, CheckInStatus, ConsentStatus } from '@prisma/client';
-import type { Channel, RelationshipType, TechProfile } from '@prisma/client';
+import { ActorType, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
+import type { Channel, RelationshipType } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import type { CheckInsRepository } from '../check-ins/check-ins.repository';
+import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
-import type { CreateReceiverRecordInput, ReceiverRecord, ReceiversRepository, UpdateReceiverRecordInput } from './receivers.repository';
+import type {
+  CreateReceiverRecordInput,
+  ReceiverRecord,
+  ReceiversRepository,
+  ReceiverWithLatestCheckInRecord,
+  UpdateReceiverRecordInput,
+} from './receivers.repository';
 import { RECEIVERS_REPOSITORY } from './receivers.tokens';
 
 const USER_PAUSED_UNTIL = new Date('9999-12-31T23:59:59.999Z');
@@ -105,6 +113,7 @@ export interface UpdateReceiverForSenderInput extends ReceiverManagementInput {
 export class ReceiversService {
   private readonly now: () => Date;
   private readonly escalationsService?: Pick<EscalationsService, 'escalateSenderRequestedBackup'>;
+  private readonly checkInsRepository?: Pick<CheckInsRepository, 'createPending' | 'createAttempts'>;
 
   constructor(
     @Inject(RECEIVERS_REPOSITORY) private readonly receiversRepository: ReceiversRepository,
@@ -113,14 +122,24 @@ export class ReceiversService {
     @Inject(AuditService)
     private readonly auditService: AuditService,
     @Optional()
+    @Inject(CHECK_INS_REPOSITORY)
+    checkInsOrEscalationsOrNow?: Pick<CheckInsRepository, 'createPending' | 'createAttempts'> | Pick<EscalationsService, 'escalateSenderRequestedBackup'> | (() => Date),
+    @Optional()
     @Inject(EscalationsService)
     escalationsOrNow?: Pick<EscalationsService, 'escalateSenderRequestedBackup'> | (() => Date),
   ) {
+    this.now = () => new Date();
+    if (this.isCheckInsRepository(checkInsOrEscalationsOrNow)) {
+      this.checkInsRepository = checkInsOrEscalationsOrNow;
+    } else if (typeof checkInsOrEscalationsOrNow === 'function') {
+      this.now = checkInsOrEscalationsOrNow;
+    } else {
+      this.escalationsService = checkInsOrEscalationsOrNow;
+    }
+
     if (typeof escalationsOrNow === 'function') {
       this.now = escalationsOrNow;
-      this.escalationsService = undefined;
-    } else {
-      this.now = () => new Date();
+    } else if (escalationsOrNow) {
       this.escalationsService = escalationsOrNow;
     }
   }
@@ -288,6 +307,7 @@ export class ReceiversService {
     const actionableStatuses: CheckInStatus[] = [
       CheckInStatus.RESPONDED_HELP,
       CheckInStatus.ESCALATED,
+      CheckInStatus.NEEDS_ATTENTION,
       CheckInStatus.FAILED,
       CheckInStatus.SKIPPED,
     ];
@@ -331,6 +351,7 @@ export class ReceiversService {
   async alertBackupForSender(input: SenderCheckInActionInput): Promise<ReceiverDetail | null> {
     const context = await this.findActionableLatestCheckIn(input, [
       CheckInStatus.RESPONDED_HELP,
+      CheckInStatus.NEEDS_ATTENTION,
       CheckInStatus.FAILED,
       CheckInStatus.SKIPPED,
     ]);
@@ -369,11 +390,21 @@ export class ReceiversService {
     const context = await this.findActionableLatestCheckIn(input, [
       CheckInStatus.SENT,
       CheckInStatus.RESPONDED_HELP,
+      CheckInStatus.NEEDS_ATTENTION,
       CheckInStatus.FAILED,
       CheckInStatus.SKIPPED,
     ]);
     if (!context) {
       return null;
+    }
+
+    const retryAt = new Date(this.now().getTime() + 15 * 60 * 1000);
+    if (this.checkInsRepository) {
+      const retryCheckIn = await this.checkInsRepository.createPending({
+        receiverId: context.receiverId,
+        scheduledAt: retryAt,
+      });
+      await this.checkInsRepository.createAttempts(this.buildRetryCascadeAttempts(context.receiver, retryCheckIn.id, retryAt));
     }
 
     await this.auditService.append({
@@ -385,12 +416,48 @@ export class ReceiversService {
       metadata: {
         receiverId: context.receiverId,
         previousStatus: context.previousStatus,
+        ...(this.checkInsRepository ? { retryAt: retryAt.toISOString() } : {}),
       },
       ipAddress: input.ipAddress,
       userAgent: input.userAgent,
     });
 
     return this.toDetail(context.receiver);
+  }
+
+  private buildRetryCascadeAttempts(
+    receiver: ReceiverWithLatestCheckInRecord,
+    checkInId: string,
+    scheduledAt: Date,
+  ): Array<{ checkInId: string; attemptNumber: number; channel: Channel; scheduledAt: Date }> {
+    const channels =
+      receiver.techProfile === TechProfile.VOICE_ONLY
+        ? [receiver.primaryChannel]
+        : [receiver.primaryChannel, ...receiver.fallbackChannels].filter(
+            (channel, index, all) => all.indexOf(channel) === index,
+          );
+    const offsets = channels.map((channel, index) => {
+      if (index === 0) return 0;
+      const previous = channels[index - 1];
+      return previous === 'WHATSAPP' ? 15 : index === 1 ? 30 : 45;
+    });
+
+    return channels.map((channel, index) => ({
+      checkInId,
+      attemptNumber: index + 1,
+      channel,
+      scheduledAt: new Date(scheduledAt.getTime() + (offsets[index] ?? 0) * 60 * 1000),
+    }));
+  }
+
+  private isCheckInsRepository(
+    value:
+      | Pick<CheckInsRepository, 'createPending' | 'createAttempts'>
+      | Pick<EscalationsService, 'escalateSenderRequestedBackup'>
+      | (() => Date)
+      | undefined,
+  ): value is Pick<CheckInsRepository, 'createPending' | 'createAttempts'> {
+    return typeof value === 'object' && value !== null && 'createPending' in value && 'createAttempts' in value;
   }
 
   private toCreateRecordInput(input: CreateReceiverForSenderInput): CreateReceiverRecordInput {
