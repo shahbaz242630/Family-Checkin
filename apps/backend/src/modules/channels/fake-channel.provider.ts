@@ -1,5 +1,5 @@
 import type { Channel } from '@prisma/client';
-import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceScript } from './channel-provider';
+import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceCallOptions, VoiceScript } from './channel-provider';
 
 export interface FakeChannelProviderOptions {
   availableNumbers?: string[];
@@ -14,20 +14,21 @@ export interface SentFakeMessage {
 export interface FakeVoiceCall {
   to: string;
   script: VoiceScript;
+  options?: VoiceCallOptions;
 }
 
 export class FakeChannelProvider implements ChannelProvider {
   public readonly sentMessages: SentFakeMessage[] = [];
   public readonly voiceCalls: FakeVoiceCall[] = [];
 
-  private readonly availableNumbers: Set<string>;
+  private readonly availableNumbers?: Set<string>;
   private readonly now: () => Date;
 
   constructor(
     public readonly channel: Channel,
     options: FakeChannelProviderOptions = {},
   ) {
-    this.availableNumbers = new Set(options.availableNumbers ?? []);
+    this.availableNumbers = options.availableNumbers ? new Set(options.availableNumbers) : undefined;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -41,8 +42,8 @@ export class FakeChannelProvider implements ChannelProvider {
     };
   }
 
-  async makeVoiceCall(to: string, script: VoiceScript): Promise<ChannelCallResult> {
-    this.voiceCalls.push({ to, script });
+  async makeVoiceCall(to: string, script: VoiceScript, options?: VoiceCallOptions): Promise<ChannelCallResult> {
+    this.voiceCalls.push({ to, script, options });
 
     return {
       providerCallId: `fake-${this.channel}-call-${this.voiceCalls.length}`,
@@ -52,6 +53,6 @@ export class FakeChannelProvider implements ChannelProvider {
   }
 
   async isAvailableForNumber(phone: string): Promise<boolean> {
-    return this.availableNumbers.has(phone);
+    return this.availableNumbers ? this.availableNumbers.has(phone) : /^\+[1-9]\d{7,14}$/.test(phone);
   }
 }

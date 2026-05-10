@@ -26,8 +26,8 @@ export default function SplashScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Family Check-In</Text>
-      <Text style={styles.subtitle}>Peace of mind, one tap away</Text>
+      <Text style={styles.title}>Nearby</Text>
+      <Text style={styles.subtitle}>Quiet check-ins for loved ones abroad</Text>
       <ActivityIndicator size="large" color={colors.primary} style={styles.loader} />
     </View>
   );

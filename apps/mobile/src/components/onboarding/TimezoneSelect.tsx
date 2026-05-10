@@ -1,16 +1,7 @@
-// Timezone selector with search
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  Modal,
-  FlatList,
-  StyleSheet,
-} from 'react-native';
+import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
-import { TIMEZONES, searchTimezones, getTimezone, TimezoneOption } from '../../data/timezones';
+import { getTimezone, searchTimezones, type TimezoneOption } from '../../data/timezones';
 
 interface TimezoneSelectProps {
   value: string;
@@ -26,53 +17,55 @@ export function TimezoneSelect({ value, onChange, label, hint }: TimezoneSelectP
   const selectedTimezone = getTimezone(value);
   const filteredTimezones = searchTimezones(searchQuery);
 
+  const closePicker = () => {
+    setShowPicker(false);
+    setSearchQuery('');
+  };
+
   const renderTimezoneItem = ({ item }: { item: TimezoneOption }) => (
     <Pressable
       style={[styles.timezoneItem, item.value === value && styles.timezoneItemSelected]}
       onPress={() => {
         onChange(item.value);
-        setShowPicker(false);
-        setSearchQuery('');
+        closePicker();
       }}
     >
       <View style={styles.timezoneInfo}>
-        <Text style={styles.timezoneLabel}>{item.label}</Text>
-        <Text style={styles.timezoneOffset}>{item.offset}</Text>
+        <Text style={styles.timezoneLabel} numberOfLines={1}>
+          {item.label}
+        </Text>
+        <Text style={styles.timezoneOffset}>{item.offset || item.value}</Text>
       </View>
-      {item.value === value && <Text style={styles.checkmark}>✓</Text>}
+      {item.value === value ? <Text style={styles.checkmark}>*</Text> : null}
     </Pressable>
   );
 
   return (
     <View style={styles.container}>
-      {label && <Text style={styles.label}>{label}</Text>}
+      {label ? <Text style={styles.label}>{label}</Text> : null}
 
       <Pressable style={styles.selector} onPress={() => setShowPicker(true)}>
         <View style={styles.selectorContent}>
-          <Text style={styles.selectorLabel}>
+          <Text style={styles.selectorLabel} numberOfLines={1}>
             {selectedTimezone?.label || 'Select timezone'}
           </Text>
-          {selectedTimezone && (
-            <Text style={styles.selectorOffset}>{selectedTimezone.offset}</Text>
-          )}
+          {selectedTimezone ? <Text style={styles.selectorOffset}>{selectedTimezone.offset || selectedTimezone.value}</Text> : null}
         </View>
-        <Text style={styles.selectorArrow}>▼</Text>
+        <Text style={styles.selectorArrow}>v</Text>
       </Pressable>
 
-      {hint && <Text style={styles.hint}>{hint}</Text>}
+      {hint ? <Text style={styles.hint}>{hint}</Text> : null}
 
-      {/* Timezone Picker Modal */}
       <Modal visible={showPicker} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Select Timezone</Text>
-              <Pressable onPress={() => { setShowPicker(false); setSearchQuery(''); }}>
+              <Text style={styles.modalTitle}>Select timezone</Text>
+              <Pressable onPress={closePicker}>
                 <Text style={styles.modalClose}>Cancel</Text>
               </Pressable>
             </View>
 
-            {/* Search Input */}
             <View style={styles.searchContainer}>
               <TextInput
                 style={styles.searchInput}
@@ -88,6 +81,7 @@ export function TimezoneSelect({ value, onChange, label, hint }: TimezoneSelectP
               data={filteredTimezones}
               renderItem={renderTimezoneItem}
               keyExtractor={(item) => item.value}
+              keyboardShouldPersistTaps="handled"
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
@@ -104,15 +98,15 @@ export function TimezoneSelect({ value, onChange, label, hint }: TimezoneSelectP
 
 const styles = StyleSheet.create({
   container: {
-    marginBottom: spacing.md,
+    gap: spacing.xs,
   },
   label: {
     fontSize: fontSize.sm,
     fontWeight: '500',
     color: colors.text,
-    marginBottom: spacing.xs,
   },
   selector: {
+    minHeight: 52,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -122,13 +116,16 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.md,
+    gap: spacing.sm,
   },
   selectorContent: {
     flex: 1,
+    minWidth: 0,
   },
   selectorLabel: {
-    fontSize: fontSize.md,
+    fontSize: fontSize.sm,
     color: colors.text,
+    fontWeight: '500',
   },
   selectorOffset: {
     fontSize: fontSize.sm,
@@ -136,7 +133,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   selectorArrow: {
-    fontSize: 12,
+    fontSize: fontSize.sm,
     color: colors.textSecondary,
   },
   hint: {
@@ -147,20 +144,21 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.5)',
+    backgroundColor: 'transparent',
     justifyContent: 'flex-end',
   },
   modalContent: {
     backgroundColor: colors.background,
     borderTopLeftRadius: borderRadius.xl,
     borderTopRightRadius: borderRadius.xl,
-    maxHeight: '80%',
+    maxHeight: '58%',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
@@ -175,7 +173,8 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   searchContainer: {
-    padding: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
@@ -190,19 +189,22 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   timezoneItem: {
+    minHeight: 50,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: spacing.md,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+    gap: spacing.md,
   },
   timezoneItemSelected: {
     backgroundColor: colors.primary + '10',
   },
   timezoneInfo: {
     flex: 1,
+    minWidth: 0,
   },
   timezoneLabel: {
     fontSize: fontSize.md,

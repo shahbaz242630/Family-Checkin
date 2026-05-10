@@ -27,23 +27,23 @@ export default function WelcomeScreen() {
           <View style={styles.logoContainer}>
             <Text style={styles.logoIcon}>✓</Text>
           </View>
-          <Text style={styles.title}>Family Check-In</Text>
-          <Text style={styles.tagline}>Peace of mind, one tap away</Text>
+          <Text style={styles.title}>Nearby</Text>
+          <Text style={styles.tagline}>Quiet check-ins for loved ones abroad</Text>
         </View>
 
         {/* Features */}
         <View style={styles.features}>
           <FeatureItem
             icon="🔔"
-            text="Daily safety check-ins for your loved ones"
+            text="Daily receiver check-ins by WhatsApp, SMS, or voice"
           />
           <FeatureItem
             icon="💬"
-            text="Alerts via WhatsApp, SMS & calls"
+            text="Escalation alerts only when attention is needed"
           />
           <FeatureItem
             icon="👨‍👩‍👧‍👦"
-            text="Monitor parents, partners & family"
+            text="Consent-first support for parents and family"
           />
         </View>
 

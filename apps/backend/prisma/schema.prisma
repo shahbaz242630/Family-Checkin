@@ -20,6 +20,19 @@ enum SubscriptionStatus {
   SUSPENDED
 }
 
+enum BillingInterval {
+  MONTHLY
+  ANNUAL
+}
+
+enum BillingStore {
+  APP_STORE
+  PLAY_STORE
+  STRIPE
+  PROMOTIONAL
+  UNKNOWN
+}
+
 enum RelationshipType {
   PARENT
   GRANDPARENT
@@ -34,6 +47,7 @@ enum TechProfile {
   WHATSAPP
   SMS
   VOICE_ONLY
+  LANDLINE
 }
 
 enum Channel {
@@ -74,6 +88,12 @@ enum EscalationResult {
   SUCCESS
   NO_RESPONSE
   ERROR
+}
+
+enum VoiceCallerIdStatus {
+  ACTIVE
+  DISABLED
+  COMPLIANCE_BLOCKED
 }
 
 enum AbuseReportStatus {
@@ -117,10 +137,11 @@ model User {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  receivers      Receiver[]
-  subscriptions  Subscription[]
-  coMonitorships CoMonitor[]  @relation("CoMonitorUser")
+  receivers        Receiver[]
+  subscriptions    Subscription[]
+  coMonitorships   CoMonitor[]       @relation("CoMonitorUser")
   stepUpChallenges StepUpChallenge[]
+  deviceTokens     DeviceToken[]
 
   @@index([emailHash])
   @@index([phoneHash])
@@ -129,14 +150,14 @@ model User {
 }
 
 model Receiver {
-  id                    String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId                String        @db.Uuid
+  id                    String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                String           @db.Uuid
   nameEncrypted         String
   phoneEncrypted        String
   phoneHash             String
-  countryCode           String        @db.Char(2)
+  countryCode           String           @db.Char(2)
   relationshipType      RelationshipType
-  language              String        @db.Char(5)
+  language              String           @db.Char(5)
   timezone              String
   techProfile           TechProfile
   primaryChannel        Channel
@@ -145,7 +166,7 @@ model Receiver {
   scheduleTimeWindow    Json
   scheduleCustomCron    String?
   personalNoteEncrypted String?
-  consentStatus         ConsentStatus @default(PENDING)
+  consentStatus         ConsentStatus    @default(PENDING)
   consentRequestedAt    DateTime?
   consentGrantedAt      DateTime?
   consentRevokedAt      DateTime?
@@ -153,15 +174,16 @@ model Receiver {
   pausedUntil           DateTime?
   pausedReason          String?
   deletedAt             DateTime?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+  createdAt             DateTime         @default(now())
+  updatedAt             DateTime         @updatedAt
 
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  backupContacts BackupContact[]
-  checkIns       CheckIn[]
-  abuseReports   AbuseReport[]
-  coMonitors     CoMonitor[]
-  optOutCooldown OptOutCooldown?
+  user                    User                             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  backupContacts          BackupContact[]
+  checkIns                CheckIn[]
+  abuseReports            AbuseReport[]
+  coMonitors              CoMonitor[]
+  optOutCooldown          OptOutCooldown?
+  voiceCallerIdAssignment ReceiverVoiceCallerIdAssignment?
 
   @@index([userId])
   @@index([phoneHash])
@@ -170,17 +192,53 @@ model Receiver {
   @@map("receivers")
 }
 
+model VoiceCallerIdPool {
+  id               String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  phoneNumber      String              @unique
+  countryCode      String              @db.Char(2)
+  provider         String              @default("twilio")
+  providerSid      String?
+  status           VoiceCallerIdStatus @default(ACTIVE)
+  complianceStatus String?
+  assignedCount    Int                 @default(0)
+  lastAssignedAt   DateTime?
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+
+  assignments ReceiverVoiceCallerIdAssignment[]
+
+  @@index([countryCode, status, assignedCount])
+  @@index([status])
+  @@map("voice_caller_id_pool")
+}
+
+model ReceiverVoiceCallerIdAssignment {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiverId     String    @unique @db.Uuid
+  callerIdPoolId String    @db.Uuid
+  assignedAt     DateTime  @default(now())
+  releasedAt     DateTime?
+  releaseReason  String?
+
+  receiver     Receiver          @relation(fields: [receiverId], references: [id], onDelete: Cascade)
+  callerIdPool VoiceCallerIdPool @relation(fields: [callerIdPoolId], references: [id], onDelete: Restrict)
+
+  @@index([callerIdPoolId])
+  @@index([releasedAt])
+  @@map("receiver_voice_caller_id_assignments")
+}
+
 model BackupContact {
-  id                            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  receiverId                    String   @db.Uuid
+  id                            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  receiverId                    String    @db.Uuid
   nameEncrypted                 String
   phoneEncrypted                String
   phoneHash                     String
   relationshipToReceiver        String
   locationInstructionsEncrypted String?
-  priorityOrder                 Int      @default(0)
+  priorityOrder                 Int       @default(0)
   deletedAt                     DateTime?
-  createdAt                     DateTime @default(now())
+  createdAt                     DateTime  @default(now())
 
   receiver Receiver @relation(fields: [receiverId], references: [id], onDelete: Cascade)
 
@@ -246,12 +304,34 @@ model CheckInAttempt {
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 
-  checkIn CheckIn @relation(fields: [checkInId], references: [id], onDelete: Cascade)
+  checkIn               CheckIn                @relation(fields: [checkInId], references: [id], onDelete: Cascade)
+  providerWebhookEvents ProviderWebhookEvent[]
 
   @@unique([checkInId, attemptNumber])
   @@index([checkInId])
   @@index([status, scheduledAt])
   @@map("check_in_attempts")
+}
+
+model ProviderWebhookEvent {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider          String
+  eventType         String
+  providerEventId   String?
+  providerMessageId String?
+  checkInAttemptId  String?   @db.Uuid
+  payload           Json
+  receivedAt        DateTime  @default(now())
+  processedAt       DateTime?
+  createdAt         DateTime  @default(now())
+
+  checkInAttempt CheckInAttempt? @relation(fields: [checkInAttemptId], references: [id], onDelete: SetNull)
+
+  @@index([provider, eventType, providerEventId])
+  @@index([providerMessageId])
+  @@index([eventType, receivedAt])
+  @@index([createdAt])
+  @@map("provider_webhook_events")
 }
 
 model EscalationEvent {
@@ -279,6 +359,11 @@ model Subscription {
   status                 SubscriptionStatus
   paymentProvider        String
   externalSubscriptionId String             @unique
+  externalProductId      String?
+  revenueCatAppUserId    String?
+  billingInterval        BillingInterval?
+  store                  BillingStore?
+  willRenew              Boolean            @default(false)
   trialEndsAt            DateTime?
   currentPeriodStart     DateTime
   currentPeriodEnd       DateTime
@@ -289,6 +374,7 @@ model Subscription {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
+  @@index([revenueCatAppUserId])
   @@map("subscriptions")
 }
 
@@ -356,17 +442,17 @@ model AdminUser {
 }
 
 model ChannelTemplate {
-  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   templateKey String
-  language    String   @db.Char(5)
+  language    String    @db.Char(5)
   channel     Channel
   externalId  String?
   bodyText    String
   variables   String[]
   approvedAt  DateTime?
-  active      Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  active      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@unique([templateKey, language, channel])
   @@map("channel_templates")
@@ -403,4 +489,22 @@ model StepUpChallenge {
   @@index([userId, action, expiresAt])
   @@index([tokenHash])
   @@map("step_up_challenges")
+}
+
+model DeviceToken {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String   @db.Uuid
+  token            String   @unique
+  platform         String
+  deviceId         String?
+  active           Boolean  @default(true)
+  lastRegisteredAt DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, active])
+  @@index([lastRegisteredAt])
+  @@map("device_tokens")
 }

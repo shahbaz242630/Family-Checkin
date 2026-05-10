@@ -29,7 +29,7 @@ Read both before starting feature work. The handoff is updated after each comple
 - Audit logs are append-only and must not contain raw PII.
 - Receiver names, phone numbers, notes, transcripts, and abuse content are encrypted at the application layer.
 - Do not market or imply emergency-service capability.
-- Do not wire real WhatsApp/SMS/voice vendors until the local fake-provider flow is proven.
+- Twilio is the selected provider for WhatsApp, SMS, and voice. Keep fake-provider mode for local testing.
 
 ## Repository Layout
 
@@ -172,10 +172,10 @@ Before and after auth-sensitive work, inspect diffs carefully.
 
 ## Current Next Work
 
-1. Local end-to-end test with a valid Supabase test user.
-2. Replace remaining old loved-one/check-in mobile UI with BRD receiver dashboard and receiver detail views.
-3. Add real channel webhook adapters only after fake local flow is proven.
-4. Build backup contacts and escalation cascade after the local check-in loop is proven.
+1. Configure RevenueCat, App Store Connect, and Google Play subscription products for monthly and annual access, then test purchases in development/TestFlight/Play builds.
+2. Add Twilio credentials after the account is approved, then run WhatsApp, SMS, and voice sandbox/live smoke tests.
+3. Configure production Expo/EAS push credentials before production device push testing.
+4. Rotate Supabase access tokens and database passwords that were exposed during earlier setup.
 
 ## License
 

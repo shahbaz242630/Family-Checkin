@@ -277,6 +277,47 @@ Check-ins are sent as short text with reply keywords (1 = OK, 2 = HELP, STOP = o
 A short AI voice call (under 30 seconds) in the receiver's language asking "Press 1 if you're okay, press 2 if you need help."
 *Why this exists:* Voice is the ONLY channel that reaches voice-only receivers and the most reliable way to break through to a non-responsive receiver. Phase 1 keeps it short and functional, not conversational.
 
+**FR-CHN-03a: Twilio voice implementation details (Phase 1)**
+Phase 1 voice calls use Twilio Programmable Voice outbound calls with TwiML `<Gather>` for DTMF input and hosted static audio prompts generated ahead of time.
+
+- Audio assets: ElevenLabs prompts must be exported/normalized as phone-optimized WAV assets, preferably 8 kHz, 16-bit, mono, and hosted on CDN/S3 with cache headers. MP3 is supported by Twilio but should not be the primary production format for nested `<Play>` prompts because transcoding can add delay.
+- TwiML: The call should play hosted audio inside `<Gather numDigits="1" timeout="10">`. The audio URL is selected dynamically from the receiver language and script key.
+- No-input behavior: If the receiver does not press a key during the first prompt, the TwiML should repeat the prompt once, then end the call gracefully and hand control to retry/no-response logic.
+- DTMF handling: `1` means OK / success. `2` means assistance needed and triggers the escalation path. Future speech input can be added, but DTMF is the Phase 1 contract.
+- Caller ID: The voice provider must choose a `From` number from a database-backed caller-ID pool before calling Twilio. Each number in the pool must be Twilio-owned or a verified outgoing caller ID, active, appropriate for the receiver corridor, and assigned to the required Trust Hub / SHAKEN-STIR compliance profile where applicable.
+- Sticky caller ID: Caller-ID assignment must be sticky per receiver whenever possible. Once a receiver is assigned a compliant caller ID, future calls to that receiver should use the same `From` number so the receiver can recognize/save it and answer consistently. Rotation is only for disabled numbers, compliance failures, corridor changes, or operational failover.
+- Retry logic: No answer, busy, failed call, hangup before input, or no input after the repeated prompt should enter retry logic: wait 15 minutes, max 2 retries, respecting receiver local quiet hours and per-day cascade caps.
+*Why this exists:* Static audio gives reliable quality and low latency. Repeating the prompt once handles normal human pickup delay without pestering the receiver. A controlled caller-ID pool supports deliverability without hiding consent or reputation obligations.
+
+**FR-CHN-03b: Voice call retry and storage architecture (Phase 1 scale path)**
+The implementation should reuse the platform's existing check-in and check-in-attempt model rather than creating an unrelated generic `CallLog` table. Voice calls are one channel attempt inside the check-in cascade.
+
+- Attempt state: Voice attempts must store Twilio `CallSid`, provider status, attempt number, scheduled time, sent time, completed time, and failure reason on the check-in attempt record or a voice-attempt extension table.
+- Retry schedule: attempt 1 retry delay is 15 minutes; attempt 2 retry delay is 30 minutes; after 3 total attempts, stop calling and notify the sender that the receiver did not pick up.
+- Retry staggering: retries must be queued/scheduled rather than immediate to avoid network spikes and carrier reputation issues.
+- Scheduler: use a durable scheduler/queue. Supabase Cron/pg_cron can trigger the due-check-in worker every minute or invoke an Edge Function; for higher scale or strict retry timing, BullMQ/SQS-style queues are acceptable behind the same repository interface.
+- Query shape: the due worker should find receivers whose receiver-local schedule window is due and for whom no check-in exists for the current day/window.
+- Large-table strategy: `check_ins`, `check_in_attempts`, and provider event/audit tables must stay lean, indexed by due/scheduled time and status. At high volume, use date-range partitioning on the large append-only attempt/event tables and archive/export records older than the retention window, e.g. 90 days, to cold storage.
+- Privacy: do not add plaintext receiver phone numbers to call logs. Continue using encrypted phone fields and phone hashes; provider call ids are allowed operational metadata.
+*Why this exists:* At high volume, retry timing, sticky caller identity, and lean append-only storage control both cost and deliverability. Reusing check-in attempts keeps voice behavior aligned with WhatsApp/SMS cascade logic instead of creating a parallel system.
+
+**FR-CHN-03c: Multi-channel session state and escalation siren (Phase 1)**
+Each daily check-in is a single stateful session represented by the platform's check-in record and attempts. Any valid OK response on any channel must immediately close the session and cancel pending work.
+
+- Session state: The existing `check_ins.status` is the session state. `PENDING` / `SENT` / `NEEDS_ATTENTION` represent in-progress states, `RESPONDED_OK` is terminal success, `RESPONDED_HELP` triggers escalation, `ESCALATED` / `RESOLVED` are terminal escalation states depending on backup/sender action.
+- OK response rule: DTMF `1`, WhatsApp OK button/payload, SMS `1`, `YES`, `OK`, or localized approved OK keyword must immediately transition the session to `RESPONDED_OK` and cancel or mark skipped all pending attempts/escalation jobs for that session.
+- Help response rule: DTMF `2`, WhatsApp HELP button/payload, SMS `2`, `HELP`, or localized approved help keyword must transition to `RESPONDED_HELP` and trigger sender/backup escalation.
+- Twilio AMD: Enable Twilio Answering Machine Detection on outbound voice attempts. Machine/fax results must not count as human responses. AMD results must be stored on the attempt/provider event record and used for retry/escalation decisions. Unknown results should be treated conservatively as no confirmed OK unless DTMF/speech input is received.
+- WhatsApp buttons: Use approved WhatsApp template messages with quick-reply buttons for daily check-ins. Button labels can be localized, but backend handling must use stable payloads or normalized text for OK/HELP. Twilio inbound webhooks should capture `Body`, `ButtonText`, and/or `ButtonPayload` where available.
+- Escalation siren baseline: When all receiver attempts fail, send the paying sender/member a high-priority alert with a direct deep link to the receiver's current incident/status screen. The message should include receiver display name and the channels attempted, but avoid raw sensitive details in push payloads. Baseline behavior is iOS Time Sensitive notification where available and Android high-importance notification channel.
+- iOS Critical Alerts: Critical Alerts are not just code. The team must request Apple's Critical Alerts entitlement and justify the life-safety/personal-safety use case. If approved, the iOS app may request critical-alert authorization, include `com.apple.developer.usernotifications.critical-alerts` in entitlements, and the server may send APNs payloads using critical interruption level and critical sound configuration. If the entitlement or user authorization is missing, fall back to Time Sensitive push plus Twilio voice call to the sender/member.
+- Android emergency channel: Create a dedicated Emergency Alert notification channel with `IMPORTANCE_HIGH`, an app-bundled siren sound, and DND bypass requested only where policy access/channel settings allow it. The app must detect whether the channel can bypass DND and guide the user to the channel notification settings when it cannot. Do not claim guaranteed DND bypass on Android unless the device/channel reports it as enabled.
+- User verification: Add a "Test my siren" control in mobile settings before launch so senders can hear the emergency alert sound, verify volume behavior, and confirm whether the platform has granted the requested critical/DND behavior.
+- Fallback call: If critical notification capability is unavailable or unapproved, place a Twilio voice call to the paying sender/member as part of the siren path. A phone call is the most reliable permission-independent wake-up fallback, while still respecting consent, quiet-hours policy where applicable, and abuse prevention.
+- Acknowledgement timeout: If the sender does not acknowledge the escalation siren within 5 minutes, automatically alert configured local backup contacts through WhatsApp/SMS with concise incident context and a deep link/status reference where appropriate.
+- Cost assumption: A full receiver non-response path may cost around three voice attempts plus WhatsApp/SMS/escalation notifications. Treat the sample ~$0.10 per fully escalated session as a planning estimate only; actual cost varies by corridor, Twilio pricing, WhatsApp category/country, and retry volume.
+*Why this exists:* Multi-channel cascades only work if all channels share one state machine. Immediate cancellation after an OK response prevents duplicate calls/messages, protects trust, and controls cost. The sender siren must be urgent without overclaiming OS-level emergency notification privileges.
+
 **FR-CHN-04: Voice channel — conversational AI (Phase 2)**
 Phase 2 introduces conversational AI calls (ElevenLabs Conversational AI or equivalent) that can chat warmly, detect mood, and report back to the sender.
 *Why this exists:* Conversational AI shifts the product from "insurance" to "relationship." Receivers come to enjoy the calls, which dramatically reduces opt-out rates.
@@ -494,13 +535,13 @@ nearby/
 
 ### 7.5 Channel integrations
 
-**WhatsApp Business API:** Twilio (primary, easier MVP). Migrate to Meta Cloud API direct or 360dialog when message volume justifies it.
-**SMS:** Telnyx (primary, cheaper international), Twilio (fallback)
-**Voice telephony (SIP):** Telnyx (primary), Twilio (fallback)
+**WhatsApp Business API:** Twilio.
+**SMS:** Twilio.
+**Voice telephony:** Twilio.
 **Voice AI (Phase 2):** ElevenLabs Conversational AI for premium voice quality. Backup providers evaluated per language.
 **LLM (for AI voice scripts and abuse-detection text classification):** OpenAI GPT-4o-mini for cost, with the option to swap to Anthropic Claude or Google Gemini via abstraction layer.
 
-*Why this stack:* Each provider chosen for a specific reason. We do not put all eggs in Twilio's basket — Telnyx is meaningfully cheaper for international voice and SMS, which directly improves Tier 2 unit economics.
+*Why this stack:* Twilio is the selected MVP integration for WhatsApp, SMS, and voice so the team can ship one coherent channel stack with one credential model, webhook verification path, and operational support surface. Keep the channel provider abstraction in the codebase so future cost or deliverability optimization can swap providers without rewriting cascade, consent, or audit logic.
 
 ### 7.6 Payments
 
@@ -780,7 +821,7 @@ We design controls for each.
 - KSA PDPL (operational and adjusted requirements).
 - India DPDP Act (2023) for receivers in India.
 - Data residency: receiver data for users in UAE stored in UAE-region infrastructure once user count justifies migration off Supabase's default region.
-- Data Processing Agreements with all subprocessors (Twilio, Telnyx, Stripe, Telr, ElevenLabs, etc.).
+- Data Processing Agreements with all subprocessors (Twilio, Stripe, Telr, ElevenLabs, etc.).
 - Designated DPO once user count surpasses thresholds in each jurisdiction.
 
 ### 9.11 Incident response

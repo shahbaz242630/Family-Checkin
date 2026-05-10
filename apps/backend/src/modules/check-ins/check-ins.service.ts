@@ -1,11 +1,13 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ActorType, Channel, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { BillingService } from '../billing/billing.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type { CheckInReceiverCandidate, CheckInsRepository } from './check-ins.repository';
 import { CHECK_INS_REPOSITORY } from './check-ins.tokens';
+import type { VoiceCallerIdRepository } from './voice-caller-id.repository';
 
 export interface SendDueCheckInsResult {
   created: number;
@@ -44,6 +46,10 @@ export class CheckInsService {
     @Inject(EscalationsService)
     private readonly escalationsService?: Pick<EscalationsService, 'escalateMissedCheckIn'>,
     private readonly now: () => Date = () => new Date(),
+    @Optional()
+    @Inject(BillingService)
+    private readonly billingService?: Pick<BillingService, 'getBillingStatus'>,
+    private readonly voiceCallerIds?: VoiceCallerIdRepository,
   ) {}
 
   async sendDueCheckIns(): Promise<SendDueCheckInsResult> {
@@ -53,6 +59,10 @@ export class CheckInsService {
 
     for (const receiver of receivers) {
       if (!this.isEligible(receiver, now)) {
+        result.skipped += 1;
+        continue;
+      }
+      if (!(await this.hasPaidAccess(receiver.userId))) {
         result.skipped += 1;
         continue;
       }
@@ -224,6 +234,10 @@ export class CheckInsService {
     return true;
   }
 
+  private async hasPaidAccess(userId: string): Promise<boolean> {
+    return (await this.billingService?.getBillingStatus(userId))?.entitled ?? false;
+  }
+
   private async sendInitialCheckIn(
     receiver: CheckInReceiverCandidate,
   ): Promise<{ providerId: string; providerStatus: string }> {
@@ -234,7 +248,7 @@ export class CheckInsService {
         scriptKey: 'checkin_daily_voice',
         language: receiver.language,
         variables: {},
-      });
+      }, await this.voiceCallOptions(receiver.id, receiver.countryCode));
 
       return {
         providerId: result.providerCallId,
@@ -260,7 +274,7 @@ export class CheckInsService {
     scheduledAt: Date,
   ): Array<{ checkInId: string; attemptNumber: number; channel: Channel; scheduledAt: Date }> {
     const channels =
-      receiver.techProfile === TechProfile.VOICE_ONLY
+      receiver.techProfile === TechProfile.VOICE_ONLY || receiver.techProfile === TechProfile.LANDLINE
         ? [Channel.VOICE]
         : [receiver.primaryChannel, ...(receiver.fallbackChannels ?? [])].filter(
             (channel, index, all) => all.indexOf(channel) === index,
@@ -289,7 +303,7 @@ export class CheckInsService {
             scriptKey: 'checkin_daily_voice',
             language: attempt.checkIn.receiverLanguage,
             variables: {},
-          })
+          }, await this.voiceCallOptions(attempt.checkIn.receiverId, attempt.checkIn.receiverCountryCode))
         : await this.channelRouter.sendMessage(attempt.channel, to, {
             templateKey: 'checkin_daily',
             language: attempt.checkIn.receiverLanguage,
@@ -321,6 +335,11 @@ export class CheckInsService {
 
     await this.sendAttempt(next, now);
     return true;
+  }
+
+  private async voiceCallOptions(receiverId: string, countryCode: string): Promise<{ fromNumber: string } | undefined> {
+    const fromNumber = await this.voiceCallerIds?.resolveForReceiver({ receiverId, countryCode });
+    return fromNumber ? { fromNumber } : undefined;
   }
 
   private isAttemptTimedOut(attempt: { channel: Channel; sentAt?: Date }, now: Date): boolean {

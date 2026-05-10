@@ -6,6 +6,7 @@ describe('PrismaEscalationsRepository', () => {
   it('loads active backup contacts for a receiver in priority order', async () => {
     const findMany = vi.fn().mockResolvedValue([]);
     const repository = new PrismaEscalationsRepository({
+      receiver: { findFirst: vi.fn() },
       backupContact: { findMany },
       escalationEvent: { create: vi.fn() },
       checkIn: { update: vi.fn() },
@@ -36,6 +37,7 @@ describe('PrismaEscalationsRepository', () => {
       backupAlertedAt: new Date('2026-04-29T10:00:30.000Z'),
     });
     const repository = new PrismaEscalationsRepository({
+      receiver: { findFirst: vi.fn() },
       backupContact: { findMany: vi.fn() },
       escalationEvent: { create },
       checkIn: { update: vi.fn() },
@@ -60,7 +62,29 @@ describe('PrismaEscalationsRepository', () => {
         completedAt: new Date('2026-04-29T10:01:00.000Z'),
         result: EscalationResult.SUCCESS,
         errorDetails: undefined,
+        senderNotifiedAt: undefined,
         backupAlertedAt: new Date('2026-04-29T10:00:30.000Z'),
+      },
+    });
+  });
+
+  it('finds the active receiver owner for sender push notifications', async () => {
+    const findFirst = vi.fn().mockResolvedValue({ userId: 'sender-1' });
+    const repository = new PrismaEscalationsRepository({
+      receiver: { findFirst },
+      backupContact: { findMany: vi.fn() },
+      escalationEvent: { create: vi.fn() },
+      checkIn: { update: vi.fn() },
+    });
+
+    await expect(repository.findReceiverOwner({ receiverId: 'receiver-1' })).resolves.toEqual({ userId: 'sender-1' });
+    expect(findFirst).toHaveBeenCalledWith({
+      where: {
+        id: 'receiver-1',
+        deletedAt: null,
+      },
+      select: {
+        userId: true,
       },
     });
   });
@@ -68,6 +92,7 @@ describe('PrismaEscalationsRepository', () => {
   it('marks a check-in escalated', async () => {
     const update = vi.fn().mockResolvedValue({ id: 'check-in-1', status: CheckInStatus.ESCALATED });
     const repository = new PrismaEscalationsRepository({
+      receiver: { findFirst: vi.fn() },
       backupContact: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
       checkIn: { update },
@@ -84,6 +109,7 @@ describe('PrismaEscalationsRepository', () => {
   it('marks a check-in terminal after a missed escalation cannot continue', async () => {
     const update = vi.fn().mockResolvedValue({ id: 'check-in-1', status: CheckInStatus.SKIPPED });
     const repository = new PrismaEscalationsRepository({
+      receiver: { findFirst: vi.fn() },
       backupContact: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
       checkIn: { update },

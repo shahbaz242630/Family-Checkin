@@ -1,58 +1,49 @@
-// Shared types between frontend and backend
-// Based on BRD Step 15 - Data Models
+// Shared API/domain types aligned with the current receiver-first backend model.
 
 export type RelationshipType =
-  | 'mother'
-  | 'father'
-  | 'child'
-  | 'partner'
-  | 'brother'
-  | 'sister'
-  | 'relative'
-  | 'other';
+  | 'PARENT'
+  | 'GRANDPARENT'
+  | 'SPOUSE'
+  | 'SIBLING'
+  | 'CHILD'
+  | 'AUNT_UNCLE'
+  | 'COUSIN'
+  | 'FRIEND'
+  | 'OTHER';
 
-export type RelationshipMode = 'one_way' | 'two_way';
+export type Channel = 'WHATSAPP' | 'SMS' | 'VOICE';
 
-export type SubscriptionTier = 'free' | 'one_way' | 'two_way' | 'pro_family';
+export type TechProfile = 'WHATSAPP' | 'SMS' | 'VOICE_ONLY';
 
-export type SubscriptionStatus =
-  | 'active'
-  | 'trialing'
-  | 'past_due'
-  | 'canceled'
-  | 'expired';
+export type ConsentStatus = 'PENDING' | 'GRANTED' | 'REVOKED' | 'ABUSE_REPORTED' | 'EXPIRED';
 
-export type CheckinStatus =
-  | 'pending'
-  | 'snoozed'
-  | 'confirmed'
-  | 'escalating'
-  | 'escalated'
-  | 'resolved'
-  | 'canceled';
+export type CheckInStatus =
+  | 'PENDING'
+  | 'SENT'
+  | 'RESPONDED_OK'
+  | 'RESPONDED_HELP'
+  | 'NO_RESPONSE'
+  | 'FAILED'
+  | 'SKIPPED'
+  | 'NEEDS_ATTENTION'
+  | 'ESCALATED'
+  | 'RESOLVED';
 
-export type EscalationChannel = 'push' | 'whatsapp' | 'sms' | 'voice' | 'email';
+export type EscalationChannel = Channel;
 
-export type ResponseMethod = 'app' | 'whatsapp' | 'sms' | 'voice';
-
-export type SupportedLanguage = 'en' | 'ar' | 'ur';
+export type SupportedLanguage = 'en' | 'ar' | 'ur' | string;
 
 export type Platform = 'ios' | 'android';
 
-export interface PreferredChannels {
-  push: boolean;
-  whatsapp: boolean;
-  sms: boolean;
-  voice: boolean;
-  email: boolean;
-}
+export type SubscriptionTier = 'free' | 'single_receiver' | 'family';
+
+export type SubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired';
 
 export interface EscalationStep {
   channel: EscalationChannel;
   delay_min: number;
 }
 
-// API Response types
 export interface ApiResponse<T> {
   data?: T;
   error?: {

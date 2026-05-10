@@ -1,138 +1,90 @@
-// Database model types - mirrors Supabase tables
-// Based on BRD Step 15
-
 import type {
-  RelationshipType,
-  RelationshipMode,
-  SubscriptionTier,
-  SubscriptionStatus,
-  CheckinStatus,
-  EscalationChannel,
-  ResponseMethod,
-  SupportedLanguage,
+  Channel,
+  CheckInStatus,
+  ConsentStatus,
   Platform,
-  PreferredChannels,
-  EscalationStep,
+  RelationshipType,
+  SubscriptionStatus,
+  SubscriptionTier,
+  SupportedLanguage,
+  TechProfile,
 } from './index';
 
 export interface User {
   id: string;
   email: string | null;
-  phone_e164: string | null;
-  full_name: string;
   locale: SupportedLanguage;
   timezone: string;
   country: string;
-  role_default: 'owner' | 'loved_one' | 'peer';
   created_at: string;
   updated_at: string;
   last_seen_at: string | null;
 }
 
-export interface LovedOneProfile {
+export interface Receiver {
   id: string;
-  owner_user_id: string;
-  linked_user_id: string | null;
-  display_name: string;
+  user_id: string;
+  display_name?: string;
+  phone_masked?: string;
+  country_code: string;
   relationship_type: RelationshipType;
-  preferred_channels: PreferredChannels;
-  preferred_language: SupportedLanguage;
+  language: SupportedLanguage;
   timezone: string;
-  phone_e164: string | null;
-  email: string | null;
-  large_text_enabled: boolean;
-  is_active: boolean;
+  tech_profile: TechProfile;
+  primary_channel: Channel;
+  fallback_channels: Channel[];
+  schedule_frequency: string;
+  schedule_time_window: Record<string, unknown>;
+  schedule_custom_cron: string | null;
+  consent_status: ConsentStatus;
+  consent_requested_at: string | null;
+  consent_granted_at: string | null;
+  paused_until: string | null;
+  paused_reason: string | null;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface Relationship {
+export interface BackupContact {
   id: string;
-  owner_user_id: string;
-  loved_one_profile_id: string;
-  relationship_mode: RelationshipMode;
-  can_initiate_checkin: boolean;
-  can_receive_alerts: boolean;
-  subscription_tier_required: SubscriptionTier;
+  receiver_id: string;
+  display_name?: string;
+  phone_masked?: string;
+  relationship_type: RelationshipType | string;
+  priority: number;
+  channels: Channel[];
   created_at: string;
   updated_at: string;
 }
 
-export interface PairingCode {
+export interface CheckIn {
   id: string;
-  code: string;
-  generated_by_user_id: string;
-  target_owner_user_id: string;
-  target_profile_id: string | null;
-  expires_at: string;
-  used_at: string | null;
-  status: 'active' | 'used' | 'expired' | 'revoked';
-  created_at: string;
-}
-
-export interface CheckinSchedule {
-  id: string;
-  relationship_id: string;
-  schedule_type: 'daily' | 'multi_daily' | 'temporary';
-  time_local: string;
-  days_of_week: number[] | null;
-  start_date: string | null;
-  end_date: string | null;
-  grace_period_minutes: number;
-  max_retries: number;
-  retry_interval_minutes: number;
-  is_enabled: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Checkin {
-  id: string;
-  relationship_id: string;
-  schedule_id: string;
-  due_at: string;
-  status: CheckinStatus;
+  receiver_id: string;
+  status: CheckInStatus;
+  scheduled_at: string;
+  channel_used: Channel | null;
+  sent_at: string | null;
   responded_at: string | null;
-  response_method: ResponseMethod | null;
-  snooze_until: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface EscalationPlan {
-  id: string;
-  relationship_id: string;
-  plan_name: string;
-  steps: EscalationStep[];
-  is_active: boolean;
+  response_detected_as: string | null;
+  resolved_at: string | null;
+  resolution_by_user_id: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface EscalationEvent {
   id: string;
-  checkin_id: string;
-  step_index: number;
-  channel: EscalationChannel;
-  target: string;
-  status: 'queued' | 'sent' | 'delivered' | 'failed';
+  check_in_id: string;
+  target_receiver_id: string;
+  target_backup_contact_id: string | null;
+  channel: Channel;
+  status: 'QUEUED' | 'SENT' | 'DELIVERED' | 'FAILED';
   provider_message_id: string | null;
   error_code: string | null;
   error_message: string | null;
   sent_at: string | null;
   created_at: string;
-}
-
-export interface ContactPoint {
-  id: string;
-  owner_user_id: string;
-  display_name: string;
-  phone_e164: string | null;
-  email: string | null;
-  preferred_channels: PreferredChannels;
-  priority: number;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface Subscription {
@@ -145,17 +97,6 @@ export interface Subscription {
   current_period_start: string | null;
   current_period_end: string | null;
   external_transaction_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DeviceToken {
-  id: string;
-  user_id: string;
-  platform: Platform;
-  token: string;
-  is_active: boolean;
-  last_registered_at: string;
   created_at: string;
   updated_at: string;
 }

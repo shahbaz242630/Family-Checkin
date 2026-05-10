@@ -10,6 +10,12 @@ import type {
 } from './escalations.repository';
 
 interface EscalationsPrismaClient {
+  receiver: {
+    findFirst(args: {
+      where: { id: string; deletedAt: null };
+      select: { userId: true };
+    }): Promise<{ userId: string } | null>;
+  };
   backupContact: {
     findMany(args: {
       where: { receiverId: string; deletedAt: null };
@@ -26,6 +32,7 @@ interface EscalationsPrismaClient {
         completedAt?: Date;
         result?: EscalationResult;
         errorDetails?: string;
+        senderNotifiedAt?: Date;
         backupAlertedAt?: Date;
       };
     }): Promise<EscalationEvent>;
@@ -38,6 +45,18 @@ interface EscalationsPrismaClient {
 @Injectable()
 export class PrismaEscalationsRepository implements EscalationsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: EscalationsPrismaClient | PrismaService) {}
+
+  async findReceiverOwner(input: { receiverId: string }): Promise<{ userId: string } | null> {
+    return await this.prisma.receiver.findFirst({
+      where: {
+        id: input.receiverId,
+        deletedAt: null,
+      },
+      select: {
+        userId: true,
+      },
+    });
+  }
 
   async findActiveBackupContactsForReceiver(input: { receiverId: string }): Promise<EscalationBackupContactRecord[]> {
     const contacts = await this.prisma.backupContact.findMany({
@@ -68,6 +87,7 @@ export class PrismaEscalationsRepository implements EscalationsRepository {
         completedAt: input.completedAt,
         result: input.result,
         errorDetails: input.errorDetails,
+        senderNotifiedAt: input.senderNotifiedAt,
         backupAlertedAt: input.backupAlertedAt,
       },
     });
@@ -81,6 +101,7 @@ export class PrismaEscalationsRepository implements EscalationsRepository {
       completedAt: event.completedAt ?? undefined,
       result: event.result ?? undefined,
       errorDetails: event.errorDetails ?? undefined,
+      senderNotifiedAt: event.senderNotifiedAt ?? undefined,
       backupAlertedAt: event.backupAlertedAt ?? undefined,
     };
   }

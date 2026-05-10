@@ -2,6 +2,7 @@ import { AbuseReportStatus, ActorType, Channel, CheckInStatus, ConsentStatus, Re
 import { describe, expect, it } from 'vitest';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
+import type { ChannelRouterService } from '../channels/channel-router.service';
 import type { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type {
@@ -240,6 +241,81 @@ class InMemoryEscalationsService {
   }
 }
 
+class InMemoryChannelRouter {
+  public messages: Array<{
+    channel: Channel;
+    to: string;
+    message: {
+      templateKey: string;
+      language: string;
+      variables: Record<string, string>;
+    };
+  }> = [];
+  public calls: Array<{
+    channel: Channel;
+    to: string;
+    script: {
+      scriptKey: string;
+      language: string;
+      variables: Record<string, string>;
+    };
+  }> = [];
+  public availability = new Map<Channel, boolean>();
+
+  async sendMessage(
+    channel: Channel,
+    to: string,
+    message: { templateKey: string; language: string; variables: Record<string, string> },
+  ) {
+    this.messages.push({ channel, to, message });
+    return {
+      providerMessageId: 'message-1',
+      acceptedAt: new Date('2026-05-07T10:00:00.000Z'),
+      providerStatus: 'accepted' as const,
+    };
+  }
+
+  async makeVoiceCall(
+    channel: Channel,
+    to: string,
+    script: { scriptKey: string; language: string; variables: Record<string, string> },
+  ) {
+    this.calls.push({ channel, to, script });
+    return {
+      providerCallId: 'call-1',
+      acceptedAt: new Date('2026-05-07T10:00:00.000Z'),
+      providerStatus: 'accepted' as const,
+    };
+  }
+
+  async resolveReachablePlan(input: { phone: string; primaryChannel: Channel; fallbackChannels: Channel[] }) {
+    const channels = [input.primaryChannel, ...input.fallbackChannels].filter(
+      (channel, index, all) => all.indexOf(channel) === index,
+    );
+    const unavailableChannels: Channel[] = [];
+    for (const channel of channels) {
+      if (this.availability.get(channel) ?? true) {
+        return {
+          primaryChannel: channel,
+          fallbackChannels: channels.filter((candidate) => candidate !== channel && !unavailableChannels.includes(candidate)),
+          detectionStatus: channel === input.primaryChannel ? 'PRIMARY_AVAILABLE' : 'FALLBACK_SELECTED',
+          unavailableChannels,
+          detectionConfidence: 'provider_availability_check',
+        };
+      }
+      unavailableChannels.push(channel);
+    }
+
+    return {
+      primaryChannel: input.primaryChannel,
+      fallbackChannels: input.fallbackChannels,
+      detectionStatus: 'MANUAL_REQUIRED',
+      unavailableChannels,
+      detectionConfidence: 'manual_selection',
+    };
+  }
+}
+
 describe('ReceiversService', () => {
   it('creates an encrypted receiver with pending consent and an audit event', async () => {
     const repository = new InMemoryReceiversRepository();
@@ -300,6 +376,9 @@ describe('ReceiversService', () => {
           primaryChannel: Channel.WHATSAPP,
           fallbackChannelCount: 2,
           scheduleFrequency: 'daily',
+          channelDetectionStatus: 'MANUAL_REQUIRED',
+          channelDetectionConfidence: 'manual_selection',
+          unavailableChannels: [],
         },
         ipAddress: '203.0.113.10',
         userAgent: 'Nearby Mobile/1.0',
@@ -334,6 +413,54 @@ describe('ReceiversService', () => {
     await expect(service.createForSender({ ...baseInput, primaryChannel: undefined as unknown as Channel })).rejects.toThrow(
       'Receiver primary channel is required',
     );
+  });
+
+  it('falls back from unavailable WhatsApp during receiver creation and audits the channel plan', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const crypto = new CryptoService(masterKey);
+    const channelRouter = new InMemoryChannelRouter();
+    channelRouter.availability.set(Channel.WHATSAPP, false);
+    channelRouter.availability.set(Channel.SMS, true);
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      audit as unknown as AuditService,
+      undefined,
+      undefined,
+      channelRouter as unknown as ChannelRouterService,
+    );
+
+    await service.createForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      name: 'Fatima Parent',
+      phone: '+971501234567',
+      phoneCountry: 'AE',
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS, Channel.VOICE],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+    });
+
+    expect(repository.lastInput).toMatchObject({
+      primaryChannel: Channel.SMS,
+      fallbackChannels: [Channel.VOICE],
+    });
+    expect(audit.events[0]).toMatchObject({
+      action: 'receiver.created',
+      metadata: {
+        primaryChannel: Channel.SMS,
+        fallbackChannelCount: 1,
+        channelDetectionStatus: 'FALLBACK_SELECTED',
+        channelDetectionConfidence: 'provider_availability_check',
+        unavailableChannels: [Channel.WHATSAPP],
+      },
+    });
   });
 
   it('lists receivers for a sender without exposing encrypted fields or full phone numbers', async () => {
@@ -555,16 +682,20 @@ describe('ReceiversService', () => {
         primaryChannel: Channel.SMS,
         fallbackChannelCount: 1,
         scheduleFrequency: 'daily',
+        channelDetectionStatus: 'MANUAL_REQUIRED',
+        channelDetectionConfidence: 'manual_selection',
+        unavailableChannels: [],
       },
       ipAddress: '203.0.113.10',
       userAgent: 'Nearby Mobile/1.0',
     });
   });
 
-  it('pauses a receiver for a sender and audits the action', async () => {
+  it('pauses a receiver for a sender, stores the requested end date, notifies the receiver, and audits the action', async () => {
     const repository = new InMemoryReceiversRepository();
     const audit = new InMemoryAuditService();
     const crypto = new CryptoService(masterKey);
+    const channelRouter = new InMemoryChannelRouter();
     repository.receiversForUser = [
       {
         id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
@@ -586,19 +717,54 @@ describe('ReceiversService', () => {
         updatedAt: new Date('2026-04-27T10:02:00.000Z'),
       },
     ];
-    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService);
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      audit as unknown as AuditService,
+      undefined,
+      undefined,
+      channelRouter as unknown as ChannelRouterService,
+    );
 
     const receiver = await service.pauseForSender({
       userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
       receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      pausedUntil: new Date('2026-05-10T18:00:00.000Z'),
       ipAddress: '203.0.113.10',
       userAgent: 'Nearby Mobile/1.0',
     });
 
     expect(receiver).toMatchObject({
       id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
-      pausedUntil: '9999-12-31T23:59:59.999Z',
+      pausedUntil: '2026-05-10T18:00:00.000Z',
       pausedReason: 'USER_PAUSED',
+    });
+    expect(channelRouter.messages).toEqual([
+      {
+        channel: Channel.WHATSAPP,
+        to: '+971501234567',
+        message: {
+          templateKey: 'receiver_checkins_paused',
+          language: 'en',
+          variables: {
+            receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+            pausedUntil: '2026-05-10T18:00:00.000Z',
+          },
+        },
+      },
+    ]);
+    expect(audit.events).toContainEqual({
+      entityType: 'receiver',
+      entityId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      action: 'receiver.pause_notification_sent',
+      actorType: ActorType.SYSTEM,
+      actorId: undefined,
+      metadata: {
+        channel: Channel.WHATSAPP,
+        providerStatus: 'accepted',
+      },
+      ipAddress: undefined,
+      userAgent: undefined,
     });
     expect(audit.events.at(-1)).toEqual({
       entityType: 'receiver',
@@ -608,6 +774,7 @@ describe('ReceiversService', () => {
       actorId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
       metadata: {
         pausedReason: 'USER_PAUSED',
+        pausedUntil: '2026-05-10T18:00:00.000Z',
       },
       ipAddress: '203.0.113.10',
       userAgent: 'Nearby Mobile/1.0',
@@ -667,10 +834,11 @@ describe('ReceiversService', () => {
     });
   });
 
-  it('soft deletes a receiver for a sender and audits the action', async () => {
+  it('soft deletes a receiver for a sender, sends the final receiver notice, and audits the action', async () => {
     const repository = new InMemoryReceiversRepository();
     const audit = new InMemoryAuditService();
     const crypto = new CryptoService(masterKey);
+    const channelRouter = new InMemoryChannelRouter();
     repository.receiversForUser = [
       {
         id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
@@ -692,7 +860,14 @@ describe('ReceiversService', () => {
         updatedAt: new Date('2026-04-27T10:02:00.000Z'),
       },
     ];
-    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService);
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      audit as unknown as AuditService,
+      undefined,
+      undefined,
+      channelRouter as unknown as ChannelRouterService,
+    );
 
     const receiver = await service.deleteForSender({
       userId: '  61a5639c-c902-4950-9924-1a4d6db1e02d  ',
@@ -707,6 +882,32 @@ describe('ReceiversService', () => {
       phoneMasked: '*******4567',
     });
     expect(JSON.stringify(receiver)).not.toContain('+971501234567');
+    expect(channelRouter.messages).toEqual([
+      {
+        channel: Channel.WHATSAPP,
+        to: '+971501234567',
+        message: {
+          templateKey: 'receiver_checkins_ended',
+          language: 'en',
+          variables: {
+            receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+          },
+        },
+      },
+    ]);
+    expect(audit.events).toContainEqual({
+      entityType: 'receiver',
+      entityId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      action: 'receiver.delete_notification_sent',
+      actorType: ActorType.SYSTEM,
+      actorId: undefined,
+      metadata: {
+        channel: Channel.WHATSAPP,
+        providerStatus: 'accepted',
+      },
+      ipAddress: undefined,
+      userAgent: undefined,
+    });
     expect(audit.events.at(-1)).toEqual({
       entityType: 'receiver',
       entityId: '1aef91f9-64c9-4548-baa5-d70b52386efb',

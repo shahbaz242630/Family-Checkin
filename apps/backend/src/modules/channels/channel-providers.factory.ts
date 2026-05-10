@@ -31,6 +31,7 @@ export function createChannelProviders(config: AppConfigService): ChannelProvide
       authToken: config.twilioAuthToken,
       fromNumber: config.twilioVoiceFromNumber,
       publicApiBaseUrl: config.publicApiBaseUrl,
+      voiceAudioBaseUrl: config.voiceAudioBaseUrl,
     }),
   ];
 }

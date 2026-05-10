@@ -75,12 +75,62 @@ export const TIMEZONES: TimezoneOption[] = [
   { value: 'Asia/Hong_Kong', label: 'Hong Kong', city: 'Hong Kong', country: 'Hong Kong', offset: 'UTC+8' },
 ];
 
+function formatTimezoneLabel(value: string): string {
+  const parts = value.split('/');
+  return parts[parts.length - 1].replace(/_/g, ' ');
+}
+
+function formatTimezoneOffset(value: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat('en', {
+      timeZone: value,
+      timeZoneName: 'shortOffset',
+    }).formatToParts(new Date());
+    return parts.find((part) => part.type === 'timeZoneName')?.value.replace('GMT', 'UTC') ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function getRuntimeTimezones(): TimezoneOption[] {
+  const supportedValuesOf = (Intl as typeof Intl & {
+    supportedValuesOf?: (key: 'timeZone') => string[];
+  }).supportedValuesOf;
+
+  if (!supportedValuesOf) {
+    return [];
+  }
+
+  try {
+    return supportedValuesOf('timeZone').map((value) => {
+      const [region] = value.split('/');
+      const city = formatTimezoneLabel(value);
+
+      return {
+        value,
+        label: `${city} (${value})`,
+        city,
+        country: region,
+        offset: formatTimezoneOffset(value),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function getAvailableTimezones(): TimezoneOption[] {
+  const runtimeTimezones = getRuntimeTimezones();
+  return runtimeTimezones.length > 0 ? runtimeTimezones : TIMEZONES;
+}
+
 // Search timezones by query (city, country, or label)
 export function searchTimezones(query: string): TimezoneOption[] {
-  if (!query.trim()) return TIMEZONES;
+  const timezones = getAvailableTimezones();
+  if (!query.trim()) return timezones;
 
   const lowerQuery = query.toLowerCase();
-  return TIMEZONES.filter(
+  return timezones.filter(
     (tz) =>
       tz.label.toLowerCase().includes(lowerQuery) ||
       tz.city.toLowerCase().includes(lowerQuery) ||
@@ -90,5 +140,5 @@ export function searchTimezones(query: string): TimezoneOption[] {
 
 // Get timezone by value
 export function getTimezone(value: string): TimezoneOption | undefined {
-  return TIMEZONES.find((tz) => tz.value === value);
+  return getAvailableTimezones().find((tz) => tz.value === value) ?? TIMEZONES.find((tz) => tz.value === value);
 }

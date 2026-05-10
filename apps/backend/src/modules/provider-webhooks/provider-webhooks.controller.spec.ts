@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { createHmac } from 'node:crypto';
 import type { HandleInboundReceiverReplyInput } from '../receivers/receiver-reply.service';
 import { ProviderWebhooksController } from './provider-webhooks.controller';
+import type { CreateProviderWebhookEventInput } from './provider-webhook-events.repository';
 
 class FakeReceiverReplyService {
   public handled: HandleInboundReceiverReplyInput[] = [];
@@ -17,6 +18,15 @@ class FakeReceiverReplyService {
   }
 }
 
+class FakeProviderWebhookEventsRepository {
+  public events: CreateProviderWebhookEventInput[] = [];
+
+  async createEvent(input: CreateProviderWebhookEventInput) {
+    this.events.push(input);
+    return { id: `event-${this.events.length}` };
+  }
+}
+
 const config = {
   channelWebhookSecret: 'provider-webhook-secret',
   twilioAuthToken: 'twilio-auth-token',
@@ -24,9 +34,16 @@ const config = {
 };
 
 describe('ProviderWebhooksController', () => {
-  it('normalizes WhatsApp text messages into receiver replies', async () => {
+  function makeController() {
     const service = new FakeReceiverReplyService();
-    const controller = new ProviderWebhooksController(service as never, config);
+    const eventsRepository = new FakeProviderWebhookEventsRepository();
+    const controller = new ProviderWebhooksController(service as never, config, eventsRepository);
+
+    return { controller, service, eventsRepository };
+  }
+
+  it('normalizes WhatsApp text messages into receiver replies', async () => {
+    const { controller, service } = makeController();
 
     const response = await controller.handleWhatsappWebhook(
       'provider-webhook-secret',
@@ -75,8 +92,7 @@ describe('ProviderWebhooksController', () => {
   });
 
   it('ignores WhatsApp non-text messages without exposing payload details', async () => {
-    const service = new FakeReceiverReplyService();
-    const controller = new ProviderWebhooksController(service as never, config);
+    const { controller, service } = makeController();
 
     const response = await controller.handleWhatsappWebhook(
       'provider-webhook-secret',
@@ -112,8 +128,7 @@ describe('ProviderWebhooksController', () => {
   });
 
   it('normalizes SMS provider payloads into receiver replies', async () => {
-    const service = new FakeReceiverReplyService();
-    const controller = new ProviderWebhooksController(service as never, config);
+    const { controller, service } = makeController();
 
     const response = await controller.handleSmsWebhook(
       'provider-webhook-secret',
@@ -143,8 +158,7 @@ describe('ProviderWebhooksController', () => {
   });
 
   it('rejects provider callbacks when the webhook secret is missing or wrong', async () => {
-    const service = new FakeReceiverReplyService();
-    const controller = new ProviderWebhooksController(service as never, config);
+    const { controller, service } = makeController();
 
     await expect(controller.handleSmsWebhook('wrong-secret', { From: '+971501234568', Body: 'OK' })).rejects.toThrow(
       UnauthorizedException,
@@ -153,8 +167,7 @@ describe('ProviderWebhooksController', () => {
   });
 
   it('validates Twilio SMS signatures and normalizes inbound SMS replies', async () => {
-    const service = new FakeReceiverReplyService();
-    const controller = new ProviderWebhooksController(service as never, config);
+    const { controller, service } = makeController();
     const params = {
       From: '+971501234569',
       Body: 'HELP',
@@ -185,8 +198,7 @@ describe('ProviderWebhooksController', () => {
   });
 
   it('validates Twilio WhatsApp signatures and normalizes inbound WhatsApp replies', async () => {
-    const service = new FakeReceiverReplyService();
-    const controller = new ProviderWebhooksController(service as never, config);
+    const { controller, service } = makeController();
     const params = {
       From: 'whatsapp:+971501234570',
       Body: 'OK',
@@ -216,9 +228,41 @@ describe('ProviderWebhooksController', () => {
     ]);
   });
 
+  it('prefers Twilio WhatsApp quick-reply button payloads over localized button text and body', async () => {
+    const { controller, service } = makeController();
+    const params = {
+      From: 'whatsapp:+971501234570',
+      Body: 'Estoy bien',
+      ButtonText: 'Estoy bien',
+      ButtonPayload: 'OK',
+      MessageSid: 'SM790',
+    };
+
+    const response = await controller.handleTwilioMessagingWebhook(
+      signatureFor('https://api.nearby.test/provider-webhooks/twilio/messaging', params),
+      params,
+      undefined,
+      undefined,
+    );
+
+    expect(response).toEqual({
+      ok: true,
+      processed: 1,
+    });
+    expect(service.handled).toEqual([
+      {
+        fromPhone: '+971501234570',
+        channel: Channel.WHATSAPP,
+        body: 'OK',
+        providerMessageId: 'SM790',
+        ipAddress: undefined,
+        userAgent: undefined,
+      },
+    ]);
+  });
+
   it('validates Twilio voice signatures and normalizes DTMF replies', async () => {
-    const service = new FakeReceiverReplyService();
-    const controller = new ProviderWebhooksController(service as never, config);
+    const { controller, service } = makeController();
     const params = {
       From: '+971501234571',
       Digits: '1',
@@ -248,9 +292,69 @@ describe('ProviderWebhooksController', () => {
     ]);
   });
 
+  it('accepts signed Twilio voice status callbacks without treating them as receiver replies', async () => {
+    const { controller, service, eventsRepository } = makeController();
+    const params = {
+      CallSid: 'CA123',
+      CallStatus: 'completed',
+      CallDuration: '12',
+      From: '+15550003333',
+      To: '+971501234571',
+    };
+
+    const response = await controller.handleTwilioVoiceStatusWebhook(
+      signatureFor('https://api.nearby.test/provider-webhooks/twilio/voice/status', params),
+      params,
+    );
+
+    expect(response).toEqual({
+      ok: true,
+      processed: 1,
+    });
+    expect(service.handled).toEqual([]);
+    expect(eventsRepository.events).toEqual([
+      {
+        provider: 'twilio',
+        eventType: 'voice_status',
+        providerEventId: 'CA123:completed',
+        providerMessageId: 'CA123',
+        payload: params,
+      },
+    ]);
+  });
+
+  it('accepts signed Twilio AMD callbacks without treating machine answers as receiver replies', async () => {
+    const { controller, service, eventsRepository } = makeController();
+    const params = {
+      CallSid: 'CA124',
+      AnsweredBy: 'machine_start',
+      From: '+15550003333',
+      To: '+971501234572',
+    };
+
+    const response = await controller.handleTwilioVoiceAmdWebhook(
+      signatureFor('https://api.nearby.test/provider-webhooks/twilio/voice/amd', params),
+      params,
+    );
+
+    expect(response).toEqual({
+      ok: true,
+      processed: 1,
+    });
+    expect(service.handled).toEqual([]);
+    expect(eventsRepository.events).toEqual([
+      {
+        provider: 'twilio',
+        eventType: 'voice_amd',
+        providerEventId: 'CA124:machine_start',
+        providerMessageId: 'CA124',
+        payload: params,
+      },
+    ]);
+  });
+
   it('rejects Twilio callbacks with invalid signatures', async () => {
-    const service = new FakeReceiverReplyService();
-    const controller = new ProviderWebhooksController(service as never, config);
+    const { controller, service } = makeController();
 
     await expect(
       controller.handleTwilioMessagingWebhook('invalid-signature', {

@@ -77,10 +77,16 @@ CREATE TYPE "SubscriptionTier" AS ENUM ('TIER_1', 'TIER_2', 'TIER_3');
 CREATE TYPE "SubscriptionStatus" AS ENUM ('TRIALING', 'ACTIVE', 'PAST_DUE', 'CANCELED', 'SUSPENDED');
 
 -- CreateEnum
+CREATE TYPE "BillingInterval" AS ENUM ('MONTHLY', 'ANNUAL');
+
+-- CreateEnum
+CREATE TYPE "BillingStore" AS ENUM ('APP_STORE', 'PLAY_STORE', 'STRIPE', 'PROMOTIONAL', 'UNKNOWN');
+
+-- CreateEnum
 CREATE TYPE "RelationshipType" AS ENUM ('PARENT', 'GRANDPARENT', 'SIBLING', 'SPOUSE', 'CHILD', 'FRIEND', 'OTHER');
 
 -- CreateEnum
-CREATE TYPE "TechProfile" AS ENUM ('WHATSAPP', 'SMS', 'VOICE_ONLY');
+CREATE TYPE "TechProfile" AS ENUM ('WHATSAPP', 'SMS', 'VOICE_ONLY', 'LANDLINE');
 
 -- CreateEnum
 CREATE TYPE "Channel" AS ENUM ('WHATSAPP', 'SMS', 'VOICE');
@@ -252,6 +258,11 @@ CREATE TABLE "subscriptions" (
     "status" "SubscriptionStatus" NOT NULL,
     "paymentProvider" TEXT NOT NULL,
     "externalSubscriptionId" TEXT NOT NULL,
+    "externalProductId" TEXT,
+    "revenueCatAppUserId" TEXT,
+    "billingInterval" "BillingInterval",
+    "store" "BillingStore",
+    "willRenew" BOOLEAN NOT NULL DEFAULT false,
     "trialEndsAt" TIMESTAMP(3),
     "currentPeriodStart" TIMESTAMP(3) NOT NULL,
     "currentPeriodEnd" TIMESTAMP(3) NOT NULL,
@@ -422,6 +433,9 @@ CREATE UNIQUE INDEX "subscriptions_externalSubscriptionId_key" ON "subscriptions
 CREATE INDEX "subscriptions_userId_status_idx" ON "subscriptions"("userId", "status");
 
 -- CreateIndex
+CREATE INDEX "subscriptions_revenueCatAppUserId_idx" ON "subscriptions"("revenueCatAppUserId");
+
+-- CreateIndex
 CREATE INDEX "audit_logs_entityType_entityId_idx" ON "audit_logs"("entityType", "entityId");
 
 -- CreateIndex
@@ -516,6 +530,11 @@ ALTER TABLE co_monitors ENABLE ROW LEVEL SECURITY;
 ALTER TABLE abuse_reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE opt_out_cooldowns ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE admin_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE channel_templates ENABLE ROW LEVEL SECURITY;
+ALTER TABLE idempotency_keys ENABLE ROW LEVEL SECURITY;
+ALTER TABLE step_up_challenges ENABLE ROW LEVEL SECURITY;
+ALTER TABLE device_tokens ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY users_read_own ON users
   FOR SELECT USING ("authProviderId" = auth.uid()::text);
@@ -537,6 +556,27 @@ CREATE POLICY receivers_modify_own ON receivers
 CREATE POLICY receivers_read_co_monitor ON receivers
   FOR SELECT USING (
     id IN (
+      SELECT "receiverId" FROM co_monitors
+      WHERE "userId" IN (SELECT id FROM users WHERE "authProviderId" = auth.uid()::text)
+        AND "acceptedAt" IS NOT NULL
+        AND "revokedAt" IS NULL
+    )
+  );
+
+CREATE POLICY check_ins_read_own ON check_ins
+  FOR SELECT USING (
+    "receiverId" IN (
+      SELECT receivers.id
+      FROM receivers
+      WHERE receivers."userId" IN (
+        SELECT users.id FROM users WHERE users."authProviderId" = auth.uid()::text
+      )
+    )
+  );
+
+CREATE POLICY check_ins_read_co_monitor ON check_ins
+  FOR SELECT USING (
+    "receiverId" IN (
       SELECT "receiverId" FROM co_monitors
       WHERE "userId" IN (SELECT id FROM users WHERE "authProviderId" = auth.uid()::text)
         AND "acceptedAt" IS NOT NULL

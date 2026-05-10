@@ -1,3 +1,4 @@
+import { describe, expect, it } from 'vitest';
 import { createAuthStorage } from './auth-storage';
 
 type TestStorage = {
@@ -39,72 +40,60 @@ function createTestLocalStorage(): TestStorage & {
   };
 }
 
-async function expectEqual(actual: unknown, expected: unknown, message: string): Promise<void> {
-  if (actual !== expected) {
-    throw new Error(`${message}: expected ${String(expected)}, got ${String(actual)}`);
-  }
-}
+describe('createAuthStorage', () => {
+  it('uses AsyncStorage for native Supabase sessions', async () => {
+    const localStorage = createTestLocalStorage();
+    const asyncStorage = createTestStorage();
+    const secureStore = createTestStorage();
 
-async function testNativeSupabaseSessionUsesAsyncStorage(): Promise<void> {
-  const localStorage = createTestLocalStorage();
-  const asyncStorage = createTestStorage();
-  const secureStore = createTestStorage();
+    const storage = createAuthStorage({
+      platformOS: 'android',
+      hasWindow: true,
+      localStorage,
+      asyncStorage,
+      secureStore,
+    });
 
-  const storage = createAuthStorage({
-    platformOS: 'android',
-    hasWindow: true,
-    localStorage,
-    asyncStorage,
-    secureStore,
+    await storage.supabaseSessionStorage.setItem('supabase-session', 'large-session-json');
+
+    expect(asyncStorage.values.get('supabase-session')).toBe('large-session-json');
+    expect(secureStore.values.has('supabase-session')).toBe(false);
+    expect(localStorage.values.has('supabase-session')).toBe(false);
   });
 
-  await storage.supabaseSessionStorage.setItem('supabase-session', 'large-session-json');
+  it('uses SecureStore for native OAuth state', async () => {
+    const asyncStorage = createTestStorage();
+    const secureStore = createTestStorage();
 
-  await expectEqual(asyncStorage.values.get('supabase-session'), 'large-session-json', 'native session should use AsyncStorage');
-  await expectEqual(secureStore.values.has('supabase-session'), false, 'native session should not use SecureStore');
-  await expectEqual(localStorage.values.has('supabase-session'), false, 'native session should not use localStorage');
-}
+    const storage = createAuthStorage({
+      platformOS: 'android',
+      hasWindow: false,
+      localStorage: createTestLocalStorage(),
+      asyncStorage,
+      secureStore,
+    });
 
-async function testNativeOAuthStateUsesSecureStore(): Promise<void> {
-  const asyncStorage = createTestStorage();
-  const secureStore = createTestStorage();
+    await storage.oauthStateStorage.setItem('oauth_state', 'state-token');
 
-  const storage = createAuthStorage({
-    platformOS: 'android',
-    hasWindow: false,
-    localStorage: createTestLocalStorage(),
-    asyncStorage,
-    secureStore,
+    expect(secureStore.values.get('oauth_state')).toBe('state-token');
+    expect(asyncStorage.values.has('oauth_state')).toBe(false);
   });
 
-  await storage.oauthStateStorage.setItem('oauth_state', 'state-token');
+  it('uses localStorage for web Supabase sessions', async () => {
+    const localStorage = createTestLocalStorage();
+    const asyncStorage = createTestStorage();
 
-  await expectEqual(secureStore.values.get('oauth_state'), 'state-token', 'OAuth state should use SecureStore');
-  await expectEqual(asyncStorage.values.has('oauth_state'), false, 'OAuth state should not use AsyncStorage');
-}
+    const storage = createAuthStorage({
+      platformOS: 'web',
+      hasWindow: true,
+      localStorage,
+      asyncStorage,
+      secureStore: createTestStorage(),
+    });
 
-async function testWebSupabaseSessionUsesLocalStorage(): Promise<void> {
-  const localStorage = createTestLocalStorage();
-  const asyncStorage = createTestStorage();
+    await storage.supabaseSessionStorage.setItem('supabase-session', 'web-session-json');
 
-  const storage = createAuthStorage({
-    platformOS: 'web',
-    hasWindow: true,
-    localStorage,
-    asyncStorage,
-    secureStore: createTestStorage(),
+    expect(localStorage.values.get('supabase-session')).toBe('web-session-json');
+    expect(asyncStorage.values.has('supabase-session')).toBe(false);
   });
-
-  await storage.supabaseSessionStorage.setItem('supabase-session', 'web-session-json');
-
-  await expectEqual(localStorage.values.get('supabase-session'), 'web-session-json', 'web session should use localStorage');
-  await expectEqual(asyncStorage.values.has('supabase-session'), false, 'web session should not use AsyncStorage');
-}
-
-async function main(): Promise<void> {
-  await testNativeSupabaseSessionUsesAsyncStorage();
-  await testNativeOAuthStateUsesSecureStore();
-  await testWebSupabaseSessionUsesLocalStorage();
-}
-
-void main();
+});

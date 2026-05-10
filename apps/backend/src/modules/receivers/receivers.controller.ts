@@ -1,10 +1,30 @@
-import { Body, Controller, Delete, Get, Headers, Inject, NotFoundException, Param, Patch, Post, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  ForbiddenException,
+  Get,
+  Headers,
+  Inject,
+  NotFoundException,
+  Optional,
+  Param,
+  Patch,
+  Post,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Channel, RelationshipType, TechProfile } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
+import { BackupContactsService } from '../backup-contacts/backup-contacts.service';
+import { BillingService } from '../billing/billing.service';
 import { UsersService } from '../users/users.service';
 import { ReceiverConsentService } from './receiver-consent.service';
 import { ReceiversService } from './receivers.service';
+
+const PAID_ACCESS_REQUIRED_CODE = 'PAID_ACCESS_REQUIRED';
+const PAID_ACCESS_REQUIRED_MESSAGE = 'Active subscription required to add receivers';
 
 interface CreateReceiverBody {
   name?: string;
@@ -37,6 +57,10 @@ interface UpdateReceiverBody {
   scheduleCustomCron?: string;
 }
 
+interface PauseReceiverBody {
+  pausedUntil?: string;
+}
+
 @Controller('receivers')
 export class ReceiversController {
   constructor(
@@ -48,6 +72,11 @@ export class ReceiversController {
     private readonly receiversService: ReceiversService,
     @Inject(ReceiverConsentService)
     private readonly receiverConsentService: ReceiverConsentService,
+    @Optional()
+    @Inject(BackupContactsService)
+    private readonly backupContactsService?: Pick<BackupContactsService, 'listForReceiver'>,
+    @Inject(BillingService)
+    private readonly billingService?: Pick<BillingService, 'getBillingStatus'>,
   ) {}
 
   @Get()
@@ -71,7 +100,22 @@ export class ReceiversController {
       throw new NotFoundException('Receiver not found');
     }
 
-    return { receiver };
+    const backupContacts =
+      (await this.backupContactsService?.listForReceiver({
+        userId: sender.id,
+        receiverId,
+      })) ?? [];
+
+    return {
+      receiver: {
+        ...receiver,
+        backupContacts,
+        escalation: {
+          configured: backupContacts.length > 0,
+          nextStep: backupContacts.length > 0 ? 'Backup contacts configured' : 'Add backup contacts',
+        },
+      },
+    };
   }
 
   @Patch(':receiverId/pause')
@@ -80,6 +124,7 @@ export class ReceiversController {
     @Headers('x-forwarded-for') forwardedFor: string | undefined,
     @Headers('user-agent') userAgent: string | undefined,
     @Param('receiverId') receiverId: string,
+    @Body() body: PauseReceiverBody = {},
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
@@ -87,6 +132,7 @@ export class ReceiversController {
     const receiver = await this.receiversService.pauseForSender({
       userId: sender.id,
       receiverId,
+      pausedUntil: this.optionalDate(body.pausedUntil, 'pausedUntil must be a valid date'),
       ipAddress: this.firstForwardedIp(forwardedFor),
       userAgent,
     });
@@ -270,6 +316,15 @@ export class ReceiversController {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
     const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const billingStatus = await this.billingService?.getBillingStatus(sender.id);
+
+    if (!billingStatus?.entitled) {
+      throw new ForbiddenException({
+        code: PAID_ACCESS_REQUIRED_CODE,
+        message: PAID_ACCESS_REQUIRED_MESSAGE,
+      });
+    }
+
     const receiver = await this.receiversService.createForSender({
       userId: sender.id,
       name: body.name ?? '',
@@ -327,6 +382,19 @@ export class ReceiversController {
 
   private firstForwardedIp(forwardedFor: string | undefined): string | undefined {
     return forwardedFor?.split(',')[0]?.trim() || undefined;
+  }
+
+  private optionalDate(value: string | undefined, message: string): Date | undefined {
+    if (!value) {
+      return undefined;
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException(message);
+    }
+
+    return date;
   }
 
   private required<T>(value: T | undefined, message: string): T {

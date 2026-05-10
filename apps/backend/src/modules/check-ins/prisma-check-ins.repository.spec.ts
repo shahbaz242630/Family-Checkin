@@ -17,6 +17,7 @@ describe('PrismaCheckInsRepository', () => {
     const findMany = vi.fn().mockResolvedValue([
       {
         id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        userId: 'sender-user-1',
         phoneEncrypted: 'encrypted-phone',
         language: 'en',
         timezone: 'Asia/Dubai',
@@ -66,6 +67,7 @@ describe('PrismaCheckInsRepository', () => {
     expect(receivers).toEqual([
       {
         id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        userId: 'sender-user-1',
         phoneEncrypted: 'encrypted-phone',
         language: 'en',
         timezone: 'Asia/Dubai',

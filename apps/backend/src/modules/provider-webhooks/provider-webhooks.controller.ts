@@ -4,6 +4,8 @@ import { Channel } from '@prisma/client';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import type { HandleInboundReceiverReplyInput } from '../receivers/receiver-reply.service';
 import { ReceiverReplyService } from '../receivers/receiver-reply.service';
+import type { ProviderWebhookEventsRepository } from './provider-webhook-events.repository';
+import { PROVIDER_WEBHOOK_EVENTS_REPOSITORY } from './provider-webhooks.tokens';
 
 interface ProviderWebhookResponse {
   ok: true;
@@ -41,6 +43,8 @@ type SmsWebhookBody = {
 type TwilioMessagingWebhookBody = {
   From?: string;
   Body?: string;
+  ButtonText?: string;
+  ButtonPayload?: string;
   MessageSid?: string;
 };
 
@@ -51,6 +55,21 @@ type TwilioVoiceWebhookBody = {
   CallSid?: string;
 };
 
+type TwilioVoiceStatusWebhookBody = {
+  CallSid?: string;
+  CallStatus?: string;
+  CallDuration?: string;
+  From?: string;
+  To?: string;
+};
+
+type TwilioVoiceAmdWebhookBody = {
+  CallSid?: string;
+  AnsweredBy?: string;
+  From?: string;
+  To?: string;
+};
+
 @Controller('provider-webhooks')
 export class ProviderWebhooksController {
   constructor(
@@ -58,6 +77,8 @@ export class ProviderWebhooksController {
     private readonly receiverReplyService: Pick<ReceiverReplyService, 'handleInboundReply'>,
     @Inject(AppConfigService)
     private readonly config: Pick<AppConfigService, 'channelWebhookSecret' | 'twilioAuthToken' | 'publicApiBaseUrl'>,
+    @Inject(PROVIDER_WEBHOOK_EVENTS_REPOSITORY)
+    private readonly providerWebhookEventsRepository: ProviderWebhookEventsRepository,
   ) {}
 
   @Post('whatsapp')
@@ -129,6 +150,40 @@ export class ProviderWebhooksController {
     }
 
     await this.receiverReplyService.handleInboundReply(reply);
+    return { ok: true, processed: 1 };
+  }
+
+  @Post('twilio/voice/status')
+  async handleTwilioVoiceStatusWebhook(
+    @Headers('x-twilio-signature') twilioSignature: string | undefined,
+    @Body() body: TwilioVoiceStatusWebhookBody,
+  ): Promise<ProviderWebhookResponse> {
+    this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/voice/status', body);
+    await this.providerWebhookEventsRepository.createEvent({
+      provider: 'twilio',
+      eventType: 'voice_status',
+      providerEventId: this.twilioProviderEventId(body.CallSid, body.CallStatus),
+      providerMessageId: body.CallSid,
+      payload: body,
+    });
+
+    return { ok: true, processed: 1 };
+  }
+
+  @Post('twilio/voice/amd')
+  async handleTwilioVoiceAmdWebhook(
+    @Headers('x-twilio-signature') twilioSignature: string | undefined,
+    @Body() body: TwilioVoiceAmdWebhookBody,
+  ): Promise<ProviderWebhookResponse> {
+    this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/voice/amd', body);
+    await this.providerWebhookEventsRepository.createEvent({
+      provider: 'twilio',
+      eventType: 'voice_amd',
+      providerEventId: this.twilioProviderEventId(body.CallSid, body.AnsweredBy),
+      providerMessageId: body.CallSid,
+      payload: body,
+    });
+
     return { ok: true, processed: 1 };
   }
 
@@ -205,7 +260,8 @@ export class ProviderWebhooksController {
     ipAddress: string | undefined,
     userAgent: string | undefined,
   ): HandleInboundReceiverReplyInput | null {
-    if (!body.From || !body.Body) {
+    const replyBody = body.ButtonPayload ?? body.ButtonText ?? body.Body;
+    if (!body.From || !replyBody) {
       return null;
     }
 
@@ -213,7 +269,7 @@ export class ProviderWebhooksController {
     const reply: HandleInboundReceiverReplyInput = {
       fromPhone: this.toInternationalPhone(body.From.replace(/^whatsapp:/, '')),
       channel,
-      body: body.Body,
+      body: replyBody,
       ipAddress,
       userAgent,
     };
@@ -259,7 +315,11 @@ export class ProviderWebhooksController {
 
   private assertTwilioSignature(
     twilioSignature: string | undefined,
-    path: '/provider-webhooks/twilio/messaging' | '/provider-webhooks/twilio/voice',
+    path:
+      | '/provider-webhooks/twilio/messaging'
+      | '/provider-webhooks/twilio/voice'
+      | '/provider-webhooks/twilio/voice/status'
+      | '/provider-webhooks/twilio/voice/amd',
     params: Record<string, string | undefined>,
   ): void {
     const authToken = this.config.twilioAuthToken;
@@ -320,5 +380,13 @@ export class ProviderWebhooksController {
 
     const date = new Date(value);
     return Number.isNaN(date.getTime()) ? undefined : date;
+  }
+
+  private twilioProviderEventId(primary: string | undefined, secondary: string | undefined): string | undefined {
+    if (!primary) {
+      return undefined;
+    }
+
+    return secondary ? `${primary}:${secondary}` : primary;
   }
 }

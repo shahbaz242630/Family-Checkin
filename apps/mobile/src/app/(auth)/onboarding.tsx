@@ -3,9 +3,12 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleShee
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, TextInput } from '../../components/auth';
+import { CountrySelect, LanguageSelect, ReceiverPhoneInput, TimeSelect, TimezoneSelect } from '../../components/onboarding';
+import { COUNTRIES } from '../../data';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import {
   createReceiver,
+  isPaidAccessRequiredError,
   type BackendChannel,
   type BackendRelationshipType,
   type BackendTechProfile,
@@ -28,9 +31,10 @@ const profileOptions: Array<{
   primaryChannel: BackendChannel;
   fallbackChannels: BackendChannel[];
 }> = [
-  { value: 'WHATSAPP', label: 'WhatsApp first', primaryChannel: 'WHATSAPP', fallbackChannels: ['SMS', 'VOICE'] },
-  { value: 'SMS', label: 'SMS first', primaryChannel: 'SMS', fallbackChannels: ['VOICE'] },
-  { value: 'VOICE_ONLY', label: 'Voice only', primaryChannel: 'VOICE', fallbackChannels: [] },
+  { value: 'WHATSAPP', label: 'WhatsApp if available', primaryChannel: 'WHATSAPP', fallbackChannels: ['SMS', 'VOICE'] },
+  { value: 'SMS', label: 'SMS only', primaryChannel: 'SMS', fallbackChannels: [] },
+  { value: 'VOICE_ONLY', label: 'Voice call', primaryChannel: 'VOICE', fallbackChannels: [] },
+  { value: 'LANDLINE', label: 'Landline', primaryChannel: 'VOICE', fallbackChannels: [] },
 ];
 
 export default function OnboardingScreen() {
@@ -39,6 +43,7 @@ export default function OnboardingScreen() {
   const [phone, setPhone] = useState('');
   const [countryCode, setCountryCode] = useState('AE');
   const [phoneCountry, setPhoneCountry] = useState('AE');
+  const [receiverCountryEdited, setReceiverCountryEdited] = useState(false);
   const [relationshipType, setRelationshipType] = useState<BackendRelationshipType>('PARENT');
   const [language, setLanguage] = useState('en');
   const [timezone, setTimezone] = useState('Asia/Dubai');
@@ -49,10 +54,29 @@ export default function OnboardingScreen() {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const selectedProfile = profileOptions.find((option) => option.value === techProfile) ?? profileOptions[0];
+  const selectedPhoneCountry = COUNTRIES.find((country) => country.isoCode === phoneCountry) ?? COUNTRIES[0];
+  const phoneError = phone.trim().startsWith('0') ? 'Remove the leading 0. Use the local number after the country code.' : undefined;
+
+  const handlePhoneCountryChange = (isoCode: string) => {
+    setPhoneCountry(isoCode);
+    if (!receiverCountryEdited) {
+      setCountryCode(isoCode);
+    }
+  };
+
+  const handleReceiverCountryChange = (isoCode: string) => {
+    setCountryCode(isoCode);
+    setReceiverCountryEdited(true);
+  };
 
   const handleSubmit = async () => {
     if (!name.trim() || !phone.trim()) {
       Alert.alert('Missing details', 'Receiver name and phone are required.');
+      return;
+    }
+
+    if (phoneError) {
+      Alert.alert('Check phone number', phoneError);
       return;
     }
 
@@ -63,7 +87,7 @@ export default function OnboardingScreen() {
 
     const payload: ReceiverSetupInput = {
       name: name.trim(),
-      phone: phone.trim(),
+      phone: `${selectedPhoneCountry.dialCode}${phone.trim()}`,
       phoneCountry: phoneCountry.trim().toUpperCase(),
       countryCode: countryCode.trim().toUpperCase(),
       relationshipType,
@@ -85,6 +109,20 @@ export default function OnboardingScreen() {
       await createReceiver(payload);
       router.replace('/(main)');
     } catch (err) {
+      if (isPaidAccessRequiredError(err)) {
+        Alert.alert(
+          'Subscription required',
+          'Choose monthly or annual access to add receivers and start check-ins.',
+          [
+            { text: 'Not now', style: 'cancel' },
+            {
+              text: 'View billing',
+              onPress: () => router.push('/(main)/settings/billing' as never),
+            },
+          ],
+        );
+        return;
+      }
       Alert.alert('Unable to add receiver', err instanceof Error ? err.message : 'Please try again.');
     } finally {
       setIsSubmitting(false);
@@ -97,27 +135,23 @@ export default function OnboardingScreen() {
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.header}>
             <Text style={styles.title}>Add receiver</Text>
-            <Text style={styles.subtitle}>Consent will be requested before any check-ins begin.</Text>
+            <Text style={styles.subtitle}>
+              Consent will be requested before any check-ins begin. Nearby is not an emergency service.
+            </Text>
           </View>
 
           <View style={styles.form}>
             <TextInput label="Receiver name" placeholder="Fatima Parent" value={name} onChangeText={setName} />
-            <TextInput
-              label="Receiver phone"
-              placeholder="+971501234567"
-              keyboardType="phone-pad"
-              value={phone}
-              onChangeText={setPhone}
+            <ReceiverPhoneInput
+              phoneCountry={phoneCountry}
+              phone={phone}
+              onChangePhoneCountry={handlePhoneCountryChange}
+              onChangePhone={(nextPhone) => setPhone(nextPhone.replace(/\D/g, ''))}
+              error={phoneError}
+              disabled={isSubmitting}
             />
 
-            <View style={styles.row}>
-              <View style={styles.rowItem}>
-                <TextInput label="Phone country" placeholder="AE" value={phoneCountry} onChangeText={setPhoneCountry} />
-              </View>
-              <View style={styles.rowItem}>
-                <TextInput label="Receiver country" placeholder="AE" value={countryCode} onChangeText={setCountryCode} />
-              </View>
-            </View>
+            <CountrySelect label="Receiver country" value={countryCode} onChange={handleReceiverCountryChange} showDialCode={false} />
 
             <View>
               <Text style={styles.fieldLabel}>Relationship</Text>
@@ -153,21 +187,16 @@ export default function OnboardingScreen() {
               </View>
             </View>
 
-            <View style={styles.row}>
-              <View style={styles.rowItem}>
-                <TextInput label="Language" placeholder="en" value={language} onChangeText={setLanguage} />
-              </View>
-              <View style={styles.rowItem}>
-                <TextInput label="Timezone" placeholder="Asia/Dubai" value={timezone} onChangeText={setTimezone} />
-              </View>
-            </View>
+            <LanguageSelect label="Language" value={language} onChange={setLanguage} disabled={isSubmitting} />
+            <TimezoneSelect label="Timezone" value={timezone} onChange={setTimezone} />
 
+            <Text style={styles.fieldHint}>Check-in window uses the receiver timezone selected above.</Text>
             <View style={styles.row}>
               <View style={styles.rowItem}>
-                <TextInput label="From" placeholder="09:00" value={windowStart} onChangeText={setWindowStart} />
+                <TimeSelect label="From" value={windowStart} onChange={setWindowStart} disabled={isSubmitting} />
               </View>
               <View style={styles.rowItem}>
-                <TextInput label="To" placeholder="11:00" value={windowEnd} onChangeText={setWindowEnd} />
+                <TimeSelect label="To" value={windowEnd} onChange={setWindowEnd} disabled={isSubmitting} />
               </View>
             </View>
 
@@ -226,6 +255,10 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     fontWeight: '600',
     marginBottom: spacing.sm,
+  },
+  fieldHint: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
   },
   optionGrid: {
     flexDirection: 'row',

@@ -88,6 +88,10 @@ export default function DashboardScreen() {
           </View>
         )}
       </View>
+
+      <Text style={styles.emergencyDisclaimer}>
+        Nearby is not an emergency service. In an emergency, contact local emergency services directly.
+      </Text>
     </ScrollView>
   );
 }
@@ -385,5 +389,11 @@ const styles = StyleSheet.create({
     color: colors.textOnPrimary,
     fontSize: fontSize.md,
     fontWeight: '600',
+  },
+  emergencyDisclaimer: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+    lineHeight: 18,
+    textAlign: 'center',
   },
 });

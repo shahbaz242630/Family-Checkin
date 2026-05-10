@@ -60,14 +60,6 @@ export async function downloadUserData(stepUpToken: string): Promise<boolean> {
 }
 
 /**
- * Delete all user data but keep the account is intentionally not exposed until
- * backend retention rules are defined separately from full account deletion.
- */
-export async function deleteUserDataOnly(): Promise<{ success: boolean; message?: string; error?: string }> {
-  return { success: false, error: 'Delete data only is not available yet. Use Delete Account for full account deletion.' };
-}
-
-/**
  * Delete entire account and all data via backend account privacy endpoint.
  */
 export async function deleteUserAccount(stepUpToken: string): Promise<{ success: boolean; message?: string; error?: string }> {

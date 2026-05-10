@@ -88,12 +88,10 @@ export default function SignupScreen() {
   };
 
   const openPrivacyPolicy = () => {
-    // TODO: Replace with actual privacy policy URL
     Linking.openURL('https://familycheckin.app/privacy');
   };
 
   const openTermsOfService = () => {
-    // TODO: Replace with actual terms URL
     Linking.openURL('https://familycheckin.app/terms');
   };
 
@@ -115,7 +113,7 @@ export default function SignupScreen() {
             </Pressable>
             <Text style={styles.title}>Create your account</Text>
             <Text style={styles.subtitle}>
-              Join thousands securing their loved ones
+              Set up private check-ins for your receivers
             </Text>
           </View>
 

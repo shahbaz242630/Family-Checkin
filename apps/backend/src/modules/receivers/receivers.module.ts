@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { BackupContactsModule } from '../backup-contacts/backup-contacts.module';
+import { BillingModule } from '../billing/billing.module';
 import { CheckInsModule } from '../check-ins/check-ins.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { EscalationsModule } from '../escalations/escalations.module';
@@ -18,7 +19,7 @@ import { RECEIVERS_REPOSITORY } from './receivers.tokens';
 import { ReceiversService } from './receivers.service';
 
 @Module({
-  imports: [AuditModule, AuthModule, UsersModule, ChannelsModule, CheckInsModule, EscalationsModule, BackupContactsModule],
+  imports: [AuditModule, AuthModule, UsersModule, ChannelsModule, CheckInsModule, EscalationsModule, BackupContactsModule, BillingModule],
   controllers: [ReceiversController, ReceiverRepliesController],
   providers: [
     PrismaService,

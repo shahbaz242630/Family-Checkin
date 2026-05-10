@@ -1,13 +1,21 @@
-// Database types - will be auto-generated from Supabase later
-// For now, manual types based on our BRD schema
+// Manual database types aligned with the current receiver/check-in backend schema.
+// Replace with generated Supabase types once the database contract is finalized.
 
-export type Json =
-  | string
-  | number
-  | boolean
-  | null
-  | { [key: string]: Json | undefined }
-  | Json[];
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+
+export type Channel = 'WHATSAPP' | 'SMS' | 'VOICE';
+export type ConsentStatus = 'PENDING' | 'GRANTED' | 'REVOKED' | 'ABUSE_REPORTED' | 'EXPIRED';
+export type CheckInStatus =
+  | 'PENDING'
+  | 'SENT'
+  | 'RESPONDED_OK'
+  | 'RESPONDED_HELP'
+  | 'NO_RESPONSE'
+  | 'FAILED'
+  | 'SKIPPED'
+  | 'NEEDS_ATTENTION'
+  | 'ESCALATED'
+  | 'RESOLVED';
 
 export interface Database {
   public: {
@@ -16,12 +24,9 @@ export interface Database {
         Row: {
           id: string;
           email: string | null;
-          phone_e164: string | null;
-          full_name: string;
           locale: string;
           timezone: string;
           country: string;
-          role_default: string;
           created_at: string;
           updated_at: string;
           last_seen_at: string | null;
@@ -29,115 +34,191 @@ export interface Database {
         Insert: {
           id?: string;
           email?: string | null;
-          phone_e164?: string | null;
-          full_name: string;
           locale?: string;
           timezone: string;
           country: string;
-          role_default?: string;
           created_at?: string;
           updated_at?: string;
           last_seen_at?: string | null;
         };
         Update: {
-          id?: string;
           email?: string | null;
-          phone_e164?: string | null;
-          full_name?: string;
           locale?: string;
           timezone?: string;
           country?: string;
-          role_default?: string;
-          created_at?: string;
           updated_at?: string;
           last_seen_at?: string | null;
         };
       };
-      loved_one_profiles: {
+      receivers: {
         Row: {
           id: string;
-          owner_user_id: string;
-          linked_user_id: string | null;
-          display_name: string;
+          user_id: string;
+          name_encrypted: string;
+          phone_encrypted: string;
+          phone_hash: string;
+          country_code: string;
           relationship_type: string;
-          preferred_channels: Json;
-          preferred_language: string;
+          language: string;
           timezone: string;
-          phone_e164: string | null;
-          email: string | null;
-          large_text_enabled: boolean;
-          is_active: boolean;
+          tech_profile: string;
+          primary_channel: Channel;
+          fallback_channels: Channel[];
+          schedule_frequency: string;
+          schedule_time_window: Json;
+          schedule_custom_cron: string | null;
+          consent_status: ConsentStatus;
+          consent_requested_at: string | null;
+          consent_granted_at: string | null;
+          paused_until: string | null;
+          paused_reason: string | null;
+          deleted_at: string | null;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
-          owner_user_id: string;
-          linked_user_id?: string | null;
-          display_name: string;
+          user_id: string;
+          name_encrypted: string;
+          phone_encrypted: string;
+          phone_hash: string;
+          country_code: string;
           relationship_type: string;
-          preferred_channels?: Json;
-          preferred_language?: string;
+          language: string;
           timezone: string;
-          phone_e164?: string | null;
-          email?: string | null;
-          large_text_enabled?: boolean;
-          is_active?: boolean;
+          tech_profile: string;
+          primary_channel: Channel;
+          fallback_channels?: Channel[];
+          schedule_frequency: string;
+          schedule_time_window: Json;
+          schedule_custom_cron?: string | null;
+          consent_status?: ConsentStatus;
           created_at?: string;
           updated_at?: string;
         };
         Update: {
-          id?: string;
-          owner_user_id?: string;
-          linked_user_id?: string | null;
-          display_name?: string;
+          name_encrypted?: string;
+          country_code?: string;
           relationship_type?: string;
-          preferred_channels?: Json;
-          preferred_language?: string;
+          language?: string;
           timezone?: string;
-          phone_e164?: string | null;
-          email?: string | null;
-          large_text_enabled?: boolean;
-          is_active?: boolean;
-          created_at?: string;
+          tech_profile?: string;
+          primary_channel?: Channel;
+          fallback_channels?: Channel[];
+          schedule_frequency?: string;
+          schedule_time_window?: Json;
+          schedule_custom_cron?: string | null;
+          consent_status?: ConsentStatus;
+          paused_until?: string | null;
+          paused_reason?: string | null;
+          deleted_at?: string | null;
           updated_at?: string;
         };
       };
-      checkins: {
+      backup_contacts: {
         Row: {
           id: string;
-          relationship_id: string;
-          schedule_id: string;
-          due_at: string;
-          status: string;
-          responded_at: string | null;
-          response_method: string | null;
-          snooze_until: string | null;
+          receiver_id: string;
+          name_encrypted: string;
+          phone_encrypted: string;
+          phone_hash: string;
+          relationship_type: string;
+          priority: number;
+          channels: Channel[];
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
-          relationship_id: string;
-          schedule_id: string;
-          due_at: string;
-          status?: string;
-          responded_at?: string | null;
-          response_method?: string | null;
-          snooze_until?: string | null;
+          receiver_id: string;
+          name_encrypted: string;
+          phone_encrypted: string;
+          phone_hash: string;
+          relationship_type: string;
+          priority: number;
+          channels?: Channel[];
           created_at?: string;
           updated_at?: string;
         };
         Update: {
+          name_encrypted?: string;
+          phone_encrypted?: string;
+          phone_hash?: string;
+          relationship_type?: string;
+          priority?: number;
+          channels?: Channel[];
+          updated_at?: string;
+        };
+      };
+      check_ins: {
+        Row: {
+          id: string;
+          receiver_id: string;
+          status: CheckInStatus;
+          scheduled_at: string;
+          channel_used: Channel | null;
+          sent_at: string | null;
+          responded_at: string | null;
+          response_detected_as: string | null;
+          resolved_at: string | null;
+          resolution_by_user_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
           id?: string;
-          relationship_id?: string;
-          schedule_id?: string;
-          due_at?: string;
-          status?: string;
+          receiver_id: string;
+          status?: CheckInStatus;
+          scheduled_at: string;
+          channel_used?: Channel | null;
+          sent_at?: string | null;
           responded_at?: string | null;
-          response_method?: string | null;
-          snooze_until?: string | null;
+          response_detected_as?: string | null;
+          resolved_at?: string | null;
+          resolution_by_user_id?: string | null;
           created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          status?: CheckInStatus;
+          channel_used?: Channel | null;
+          sent_at?: string | null;
+          responded_at?: string | null;
+          response_detected_as?: string | null;
+          resolved_at?: string | null;
+          resolution_by_user_id?: string | null;
+          updated_at?: string;
+        };
+      };
+      device_tokens: {
+        Row: {
+          id: string;
+          user_id: string;
+          token: string;
+          platform: string;
+          device_id: string | null;
+          active: boolean;
+          last_registered_at: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          token: string;
+          platform: string;
+          device_id?: string | null;
+          active?: boolean;
+          last_registered_at?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          token?: string;
+          platform?: string;
+          device_id?: string | null;
+          active?: boolean;
+          last_registered_at?: string;
           updated_at?: string;
         };
       };

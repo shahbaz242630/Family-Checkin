@@ -126,7 +126,7 @@ describe('configured channel providers', () => {
     });
   });
 
-  it('starts Twilio voice calls with inline TwiML gather instructions', async () => {
+  it('starts Twilio voice calls with hosted WAV prompts, no-input repeat, AMD, and status callbacks', async () => {
     const httpClient = new FakeTwilioHttpClient({
       sid: 'CA123',
       status: 'ringing',
@@ -137,6 +137,7 @@ describe('configured channel providers', () => {
         authToken: 'twilio-auth-token',
         fromNumber: '+15550003333',
         publicApiBaseUrl: 'https://api.nearby.test',
+        voiceAudioBaseUrl: 'https://cdn.nearby.test/voice',
       },
       httpClient,
       () => new Date('2026-05-01T06:02:00.000Z'),
@@ -157,8 +158,73 @@ describe('configured channel providers', () => {
     expect(Object.fromEntries(request?.body ?? new URLSearchParams())).toEqual({
       To: '+971501234569',
       From: '+15550003333',
+      MachineDetection: 'Enable',
+      AsyncAmd: 'true',
+      AsyncAmdStatusCallback: 'https://api.nearby.test/provider-webhooks/twilio/voice/amd',
+      AsyncAmdStatusCallbackMethod: 'POST',
+      StatusCallback: 'https://api.nearby.test/provider-webhooks/twilio/voice/status',
+      StatusCallbackEvent: 'initiated ringing answered completed',
+      StatusCallbackMethod: 'POST',
       Twiml:
-        '<Response><Gather input="dtmf speech" numDigits="1" action="https://api.nearby.test/provider-webhooks/twilio/voice" method="POST"><Say>checkin_daily_voice</Say></Gather></Response>',
+        '<Response><Gather input="dtmf" numDigits="1" timeout="10" action="https://api.nearby.test/provider-webhooks/twilio/voice" method="POST"><Play>https://cdn.nearby.test/voice/en/checkin_daily_voice.wav</Play></Gather><Gather input="dtmf" numDigits="1" timeout="10" action="https://api.nearby.test/provider-webhooks/twilio/voice" method="POST"><Play>https://cdn.nearby.test/voice/en/checkin_daily_voice.wav</Play></Gather><Hangup/></Response>',
     });
+  });
+
+  it('falls back to English voice prompts when the script language is not a supported asset language', async () => {
+    const httpClient = new FakeTwilioHttpClient({
+      sid: 'CA124',
+      status: 'queued',
+    });
+    const provider = new VoiceProvider(
+      {
+        accountSid: 'AC123',
+        authToken: 'twilio-auth-token',
+        fromNumber: '+15550003333',
+        publicApiBaseUrl: 'https://api.nearby.test/',
+        voiceAudioBaseUrl: 'https://cdn.nearby.test/voice/',
+      },
+      httpClient,
+      () => new Date('2026-05-01T06:03:00.000Z'),
+    );
+
+    await provider.makeVoiceCall('+971501234569', {
+      scriptKey: 'checkin_daily_voice',
+      language: 'fr-CA',
+      variables: {},
+    });
+
+    const [request] = httpClient.requests;
+    expect(request?.body.get('Twiml')).toContain('https://cdn.nearby.test/voice/en/checkin_daily_voice.wav');
+  });
+
+  it('uses a per-call voice caller ID override when one is provided', async () => {
+    const httpClient = new FakeTwilioHttpClient({
+      sid: 'CA125',
+      status: 'queued',
+    });
+    const provider = new VoiceProvider(
+      {
+        accountSid: 'AC123',
+        authToken: 'twilio-auth-token',
+        fromNumber: '+15550003333',
+        publicApiBaseUrl: 'https://api.nearby.test',
+        voiceAudioBaseUrl: 'https://cdn.nearby.test/voice',
+      },
+      httpClient,
+      () => new Date('2026-05-01T06:04:00.000Z'),
+    );
+
+    await provider.makeVoiceCall(
+      '+971501234569',
+      {
+        scriptKey: 'checkin_daily_voice',
+        language: 'en',
+        variables: {},
+      },
+      { fromNumber: '+15559990000' },
+    );
+
+    const [request] = httpClient.requests;
+    expect(request?.body.get('From')).toBe('+15559990000');
   });
 });

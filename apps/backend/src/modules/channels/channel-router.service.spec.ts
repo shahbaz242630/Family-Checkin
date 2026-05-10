@@ -49,6 +49,24 @@ describe('ChannelRouterService', () => {
     expect(voice.voiceCalls).toHaveLength(1);
   });
 
+  it('passes voice call options through to the voice provider', async () => {
+    const voice = new FakeChannelProvider(Channel.VOICE);
+    const router = new ChannelRouterService([voice]);
+
+    await router.makeVoiceCall(
+      Channel.VOICE,
+      '+971501234567',
+      {
+        scriptKey: 'checkin_daily_voice',
+        language: 'en',
+        variables: {},
+      },
+      { fromNumber: '+15559990000' },
+    );
+
+    expect(voice.voiceCalls[0]?.options).toEqual({ fromNumber: '+15559990000' });
+  });
+
   it('checks provider availability for a phone number', async () => {
     const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
       availableNumbers: ['+971501234567'],
@@ -57,6 +75,33 @@ describe('ChannelRouterService', () => {
 
     await expect(router.isAvailableForNumber(Channel.WHATSAPP, '+971501234567')).resolves.toBe(true);
     await expect(router.isAvailableForNumber(Channel.WHATSAPP, '+971509999999')).resolves.toBe(false);
+  });
+
+  it('resolves a reachable channel plan without pretending WhatsApp detection is guaranteed', async () => {
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
+      availableNumbers: [],
+    });
+    const sms = new FakeChannelProvider(Channel.SMS, {
+      availableNumbers: ['+971501234567'],
+    });
+    const voice = new FakeChannelProvider(Channel.VOICE, {
+      availableNumbers: ['+971501234567'],
+    });
+    const router = new ChannelRouterService([whatsapp, sms, voice]);
+
+    await expect(
+      router.resolveReachablePlan({
+        phone: '+971501234567',
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS, Channel.VOICE],
+      }),
+    ).resolves.toEqual({
+      primaryChannel: Channel.SMS,
+      fallbackChannels: [Channel.VOICE],
+      detectionStatus: 'FALLBACK_SELECTED',
+      unavailableChannels: [Channel.WHATSAPP],
+      detectionConfidence: 'provider_availability_check',
+    });
   });
 
   it('rejects unregistered channels', async () => {

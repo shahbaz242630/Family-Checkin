@@ -1,10 +1,11 @@
 import { Platform } from 'react-native';
+import { BackendRequestError } from './backendErrors';
 import { getSession } from './supabase';
 
 const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
 
 export type BackendRelationshipType = 'PARENT' | 'GRANDPARENT' | 'SIBLING' | 'SPOUSE' | 'CHILD' | 'FRIEND' | 'OTHER';
-export type BackendTechProfile = 'WHATSAPP' | 'SMS' | 'VOICE_ONLY';
+export type BackendTechProfile = 'WHATSAPP' | 'SMS' | 'VOICE_ONLY' | 'LANDLINE';
 export type BackendChannel = 'WHATSAPP' | 'SMS' | 'VOICE';
 export type BackendConsentStatus = 'PENDING' | 'GRANTED' | 'DECLINED' | 'REVOKED';
 export type BackendCheckInAttemptStatus = 'PENDING' | 'SENT' | 'RESPONDED' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED';
@@ -20,6 +21,11 @@ export type BackendCheckInStatus =
   | 'FAILED'
   | 'SKIPPED';
 export type BackendAbuseReportStatus = 'PENDING' | 'REVIEWED_SAFE' | 'REVIEWED_ACTION_TAKEN';
+export type DeviceTokenPlatform = 'ios' | 'android' | 'web';
+export type BackendBillingInterval = 'MONTHLY' | 'ANNUAL';
+export type BackendBillingStore = 'APP_STORE' | 'PLAY_STORE' | 'STRIPE' | 'PROMOTIONAL' | 'UNKNOWN';
+export type BackendSubscriptionTier = 'TIER_1' | 'TIER_2' | 'TIER_3';
+export type BackendSubscriptionStatus = 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'SUSPENDED';
 
 export interface SyncedBackendUser {
   id: string;
@@ -31,6 +37,19 @@ export interface SyncedBackendUser {
 export interface BackendAdminMe {
   id: string;
   role: 'SUPER_ADMIN' | 'OPERATOR' | 'SUPPORT_READONLY';
+}
+
+export interface BackendBillingStatus {
+  entitled: boolean;
+  revenueCatAppUserId: string;
+  subscription: {
+    tier: BackendSubscriptionTier;
+    status: BackendSubscriptionStatus;
+    billingInterval: BackendBillingInterval | null;
+    store: BackendBillingStore | null;
+    currentPeriodEnd: string;
+    willRenew: boolean;
+  } | null;
 }
 
 export interface BackendStepUpRequestResult {
@@ -207,7 +226,7 @@ export interface BackendReceiverSummary {
 }
 
 export interface BackendReceiverDetail extends BackendReceiverSummary {
-  backupContacts: [];
+  backupContacts: BackendBackupContact[];
   escalation: {
     configured: boolean;
     nextStep: string;
@@ -264,12 +283,28 @@ export async function getReceiver(receiverId: string): Promise<BackendReceiverDe
   return response.receiver;
 }
 
-export async function pauseReceiver(receiverId: string): Promise<BackendReceiverDetail> {
+export async function pauseReceiver(receiverId: string, pausedUntil?: string): Promise<BackendReceiverDetail> {
   const response = await backendRequest<{ receiver: BackendReceiverDetail }>(`/receivers/${receiverId}/pause`, {
     method: 'PATCH',
+    body: pausedUntil ? JSON.stringify({ pausedUntil }) : undefined,
   });
 
   return response.receiver;
+}
+
+export async function registerDeviceToken(input: {
+  token: string;
+  platform: DeviceTokenPlatform;
+  deviceId?: string;
+}): Promise<{ id: string; platform: DeviceTokenPlatform; active: boolean; registeredAt: string }> {
+  const response = await backendRequest<{
+    deviceToken: { id: string; platform: DeviceTokenPlatform; active: boolean; registeredAt: string };
+  }>('/device-tokens', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+
+  return response.deviceToken;
 }
 
 export async function resumeReceiver(receiverId: string): Promise<BackendReceiverDetail> {
@@ -301,6 +336,12 @@ export async function getAdminMe(): Promise<BackendAdminMe> {
   });
 
   return response.admin;
+}
+
+export async function getBillingStatus(): Promise<BackendBillingStatus> {
+  return await backendRequest<BackendBillingStatus>('/billing/status', {
+    method: 'GET',
+  });
 }
 
 export async function requestAccountStepUp(action: BackendSensitiveAction): Promise<BackendStepUpRequestResult> {
@@ -484,7 +525,8 @@ async function backendRequest<T>(path: string, init: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(await responseErrorMessage(response));
+    const errorBody = await responseErrorBody(response);
+    throw new BackendRequestError(errorBody.message, response.status, errorBody.code);
   }
 
   return (await response.json()) as T;
@@ -502,18 +544,22 @@ function resolveBackendUrl(): string | undefined {
   return backendUrl;
 }
 
-async function responseErrorMessage(response: Response): Promise<string> {
+async function responseErrorBody(response: Response): Promise<{ message: string; code?: string }> {
   try {
-    const body = (await response.json()) as { message?: unknown; error?: unknown };
-    if (typeof body.message === 'string') {
-      return body.message;
-    }
-    if (typeof body.error === 'string') {
-      return body.error;
-    }
-  } catch {
-    // Fall through to generic HTTP message.
-  }
+    const body = (await response.json()) as { message?: unknown; error?: unknown; code?: unknown };
+    const message =
+      typeof body.message === 'string'
+        ? body.message
+        : typeof body.error === 'string'
+          ? body.error
+          : `Backend request failed with status ${response.status}`;
 
-  return `Backend request failed with status ${response.status}`;
+    if (typeof body.code === 'string') {
+      return { message, code: body.code };
+    }
+
+    return { message };
+  } catch {
+    return { message: `Backend request failed with status ${response.status}` };
+  }
 }

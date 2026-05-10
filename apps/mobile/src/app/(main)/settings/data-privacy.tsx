@@ -14,7 +14,6 @@ import { colors, spacing, fontSize, borderRadius } from '../../../theme';
 import { useAuthContext } from '../../../contexts/AuthContext';
 import {
   downloadUserData,
-  deleteUserDataOnly,
   deleteUserAccount,
   requestAccountStepUp,
   verifyAccountStepUp,
@@ -25,7 +24,6 @@ export default function DataPrivacyScreen() {
   const router = useRouter();
   const { user } = useAuthContext();
   const [isExporting, setIsExporting] = useState(false);
-  const [isDeletingData, setIsDeletingData] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const handleExportData = async () => {
@@ -49,58 +47,10 @@ export default function DataPrivacyScreen() {
     }
   };
 
-  const handleDeleteDataOnly = () => {
-    Alert.alert(
-      'Delete All Data',
-      'This will permanently delete all your check-ins, loved ones, schedules, and escalation data. Your account will remain active.\n\nThis action cannot be undone.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete Data',
-          style: 'destructive',
-          onPress: confirmDeleteData,
-        },
-      ]
-    );
-  };
-
-  const confirmDeleteData = () => {
-    Alert.alert(
-      'Are you absolutely sure?',
-      'All your data will be permanently deleted. This cannot be recovered.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Yes, Delete All Data',
-          style: 'destructive',
-          onPress: executeDeleteData,
-        },
-      ]
-    );
-  };
-
-  const executeDeleteData = async () => {
-    if (!user?.id) return;
-
-    setIsDeletingData(true);
-    try {
-      const result = await deleteUserDataOnly();
-      if (result.success) {
-        Alert.alert('Success', result.message || 'All your data has been deleted. Your account is still active.');
-      } else {
-        Alert.alert('Error', result.error || 'Failed to delete data. Please try again.');
-      }
-    } catch (error) {
-      Alert.alert('Error', 'Failed to delete data. Please try again.');
-    } finally {
-      setIsDeletingData(false);
-    }
-  };
-
   const handleDeleteAccount = () => {
     Alert.alert(
       'Delete Account',
-      'This will permanently delete your account and all associated data including:\n\n• Your profile\n• All loved ones\n• All check-in history\n• All escalation data\n• Your subscription\n\nThis action cannot be undone.',
+      'This will permanently delete your account and all associated data including:\n\n• Your profile\n• All receivers\n• All check-in history\n• All escalation data\n• Your subscription\n\nThis action cannot be undone.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -183,7 +133,7 @@ export default function DataPrivacyScreen() {
           <View style={styles.cardContent}>
             <Text style={styles.cardTitle}>Export Data</Text>
             <Text style={styles.cardDescription}>
-              Download a copy of all your data in JSON format including your profile, loved ones, check-ins, and settings.
+              Download a copy of all your data in JSON format including your profile, receivers, check-ins, and settings.
             </Text>
           </View>
           <Pressable
@@ -195,32 +145,6 @@ export default function DataPrivacyScreen() {
               <ActivityIndicator size="small" color={colors.primary} />
             ) : (
               <Text style={styles.exportButtonText}>Export</Text>
-            )}
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Delete Data Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Data Management</Text>
-
-        <View style={styles.card}>
-          <Text style={styles.cardIcon}>🗑️</Text>
-          <View style={styles.cardContent}>
-            <Text style={styles.cardTitle}>Delete All Data</Text>
-            <Text style={styles.cardDescription}>
-              Remove all your check-ins, loved ones, and schedules. Your account will remain active.
-            </Text>
-          </View>
-          <Pressable
-            style={[styles.actionButton, styles.deleteDataButton]}
-            onPress={handleDeleteDataOnly}
-            disabled={isDeletingData}
-          >
-            {isDeletingData ? (
-              <ActivityIndicator size="small" color={colors.error} />
-            ) : (
-              <Text style={styles.deleteDataButtonText}>Delete</Text>
             )}
           </Pressable>
         </View>
@@ -258,8 +182,8 @@ export default function DataPrivacyScreen() {
         <Text style={styles.infoText}>
           • Your data is stored securely on Supabase servers{'\n'}
           • We use Row Level Security to protect your data{'\n'}
-          • You can export or delete your data at any time{'\n'}
-          • Deleted data cannot be recovered
+          • You can export your data or delete your account at any time{'\n'}
+          • Nearby is not an emergency service
         </Text>
       </View>
     </ScrollView>
@@ -352,16 +276,6 @@ const styles = StyleSheet.create({
   },
   exportButtonText: {
     color: colors.primary,
-    fontSize: fontSize.sm,
-    fontWeight: '600',
-  },
-  deleteDataButton: {
-    backgroundColor: colors.error + '15',
-    borderWidth: 1,
-    borderColor: colors.error,
-  },
-  deleteDataButtonText: {
-    color: colors.error,
     fontSize: fontSize.sm,
     fontWeight: '600',
   },

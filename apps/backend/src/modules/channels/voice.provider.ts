@@ -1,5 +1,5 @@
 import { Channel } from '@prisma/client';
-import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceScript } from './channel-provider';
+import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceCallOptions, VoiceScript } from './channel-provider';
 import { ChannelProviderConfigurationError } from './configured-provider-errors';
 import { FetchTwilioHttpClient, type TwilioHttpClient } from './twilio-http-client';
 import { renderTwilioVoiceTwiml } from './twilio-rendering';
@@ -9,6 +9,7 @@ export interface VoiceProviderConfig {
   authToken?: string;
   fromNumber?: string;
   publicApiBaseUrl?: string;
+  voiceAudioBaseUrl?: string;
 }
 
 export class VoiceProvider implements ChannelProvider {
@@ -24,15 +25,27 @@ export class VoiceProvider implements ChannelProvider {
     throw new Error('Voice provider cannot send text messages');
   }
 
-  async makeVoiceCall(to: string, script: VoiceScript): Promise<ChannelCallResult> {
+  async makeVoiceCall(to: string, script: VoiceScript, options?: VoiceCallOptions): Promise<ChannelCallResult> {
     const config = this.configured();
 
+    const publicApiBaseUrl = stripTrailingSlash(config.publicApiBaseUrl);
+    const voiceAudioBaseUrl = stripTrailingSlash(config.voiceAudioBaseUrl);
     const response = await this.httpClient.postForm(
       this.callsUrl(config.accountSid),
       new URLSearchParams({
         To: to,
-        From: config.fromNumber,
-        Twiml: renderTwilioVoiceTwiml(script, `${config.publicApiBaseUrl}/provider-webhooks/twilio/voice`),
+        From: options?.fromNumber ?? config.fromNumber,
+        Twiml: renderTwilioVoiceTwiml(script, {
+          actionUrl: `${publicApiBaseUrl}/provider-webhooks/twilio/voice`,
+          audioBaseUrl: voiceAudioBaseUrl,
+        }),
+        MachineDetection: 'Enable',
+        AsyncAmd: 'true',
+        AsyncAmdStatusCallback: `${publicApiBaseUrl}/provider-webhooks/twilio/voice/amd`,
+        AsyncAmdStatusCallbackMethod: 'POST',
+        StatusCallback: `${publicApiBaseUrl}/provider-webhooks/twilio/voice/status`,
+        StatusCallbackEvent: 'initiated ringing answered completed',
+        StatusCallbackMethod: 'POST',
       }),
       config.authToken,
     );
@@ -49,7 +62,13 @@ export class VoiceProvider implements ChannelProvider {
   }
 
   private assertConfigured(): void {
-    if (!this.config.accountSid || !this.config.authToken || !this.config.fromNumber || !this.config.publicApiBaseUrl) {
+    if (
+      !this.config.accountSid ||
+      !this.config.authToken ||
+      !this.config.fromNumber ||
+      !this.config.publicApiBaseUrl ||
+      !this.config.voiceAudioBaseUrl
+    ) {
       throw new ChannelProviderConfigurationError('Voice');
     }
   }
@@ -76,4 +95,8 @@ function toCallStatus(value: unknown): ChannelCallResult['providerStatus'] {
     return 'ringing';
   }
   return 'accepted';
+}
+
+function stripTrailingSlash(value: string): string {
+  return value.replace(/\/$/, '');
 }

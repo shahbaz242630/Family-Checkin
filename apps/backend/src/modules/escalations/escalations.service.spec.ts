@@ -5,6 +5,7 @@ import type { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { FakeChannelProvider } from '../channels/fake-channel.provider';
 import type { ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceScript } from '../channels/channel-provider';
+import type { NotificationsService } from '../notifications/notifications.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type {
   CreateEscalationEventInput,
@@ -18,6 +19,7 @@ const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 
 class InMemoryEscalationsRepository implements EscalationsRepository {
   public backupContacts: EscalationBackupContactRecord[] = [];
+  public receiverOwnerUserId = 'sender-1';
   public createdEvents: CreateEscalationEventInput[] = [];
   public escalatedCheckIns: string[] = [];
   public terminalStatuses: { checkInId: string; status: CheckInStatus }[] = [];
@@ -26,6 +28,10 @@ class InMemoryEscalationsRepository implements EscalationsRepository {
     return this.backupContacts
       .filter((contact) => contact.receiverId === input.receiverId)
       .sort((a, b) => a.priorityOrder - b.priorityOrder || a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  async findReceiverOwner(input: { receiverId: string }): Promise<{ userId: string } | null> {
+    return input.receiverId === 'receiver-1' ? { userId: this.receiverOwnerUserId } : null;
   }
 
   async createEvent(input: CreateEscalationEventInput): Promise<EscalationEventRecord> {
@@ -55,6 +61,22 @@ class InMemoryAuditService {
       createdAt: new Date('2026-04-29T10:00:00.000Z'),
       ...input,
     };
+  }
+}
+
+class InMemoryNotificationsService {
+  public sent: Array<{
+    userId: string;
+    title: string;
+    body: string;
+    data: Record<string, string>;
+  }> = [];
+
+  constructor(private readonly result = { attempted: 1, sent: 1, failed: 0, sentAt: new Date('2026-04-29T10:00:00.000Z') }) {}
+
+  async sendToUser(input: { userId: string; title: string; body: string; data: Record<string, string> }) {
+    this.sent.push(input);
+    return this.result;
   }
 }
 
@@ -218,6 +240,68 @@ describe('EscalationsService', () => {
     expect(JSON.stringify(audit.events)).not.toContain('+971502222222');
     expect(JSON.stringify(audit.events)).not.toContain('+971501111111');
     expect(JSON.stringify(audit.events)).not.toContain('First Backup');
+  });
+
+  it('notifies the sender by mobile push when a receiver help response escalates', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const audit = new InMemoryAuditService();
+    const notifications = new InMemoryNotificationsService();
+    const sms = new FakeChannelProvider(Channel.SMS, {
+      now: () => new Date('2026-04-29T10:00:00.000Z'),
+    });
+    repository.backupContacts = [
+      backupContactFixture(crypto, {
+        id: 'backup-contact-first',
+        phone: '+971502222222',
+        priorityOrder: 1,
+        createdAt: new Date('2026-04-29T08:20:00.000Z'),
+      }),
+    ];
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms]),
+      audit as unknown as AuditService,
+      notifications as unknown as NotificationsService,
+      () => new Date('2026-04-29T10:00:00.000Z'),
+    );
+
+    await service.escalateHelpResponse({
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      sourceChannel: Channel.WHATSAPP,
+    });
+
+    expect(notifications.sent).toEqual([
+      {
+        userId: 'sender-1',
+        title: 'Receiver needs attention',
+        body: 'A receiver asked for help during a check-in.',
+        data: {
+          checkInId: 'check-in-1',
+          receiverId: 'receiver-1',
+          reason: 'help_response',
+        },
+      },
+    ]);
+    expect(repository.createdEvents[0]).toMatchObject({
+      senderNotifiedAt: new Date('2026-04-29T10:00:00.000Z'),
+    });
+    expect(audit.events).toContainEqual({
+      entityType: 'check_in',
+      entityId: 'check-in-1',
+      action: 'sender_push.sent',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: 'receiver-1',
+        attempted: 1,
+        sent: 1,
+        failed: 0,
+        reason: 'help_response',
+      },
+    });
+    expect(JSON.stringify(audit.events)).not.toContain('ExpoPushToken');
   });
 
   it('audits and leaves the check-in as responded help when there are no active backup contacts', async () => {

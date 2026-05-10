@@ -1,10 +1,11 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { ActorType, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
-import type { Channel, RelationshipType } from '@prisma/client';
+import { ActorType, Channel, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
+import type { RelationshipType } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import type { CheckInsRepository } from '../check-ins/check-ins.repository';
 import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
+import { ChannelRouterService } from '../channels/channel-router.service';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
@@ -83,6 +84,7 @@ export interface ReceiverDetail extends ReceiverSummary {
 export interface ReceiverManagementInput {
   userId: string;
   receiverId: string;
+  pausedUntil?: Date;
   ipAddress?: string;
   userAgent?: string;
 }
@@ -114,6 +116,7 @@ export class ReceiversService {
   private readonly now: () => Date;
   private readonly escalationsService?: Pick<EscalationsService, 'escalateSenderRequestedBackup'>;
   private readonly checkInsRepository?: Pick<CheckInsRepository, 'createPending' | 'createAttempts'>;
+  private readonly channelRouter?: Pick<ChannelRouterService, 'sendMessage' | 'makeVoiceCall' | 'resolveReachablePlan'>;
 
   constructor(
     @Inject(RECEIVERS_REPOSITORY) private readonly receiversRepository: ReceiversRepository,
@@ -127,7 +130,11 @@ export class ReceiversService {
     @Optional()
     @Inject(EscalationsService)
     escalationsOrNow?: Pick<EscalationsService, 'escalateSenderRequestedBackup'> | (() => Date),
+    @Optional()
+    @Inject(ChannelRouterService)
+    channelRouter?: Pick<ChannelRouterService, 'sendMessage' | 'makeVoiceCall' | 'resolveReachablePlan'>,
   ) {
+    this.channelRouter = channelRouter;
     this.now = () => new Date();
     if (this.isCheckInsRepository(checkInsOrEscalationsOrNow)) {
       this.checkInsRepository = checkInsOrEscalationsOrNow;
@@ -145,7 +152,7 @@ export class ReceiversService {
   }
 
   async createForSender(input: CreateReceiverForSenderInput): Promise<ReceiverRecord> {
-    const normalized = this.normalizeInput(input);
+    const normalized = await this.normalizeInput(input);
     const receiver = await this.receiversRepository.create(this.toCreateRecordInput(normalized));
 
     await this.auditService.append({
@@ -160,6 +167,9 @@ export class ReceiversService {
         primaryChannel: normalized.primaryChannel,
         fallbackChannelCount: normalized.fallbackChannels.length,
         scheduleFrequency: normalized.scheduleFrequency,
+        channelDetectionStatus: normalized.channelDetectionStatus,
+        channelDetectionConfidence: normalized.channelDetectionConfidence,
+        unavailableChannels: normalized.unavailableChannels,
       },
       ipAddress: normalized.ipAddress,
       userAgent: normalized.userAgent,
@@ -193,7 +203,7 @@ export class ReceiversService {
   }
 
   async updateForSender(input: UpdateReceiverForSenderInput): Promise<ReceiverDetail | null> {
-    const normalized = this.normalizeUpdateInput(input);
+    const normalized = await this.normalizeUpdateInput(input);
     const receiver = await this.receiversRepository.updateForUserById(this.toUpdateRecordInput(normalized));
 
     if (!receiver) {
@@ -212,6 +222,9 @@ export class ReceiversService {
         primaryChannel: normalized.primaryChannel,
         fallbackChannelCount: normalized.fallbackChannels.length,
         scheduleFrequency: normalized.scheduleFrequency,
+        channelDetectionStatus: normalized.channelDetectionStatus,
+        channelDetectionConfidence: normalized.channelDetectionConfidence,
+        unavailableChannels: normalized.unavailableChannels,
       },
       ipAddress: normalized.ipAddress,
       userAgent: normalized.userAgent,
@@ -221,10 +234,13 @@ export class ReceiversService {
   }
 
   async pauseForSender(input: ReceiverManagementInput): Promise<ReceiverDetail | null> {
+    const userId = input.userId.trim();
+    const receiverId = input.receiverId.trim();
+    const pausedUntil = input.pausedUntil ?? USER_PAUSED_UNTIL;
     const receiver = await this.receiversRepository.pauseForUserById({
-      userId: input.userId.trim(),
-      receiverId: input.receiverId.trim(),
-      pausedUntil: USER_PAUSED_UNTIL,
+      userId,
+      receiverId,
+      pausedUntil,
       pausedReason: USER_PAUSED_REASON,
     });
 
@@ -232,14 +248,26 @@ export class ReceiversService {
       return null;
     }
 
+    await this.notifyReceiverLifecycle({
+      receiver,
+      actionName: 'pause',
+      templateKey: 'receiver_checkins_paused',
+      scriptKey: 'receiver_checkins_paused_voice',
+      variables: {
+        receiverId: receiver.id,
+        pausedUntil: pausedUntil.toISOString(),
+      },
+    });
+
     await this.auditService.append({
       entityType: 'receiver',
       entityId: receiver.id,
       action: 'receiver.paused',
       actorType: ActorType.USER,
-      actorId: input.userId.trim(),
+      actorId: userId,
       metadata: {
         pausedReason: USER_PAUSED_REASON,
+        pausedUntil: pausedUntil.toISOString(),
       },
       ipAddress: input.ipAddress,
       userAgent: input.userAgent,
@@ -284,6 +312,16 @@ export class ReceiversService {
     if (!receiver) {
       return null;
     }
+
+    await this.notifyReceiverLifecycle({
+      receiver,
+      actionName: 'delete',
+      templateKey: 'receiver_checkins_ended',
+      scriptKey: 'receiver_checkins_ended_voice',
+      variables: {
+        receiverId: receiver.id,
+      },
+    });
 
     await this.auditService.append({
       entityType: 'receiver',
@@ -431,7 +469,7 @@ export class ReceiversService {
     scheduledAt: Date,
   ): Array<{ checkInId: string; attemptNumber: number; channel: Channel; scheduledAt: Date }> {
     const channels =
-      receiver.techProfile === TechProfile.VOICE_ONLY
+      receiver.techProfile === TechProfile.VOICE_ONLY || receiver.techProfile === TechProfile.LANDLINE
         ? [receiver.primaryChannel]
         : [receiver.primaryChannel, ...receiver.fallbackChannels].filter(
             (channel, index, all) => all.indexOf(channel) === index,
@@ -458,6 +496,60 @@ export class ReceiversService {
       | undefined,
   ): value is Pick<CheckInsRepository, 'createPending' | 'createAttempts'> {
     return typeof value === 'object' && value !== null && 'createPending' in value && 'createAttempts' in value;
+  }
+
+  private async notifyReceiverLifecycle(input: {
+    receiver: ReceiverRecord;
+    actionName: 'pause' | 'delete';
+    templateKey: string;
+    scriptKey: string;
+    variables: Record<string, string>;
+  }): Promise<void> {
+    if (!this.channelRouter) {
+      return;
+    }
+
+    const channel = input.receiver.primaryChannel;
+    const phone = this.cryptoService.decrypt(input.receiver.phoneEncrypted);
+
+    try {
+      const result =
+        channel === Channel.VOICE
+          ? await this.channelRouter.makeVoiceCall(channel, phone, {
+              scriptKey: input.scriptKey,
+              language: input.receiver.language,
+              variables: input.variables,
+            })
+          : await this.channelRouter.sendMessage(channel, phone, {
+              templateKey: input.templateKey,
+              language: input.receiver.language,
+              variables: input.variables,
+            });
+
+      await this.auditService.append({
+        entityType: 'receiver',
+        entityId: input.receiver.id,
+        action: `receiver.${input.actionName}_notification_sent`,
+        actorType: ActorType.SYSTEM,
+        actorId: undefined,
+        metadata: {
+          channel,
+          providerStatus: result.providerStatus,
+        },
+      });
+    } catch (error) {
+      await this.auditService.append({
+        entityType: 'receiver',
+        entityId: input.receiver.id,
+        action: `receiver.${input.actionName}_notification_failed`,
+        actorType: ActorType.SYSTEM,
+        actorId: undefined,
+        metadata: {
+          channel,
+          error: error instanceof Error ? error.message : 'Unknown channel notification failure',
+        },
+      });
+    }
   }
 
   private toCreateRecordInput(input: CreateReceiverForSenderInput): CreateReceiverRecordInput {
@@ -502,7 +594,13 @@ export class ReceiversService {
     };
   }
 
-  private normalizeInput(input: CreateReceiverForSenderInput): CreateReceiverForSenderInput {
+  private async normalizeInput(input: CreateReceiverForSenderInput): Promise<
+    CreateReceiverForSenderInput & {
+      channelDetectionStatus: string;
+      channelDetectionConfidence: string;
+      unavailableChannels: Channel[];
+    }
+  > {
     const name = input.name.trim();
     const phone = input.phone.trim();
     const countryCode = input.countryCode.trim().toUpperCase();
@@ -535,6 +633,13 @@ export class ReceiversService {
       throw new Error('Receiver schedule frequency is required');
     }
 
+    const resolvedPhone = normalizePhone(phone, input.phoneCountry);
+    const channelPlan = await this.resolveChannelPlan({
+      phone: resolvedPhone,
+      primaryChannel: input.primaryChannel,
+      fallbackChannels: input.fallbackChannels,
+    });
+
     return {
       ...input,
       userId: input.userId.trim(),
@@ -544,13 +649,23 @@ export class ReceiversService {
       language,
       timezone,
       scheduleFrequency,
-      fallbackChannels: [...input.fallbackChannels],
+      primaryChannel: channelPlan.primaryChannel,
+      fallbackChannels: channelPlan.fallbackChannels,
       scheduleCustomCron: input.scheduleCustomCron?.trim() || undefined,
       personalNote: input.personalNote?.trim() || undefined,
+      channelDetectionStatus: channelPlan.detectionStatus,
+      channelDetectionConfidence: channelPlan.detectionConfidence,
+      unavailableChannels: channelPlan.unavailableChannels,
     };
   }
 
-  private normalizeUpdateInput(input: UpdateReceiverForSenderInput): UpdateReceiverForSenderInput {
+  private async normalizeUpdateInput(input: UpdateReceiverForSenderInput): Promise<
+    UpdateReceiverForSenderInput & {
+      channelDetectionStatus: string;
+      channelDetectionConfidence: string;
+      unavailableChannels: Channel[];
+    }
+  > {
     const userId = input.userId.trim();
     const receiverId = input.receiverId.trim();
     const name = input.name.trim();
@@ -584,6 +699,22 @@ export class ReceiversService {
       throw new Error('Receiver schedule frequency is required');
     }
 
+    const existingReceiver = await this.receiversRepository.findForUserById({ userId, receiverId });
+    const phone = existingReceiver ? this.cryptoService.decrypt(existingReceiver.phoneEncrypted) : '';
+    const channelPlan = phone
+      ? await this.resolveChannelPlan({
+          phone,
+          primaryChannel: input.primaryChannel,
+          fallbackChannels: input.fallbackChannels,
+        })
+      : {
+          primaryChannel: input.primaryChannel,
+          fallbackChannels: [...input.fallbackChannels],
+          detectionStatus: 'MANUAL_REQUIRED',
+          detectionConfidence: 'manual_selection',
+          unavailableChannels: [],
+        };
+
     return {
       ...input,
       userId,
@@ -593,9 +724,33 @@ export class ReceiversService {
       language,
       timezone,
       scheduleFrequency,
-      fallbackChannels: [...input.fallbackChannels],
+      primaryChannel: channelPlan.primaryChannel,
+      fallbackChannels: channelPlan.fallbackChannels,
       scheduleCustomCron: input.scheduleCustomCron?.trim() || undefined,
+      channelDetectionStatus: channelPlan.detectionStatus,
+      channelDetectionConfidence: channelPlan.detectionConfidence,
+      unavailableChannels: channelPlan.unavailableChannels,
     };
+  }
+
+  private async resolveChannelPlan(input: { phone: string; primaryChannel: Channel; fallbackChannels: Channel[] }): Promise<{
+    primaryChannel: Channel;
+    fallbackChannels: Channel[];
+    detectionStatus: string;
+    detectionConfidence: string;
+    unavailableChannels: Channel[];
+  }> {
+    if (!this.channelRouter?.resolveReachablePlan) {
+      return {
+        primaryChannel: input.primaryChannel,
+        fallbackChannels: [...input.fallbackChannels],
+        detectionStatus: 'MANUAL_REQUIRED',
+        detectionConfidence: 'manual_selection',
+        unavailableChannels: [],
+      };
+    }
+
+    return await this.channelRouter.resolveReachablePlan(input);
   }
 
   private async findActionableLatestCheckIn(

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { TextInput } from '../../../components/auth';
+import { CountrySelect, LanguageSelect, ReceiverPhoneInput, TimeSelect, TimezoneSelect } from '../../../components/onboarding';
+import { COUNTRIES } from '../../../data';
 import {
   alertBackupForReceiverCheckIn,
   createBackupContact,
@@ -43,9 +45,10 @@ const profileOptions: Array<{
   primaryChannel: BackendChannel;
   fallbackChannels: BackendChannel[];
 }> = [
-  { value: 'WHATSAPP', label: 'WhatsApp first', primaryChannel: 'WHATSAPP', fallbackChannels: ['SMS', 'VOICE'] },
-  { value: 'SMS', label: 'SMS first', primaryChannel: 'SMS', fallbackChannels: ['VOICE'] },
-  { value: 'VOICE_ONLY', label: 'Voice only', primaryChannel: 'VOICE', fallbackChannels: [] },
+  { value: 'WHATSAPP', label: 'WhatsApp if available', primaryChannel: 'WHATSAPP', fallbackChannels: ['SMS', 'VOICE'] },
+  { value: 'SMS', label: 'SMS only', primaryChannel: 'SMS', fallbackChannels: [] },
+  { value: 'VOICE_ONLY', label: 'Voice call', primaryChannel: 'VOICE', fallbackChannels: [] },
+  { value: 'LANDLINE', label: 'Landline', primaryChannel: 'VOICE', fallbackChannels: [] },
 ];
 
 export default function ReceiverDetailScreen() {
@@ -195,6 +198,9 @@ export default function ReceiverDetailScreen() {
   const canResolveLatestCheckIn = ['RESPONDED_HELP', 'ESCALATED', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(latestStatus);
   const canAlertBackupForLatestCheckIn = ['RESPONDED_HELP', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(latestStatus);
   const canTryLatestCheckInLater = ['SENT', 'RESPONDED_HELP', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(latestStatus);
+  const backupPhoneError = backupDraft.phone.trim().startsWith('0')
+    ? 'Remove the leading 0. Use the local number after the country code.'
+    : undefined;
 
   const resolveLatestCheckIn = async () => {
     if (!id || !receiver.latestCheckIn || !canResolveLatestCheckIn) return;
@@ -278,6 +284,11 @@ export default function ReceiverDetailScreen() {
       return;
     }
 
+    if (backupPhoneError) {
+      Alert.alert('Check phone number', backupPhoneError);
+      return;
+    }
+
     try {
       setIsSaving(true);
       setActionError(null);
@@ -288,7 +299,8 @@ export default function ReceiverDetailScreen() {
         locationInstructions: backupDraft.locationInstructions?.trim() || undefined,
       };
       if (backupDraft.phone.trim()) {
-        backupContactInput.phone = backupDraft.phone.trim();
+        const selectedBackupCountry = COUNTRIES.find((country) => country.isoCode === backupDraft.phoneCountry?.toUpperCase()) ?? COUNTRIES[0];
+        backupContactInput.phone = `${selectedBackupCountry.dialCode}${backupDraft.phone.trim()}`;
       }
 
       if (editingBackupContactId) {
@@ -473,37 +485,38 @@ export default function ReceiverDetailScreen() {
               </View>
             </View>
 
+            <CountrySelect
+              label="Country"
+              value={draft.countryCode}
+              onChange={(countryCode) => setDraft({ ...draft, countryCode })}
+              disabled={isSaving}
+              showDialCode={false}
+            />
+            <LanguageSelect
+              label="Language"
+              value={draft.language}
+              onChange={(language) => setDraft({ ...draft, language })}
+              disabled={isSaving}
+            />
+
+            <TimezoneSelect label="Timezone" value={draft.timezone} onChange={(timezone) => setDraft({ ...draft, timezone })} />
+
+            <Text style={styles.fieldHint}>Check-in window uses the receiver timezone selected above.</Text>
             <View style={styles.row}>
               <View style={styles.rowItem}>
-                <TextInput
-                  label="Country"
-                  value={draft.countryCode}
-                  onChangeText={(countryCode) => setDraft({ ...draft, countryCode })}
-                  autoCapitalize="characters"
-                />
-              </View>
-              <View style={styles.rowItem}>
-                <TextInput label="Language" value={draft.language} onChangeText={(language) => setDraft({ ...draft, language })} />
-              </View>
-            </View>
-
-            <TextInput label="Timezone" value={draft.timezone} onChangeText={(timezone) => setDraft({ ...draft, timezone })} />
-
-            <View style={styles.row}>
-              <View style={styles.rowItem}>
-                <TextInput
+                <TimeSelect
                   label="From"
                   value={draft.scheduleTimeWindow.start}
-                  onChangeText={(start) =>
-                    setDraft({ ...draft, scheduleTimeWindow: { ...draft.scheduleTimeWindow, start } })
-                  }
+                  onChange={(start) => setDraft({ ...draft, scheduleTimeWindow: { ...draft.scheduleTimeWindow, start } })}
+                  disabled={isSaving}
                 />
               </View>
               <View style={styles.rowItem}>
-                <TextInput
+                <TimeSelect
                   label="To"
                   value={draft.scheduleTimeWindow.end}
-                  onChangeText={(end) => setDraft({ ...draft, scheduleTimeWindow: { ...draft.scheduleTimeWindow, end } })}
+                  onChange={(end) => setDraft({ ...draft, scheduleTimeWindow: { ...draft.scheduleTimeWindow, end } })}
+                  disabled={isSaving}
                 />
               </View>
             </View>
@@ -612,28 +625,21 @@ export default function ReceiverDetailScreen() {
               value={backupDraft.name}
               onChangeText={(name) => setBackupDraft({ ...backupDraft, name })}
             />
-            <TextInput
-              label={editingBackupContactId ? 'Phone (blank keeps current)' : 'Phone'}
-              value={backupDraft.phone}
-              onChangeText={(phone) => setBackupDraft({ ...backupDraft, phone })}
-              keyboardType="phone-pad"
+            <ReceiverPhoneInput
+              phoneCountry={backupDraft.phoneCountry ?? 'AE'}
+              phone={backupDraft.phone}
+              onChangePhoneCountry={(phoneCountry) => setBackupDraft({ ...backupDraft, phoneCountry })}
+              onChangePhone={(phone) => setBackupDraft({ ...backupDraft, phone: phone.replace(/\D/g, '') })}
+              error={backupPhoneError}
+              disabled={isSaving}
             />
-            <View style={styles.row}>
-              <View style={styles.rowItem}>
-                <TextInput
-                  label="Country"
-                  value={backupDraft.phoneCountry}
-                  onChangeText={(phoneCountry) => setBackupDraft({ ...backupDraft, phoneCountry })}
-                  autoCapitalize="characters"
-                />
-              </View>
-              <View style={styles.rowItem}>
-                <TextInput
-                  label="Relationship"
-                  value={backupDraft.relationshipToReceiver}
-                  onChangeText={(relationshipToReceiver) => setBackupDraft({ ...backupDraft, relationshipToReceiver })}
-                />
-              </View>
+            {editingBackupContactId ? <Text style={styles.fieldHint}>Leave phone blank to keep the current number.</Text> : null}
+            <View>
+              <TextInput
+                label="Relationship"
+                value={backupDraft.relationshipToReceiver}
+                onChangeText={(relationshipToReceiver) => setBackupDraft({ ...backupDraft, relationshipToReceiver })}
+              />
             </View>
             <TextInput
               label="Location instructions"
@@ -819,6 +825,10 @@ const styles = StyleSheet.create({
     fontSize: fontSize.sm,
     fontWeight: '600',
     marginBottom: spacing.sm,
+  },
+  fieldHint: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
   },
   optionGrid: {
     flexDirection: 'row',

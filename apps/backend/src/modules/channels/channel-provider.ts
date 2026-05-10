@@ -24,9 +24,13 @@ export interface ChannelCallResult {
   providerStatus: 'accepted' | 'queued' | 'ringing';
 }
 
+export interface VoiceCallOptions {
+  fromNumber?: string;
+}
+
 export interface ChannelProvider {
   readonly channel: Channel;
   sendMessage(to: string, message: TemplatedMessage): Promise<ChannelSendResult>;
-  makeVoiceCall(to: string, script: VoiceScript): Promise<ChannelCallResult>;
+  makeVoiceCall(to: string, script: VoiceScript, options?: VoiceCallOptions): Promise<ChannelCallResult>;
   isAvailableForNumber(phone: string): Promise<boolean>;
 }

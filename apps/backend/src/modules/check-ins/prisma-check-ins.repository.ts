@@ -22,7 +22,9 @@ import type {
 type ReceiverDueForCheckIn = Pick<
   Receiver,
   | 'id'
+  | 'userId'
   | 'phoneEncrypted'
+  | 'countryCode'
   | 'language'
   | 'timezone'
   | 'techProfile'
@@ -93,9 +95,9 @@ interface CheckInsPrismaClient {
         scheduledAt?: { lte: Date };
         sentAt?: { lte: Date };
       };
-      include: { checkIn: { include: { receiver: { select: { phoneEncrypted: true; language: true } } } } };
+      include: { checkIn: { include: { receiver: { select: { phoneEncrypted: true; countryCode: true; language: true } } } } };
       orderBy: Array<{ scheduledAt?: 'asc' } | { attemptNumber?: 'asc' }>;
-    }): Promise<Array<CheckInAttempt & { checkIn: CheckIn & { receiver: { phoneEncrypted: string; language: string } } }>>;
+    }): Promise<Array<CheckInAttempt & { checkIn: CheckIn & { receiver: { phoneEncrypted: string; countryCode: string; language: string } } }>>;
     findFirst(args: {
       where: { checkInId: string; status: CheckInAttemptStatus };
       orderBy: { attemptNumber: 'desc' };
@@ -145,7 +147,9 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
 
     return receivers.filter((receiver) => this.isInsideScheduleWindow(receiver.scheduleTimeWindow, now, receiver.timezone)).map((receiver) => ({
       id: receiver.id,
+      userId: receiver.userId,
       phoneEncrypted: receiver.phoneEncrypted,
+      countryCode: receiver.countryCode,
       language: receiver.language,
       timezone: receiver.timezone,
       techProfile: receiver.techProfile,
@@ -204,7 +208,7 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         status: CheckInAttemptStatus.PENDING,
         scheduledAt: { lte: input.now },
       },
-      include: { checkIn: { include: { receiver: { select: { phoneEncrypted: true, language: true } } } } },
+      include: { checkIn: { include: { receiver: { select: { phoneEncrypted: true, countryCode: true, language: true } } } } },
       orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
     });
 
@@ -217,7 +221,7 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         status: CheckInAttemptStatus.SENT,
         sentAt: { lte: input.now },
       },
-      include: { checkIn: { include: { receiver: { select: { phoneEncrypted: true, language: true } } } } },
+      include: { checkIn: { include: { receiver: { select: { phoneEncrypted: true, countryCode: true, language: true } } } } },
       orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
     });
 
@@ -486,13 +490,14 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
   }
 
   private toAttemptWithCheckInRecord(
-    attempt: CheckInAttempt & { checkIn: CheckIn & { receiver: { phoneEncrypted: string; language: string } } },
+    attempt: CheckInAttempt & { checkIn: CheckIn & { receiver: { phoneEncrypted: string; countryCode: string; language: string } } },
   ): CheckInAttemptWithCheckInRecord {
     return {
       ...this.toCheckInAttemptRecord(attempt),
       checkIn: {
         ...this.toCheckInRecord(attempt.checkIn),
         receiverPhoneEncrypted: attempt.checkIn.receiver.phoneEncrypted,
+        receiverCountryCode: attempt.checkIn.receiver.countryCode,
         receiverLanguage: attempt.checkIn.receiver.language,
       },
     };

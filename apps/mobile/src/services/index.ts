@@ -1,5 +1,6 @@
 export { supabase, getCurrentUser, getSession } from './supabase';
 export type { Database } from './database.types';
+export { BackendRequestError, isPaidAccessRequiredError, PAID_ACCESS_REQUIRED_MESSAGE } from './backendErrors';
 export {
   alertBackupForReceiverCheckIn,
   createBackupContact,
@@ -8,6 +9,7 @@ export {
   deleteBackupContact,
   deleteReceiver,
   exportAccountData,
+  getBillingStatus,
   getReceiver,
   getAdminMe,
   getOperationsCheckInDetail,
@@ -18,6 +20,7 @@ export {
   markAdminAbuseReportActionTaken,
   markAdminAbuseReportSafe,
   pauseReceiver,
+  registerDeviceToken,
   requestAccountStepUp,
   resolveReceiverCheckIn,
   resumeReceiver,
@@ -32,6 +35,9 @@ export {
   type BackendAbuseReportStatus,
   type BackendAdminMe,
   type BackendAdminAbuseReport,
+  type BackendBillingInterval,
+  type BackendBillingStatus,
+  type BackendBillingStore,
   type BackendChannel,
   type BackendCheckInStatus,
   type BackendConsentStatus,
@@ -44,6 +50,8 @@ export {
   type BackendReceiverSummary,
   type BackendRelationshipType,
   type BackendSensitiveAction,
+  type BackendSubscriptionStatus,
+  type BackendSubscriptionTier,
   type BackendStepUpRequestResult,
   type BackendStepUpVerifyResult,
   type BackendTechProfile,
@@ -55,7 +63,6 @@ export {
 export {
   exportUserData,
   downloadUserData,
-  deleteUserDataOnly,
   deleteUserAccount,
 } from './userData';
 export {
@@ -71,3 +78,10 @@ export {
   getBiometricStatus,
 } from './biometric';
 export type { BiometricType, BiometricStatus } from './biometric';
+export {
+  configureRevenueCat,
+  purchaseRevenueCatPackage,
+  restoreRevenueCatPurchases,
+  revenueCatAvailability,
+  type RevenueCatPurchaseInterval,
+} from './revenueCat';

@@ -16,10 +16,13 @@ const envSchema = z.object({
   TWILIO_SMS_FROM_NUMBER: z.string().optional(),
   TWILIO_WHATSAPP_FROM_NUMBER: z.string().optional(),
   TWILIO_VOICE_FROM_NUMBER: z.string().optional(),
+  VOICE_AUDIO_BASE_URL: z.string().url().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
   WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
   CHANNEL_WEBHOOK_SECRET: z.string().optional(),
+  REVENUECAT_WEBHOOK_AUTH_TOKEN: z.string().optional(),
+  REVENUECAT_ENTITLEMENT_ID: z.string().optional(),
   VOICE_PROVIDER_API_KEY: z.string().optional(),
   VOICE_PROVIDER_FROM_NUMBER: z.string().optional(),
   PORT: z.coerce.number().int().positive().optional(),
@@ -106,6 +109,10 @@ export class AppConfigService {
     return this.env.TWILIO_VOICE_FROM_NUMBER;
   }
 
+  get voiceAudioBaseUrl(): string | undefined {
+    return this.env.VOICE_AUDIO_BASE_URL?.replace(/\/$/, '');
+  }
+
   get whatsappAccessToken(): string | undefined {
     return this.env.WHATSAPP_ACCESS_TOKEN;
   }
@@ -116,6 +123,15 @@ export class AppConfigService {
 
   get channelWebhookSecret(): string | undefined {
     return this.env.CHANNEL_WEBHOOK_SECRET;
+  }
+
+  get revenueCatWebhookAuthToken(): string | undefined {
+    return this.env.REVENUECAT_WEBHOOK_AUTH_TOKEN;
+  }
+
+  get revenueCatEntitlementId(): string {
+    const entitlementId = this.env.REVENUECAT_ENTITLEMENT_ID?.trim();
+    return entitlementId || 'nearby_access';
   }
 
   get voiceProviderApiKey(): string | undefined {

@@ -1,86 +1,179 @@
-// Billing settings screen
-import { View, Text, StyleSheet, ScrollView, Pressable } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useAuthContext } from '../../../contexts/AuthContext';
 import { colors, spacing, fontSize, borderRadius } from '../../../theme';
+import { getBillingStatus, syncAuthenticatedUser, type BackendBillingStatus } from '../../../services/backendApi';
+import {
+  getRevenueCatPlanOptions,
+  purchaseRevenueCatPackage,
+  restoreRevenueCatPurchases,
+  revenueCatAvailability,
+  type RevenueCatPlanOption,
+  type RevenueCatPurchaseInterval,
+} from '../../../services/revenueCat';
 
-const PLANS = [
+const PLANS: Array<{
+  interval: RevenueCatPurchaseInterval;
+  name: string;
+  description: string;
+  price: string | null;
+}> = [
   {
-    id: 'free',
-    name: 'Free',
-    price: '$0',
-    period: 'forever',
-    features: ['1 loved one', 'Push notifications only', 'Basic check-ins'],
+    interval: 'MONTHLY',
+    name: 'Monthly',
+    description: 'Flexible monthly access through App Store or Google Play billing.',
+    price: null,
   },
   {
-    id: 'one_way',
-    name: 'One-Way',
-    price: '$9.99',
-    period: '/month',
-    features: ['Up to 3 loved ones', 'Push + WhatsApp + SMS', 'Email alerts'],
-    recommended: true,
-  },
-  {
-    id: 'two_way',
-    name: 'Two-Way',
-    price: '$14.99',
-    period: '/month',
-    features: ['Up to 5 loved ones', 'All channels + Voice', 'Mutual check-ins'],
+    interval: 'ANNUAL',
+    name: 'Annual',
+    description: 'One yearly subscription through App Store or Google Play billing.',
+    price: null,
   },
 ];
 
 export default function BillingScreen() {
   const router = useRouter();
+  const { user } = useAuthContext();
+  const [status, setStatus] = useState<BackendBillingStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [planOptions, setPlanOptions] = useState<RevenueCatPlanOption[]>([]);
+  const [revenueCatAppUserId, setRevenueCatAppUserId] = useState<string | null>(null);
+  const availability = revenueCatAvailability();
+
+  const loadStatus = useCallback(async () => {
+    try {
+      setLoading(true);
+      setMessage(null);
+      const billingStatus = await getBillingStatus();
+      setStatus(billingStatus);
+      setRevenueCatAppUserId(billingStatus.revenueCatAppUserId);
+      if (availability.configured) {
+        setPlanOptions(await getRevenueCatPlanOptions(billingStatus.revenueCatAppUserId));
+      } else {
+        setPlanOptions([]);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to load billing status');
+    } finally {
+      setLoading(false);
+    }
+  }, [availability.configured, user?.id]);
+
+  useEffect(() => {
+    loadStatus();
+  }, [loadStatus]);
+
+  async function purchase(interval: RevenueCatPurchaseInterval) {
+    const appUserId = await ensureRevenueCatAppUserId();
+    if (!appUserId) {
+      setMessage('You need to sign in again');
+      return;
+    }
+
+    try {
+      setBusyAction(interval);
+      setMessage(null);
+      const result = await purchaseRevenueCatPackage(appUserId, interval);
+      setMessage(result.entitled ? 'Subscription active. Syncing status...' : 'Purchase completed. Waiting for entitlement sync.');
+      await loadStatus();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to start purchase');
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function restore() {
+    const appUserId = await ensureRevenueCatAppUserId();
+    if (!appUserId) {
+      setMessage('You need to sign in again');
+      return;
+    }
+
+    try {
+      setBusyAction('RESTORE');
+      setMessage(null);
+      const result = await restoreRevenueCatPurchases(appUserId);
+      setMessage(result.entitled ? 'Purchases restored. Syncing status...' : 'No active Nearby subscription was found.');
+      await loadStatus();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Unable to restore purchases');
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function ensureRevenueCatAppUserId(): Promise<string | null> {
+    if (!user?.id) {
+      return null;
+    }
+    if (revenueCatAppUserId) {
+      return revenueCatAppUserId;
+    }
+
+    const syncedUser = await syncAuthenticatedUser();
+    setRevenueCatAppUserId(syncedUser.id);
+    return syncedUser.id;
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Back Button */}
       <Pressable onPress={() => router.back()} style={styles.backButton}>
-        <Text style={styles.backButtonText}>← Back</Text>
+        <Text style={styles.backButtonText}>Back</Text>
       </Pressable>
 
       <Text style={styles.title}>Billing</Text>
-      <Text style={styles.subtitle}>Choose a plan that works for you</Text>
+      <Text style={styles.subtitle}>Subscriptions are handled by the App Store or Google Play.</Text>
 
-      {/* Plans */}
-      {PLANS.map((plan) => (
-        <View
-          key={plan.id}
-          style={[styles.planCard, plan.recommended && styles.planCardRecommended]}
-        >
-          {plan.recommended && (
-            <View style={styles.recommendedBadge}>
-              <Text style={styles.recommendedText}>Recommended</Text>
-            </View>
+      {loading ? (
+        <ActivityIndicator size="large" color={colors.primary} />
+      ) : (
+        <View style={styles.statusPanel}>
+          <Text style={styles.statusLabel}>{status?.entitled ? 'Active access' : 'No active subscription'}</Text>
+          {status?.subscription ? (
+            <Text style={styles.statusText}>
+              {status.subscription.tier.replace('_', ' ')} · {status.subscription.billingInterval ?? 'Subscription'} ·{' '}
+              {status.subscription.willRenew ? 'renews' : 'does not renew'}
+            </Text>
+          ) : (
+            <Text style={styles.statusText}>Choose monthly or annual access to enable paid Nearby features.</Text>
           )}
+        </View>
+      )}
+
+      {!availability.configured && <Text style={styles.notice}>{availability.reason}</Text>}
+      {message && <Text style={styles.notice}>{message}</Text>}
+
+      {(planOptions.length > 0 ? planOptions : PLANS).map((plan) => (
+        <View key={plan.interval} style={styles.planCard}>
           <Text style={styles.planName}>{plan.name}</Text>
-          <View style={styles.priceRow}>
-            <Text style={styles.planPrice}>{plan.price}</Text>
-            <Text style={styles.planPeriod}>{plan.period}</Text>
-          </View>
-          <View style={styles.features}>
-            {plan.features.map((feature, idx) => (
-              <Text key={idx} style={styles.feature}>
-                ✓ {feature}
-              </Text>
-            ))}
-          </View>
+          {plan.price && <Text style={styles.planPrice}>{plan.price}</Text>}
+          <Text style={styles.planDescription}>{plan.description}</Text>
           <Pressable
-            style={[
-              styles.selectButton,
-              plan.recommended && styles.selectButtonRecommended,
-            ]}
+            style={[styles.selectButton, (!availability.configured || busyAction !== null) && styles.buttonDisabled]}
+            disabled={!availability.configured || busyAction !== null}
+            onPress={() => purchase(plan.interval)}
           >
-            <Text
-              style={[
-                styles.selectButtonText,
-                plan.recommended && styles.selectButtonTextRecommended,
-              ]}
-            >
-              {plan.id === 'free' ? 'Current Plan' : 'Upgrade'}
+            <Text style={styles.selectButtonText}>
+              {busyAction === plan.interval ? 'Opening...' : `Continue ${plan.name}`}
             </Text>
           </Pressable>
         </View>
       ))}
+
+      <Pressable
+        style={[styles.restoreButton, (!availability.configured || busyAction !== null) && styles.buttonDisabled]}
+        disabled={!availability.configured || busyAction !== null}
+        onPress={restore}
+      >
+        <Text style={styles.restoreButtonText}>{busyAction === 'RESTORE' ? 'Restoring...' : 'Restore purchases'}</Text>
+      </Pressable>
+
+      <Text style={styles.footer}>Cancel or manage renewal from your App Store or Google Play subscription settings.</Text>
     </ScrollView>
   );
 }
@@ -92,9 +185,10 @@ const styles = StyleSheet.create({
   },
   content: {
     padding: spacing.lg,
+    gap: spacing.md,
   },
   backButton: {
-    marginBottom: spacing.lg,
+    alignSelf: 'flex-start',
   },
   backButtonText: {
     color: colors.primary,
@@ -104,12 +198,31 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xl,
     fontWeight: 'bold',
     color: colors.text,
-    marginBottom: spacing.xs,
   },
   subtitle: {
     fontSize: fontSize.md,
     color: colors.textSecondary,
-    marginBottom: spacing.xl,
+  },
+  statusPanel: {
+    backgroundColor: colors.surface,
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    gap: spacing.xs,
+  },
+  statusLabel: {
+    fontSize: fontSize.md,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  statusText: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+  },
+  notice: {
+    fontSize: fontSize.sm,
+    color: colors.warning,
   },
   planCard: {
     backgroundColor: colors.surface,
@@ -117,70 +230,50 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    marginBottom: spacing.md,
-  },
-  planCardRecommended: {
-    borderColor: colors.primary,
-    borderWidth: 2,
-  },
-  recommendedBadge: {
-    backgroundColor: colors.primary,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: spacing.xs,
-    borderRadius: borderRadius.sm,
-    alignSelf: 'flex-start',
-    marginBottom: spacing.sm,
-  },
-  recommendedText: {
-    color: colors.textOnPrimary,
-    fontSize: fontSize.xs,
-    fontWeight: '600',
+    gap: spacing.sm,
   },
   planName: {
     fontSize: fontSize.lg,
-    fontWeight: '600',
+    fontWeight: '700',
     color: colors.text,
-  },
-  priceRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
-    marginVertical: spacing.sm,
   },
   planPrice: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: colors.text,
+    fontSize: fontSize.md,
+    fontWeight: '700',
+    color: colors.primary,
   },
-  planPeriod: {
-    fontSize: fontSize.sm,
-    color: colors.textSecondary,
-    marginLeft: spacing.xs,
-  },
-  features: {
-    marginVertical: spacing.md,
-    gap: spacing.xs,
-  },
-  feature: {
+  planDescription: {
     fontSize: fontSize.sm,
     color: colors.textSecondary,
   },
   selectButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.md,
+    borderRadius: borderRadius.md,
+    alignItems: 'center',
+  },
+  selectButtonText: {
+    color: colors.textOnPrimary,
+    fontSize: fontSize.md,
+    fontWeight: '700',
+  },
+  restoreButton: {
     paddingVertical: spacing.md,
     borderRadius: borderRadius.md,
     alignItems: 'center',
     borderWidth: 1,
     borderColor: colors.border,
   },
-  selectButtonRecommended: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  selectButtonText: {
+  restoreButtonText: {
+    color: colors.text,
     fontSize: fontSize.md,
     fontWeight: '600',
-    color: colors.text,
   },
-  selectButtonTextRecommended: {
-    color: colors.textOnPrimary,
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  footer: {
+    fontSize: fontSize.xs,
+    color: colors.textSecondary,
   },
 });

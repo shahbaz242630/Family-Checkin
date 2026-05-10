@@ -10,7 +10,7 @@ interface HeaderProps {
   title?: string;
 }
 
-export function Header({ title = 'Family Check-In' }: HeaderProps) {
+export function Header({ title = 'Nearby' }: HeaderProps) {
   const insets = useSafeAreaInsets();
   const { toggleSidebar, toggleProfileMenu } = useDrawer();
   const { profile } = useProfile();

@@ -18,6 +18,7 @@ import type {
   CheckInAttemptWithCheckInRecord,
 } from './check-ins.repository';
 import { CheckInsService } from './check-ins.service';
+import type { ResolveVoiceCallerIdInput, VoiceCallerIdRepository } from './voice-caller-id.repository';
 
 const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 
@@ -222,6 +223,7 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
         createdAt: new Date('2026-04-27T05:30:00.000Z'),
         updatedAt: new Date('2026-04-27T05:30:00.000Z'),
         receiverPhoneEncrypted: new CryptoService(masterKey).encrypt('+971501234567'),
+        receiverCountryCode: 'AE',
         receiverLanguage: 'en',
       },
     };
@@ -267,6 +269,30 @@ class InMemoryEscalationsService {
   }
 }
 
+class InMemoryBillingService {
+  public entitledByUserId = new Map<string, boolean>();
+  public checkedUserIds: string[] = [];
+
+  async getBillingStatus(userId: string) {
+    this.checkedUserIds.push(userId);
+    return {
+      entitled: this.entitledByUserId.get(userId) ?? false,
+      revenueCatAppUserId: userId,
+      subscription: null,
+    };
+  }
+}
+
+class InMemoryVoiceCallerIds implements VoiceCallerIdRepository {
+  public resolved: ResolveVoiceCallerIdInput[] = [];
+  public callerIdByReceiverId = new Map<string, string | undefined>();
+
+  async resolveForReceiver(input: ResolveVoiceCallerIdInput): Promise<string | undefined> {
+    this.resolved.push(input);
+    return this.callerIdByReceiverId.get(input.receiverId);
+  }
+}
+
 describe('CheckInsService', () => {
   it('creates, sends, marks sent, and audits a due receiver with granted consent', async () => {
     const crypto = new CryptoService(masterKey);
@@ -275,6 +301,8 @@ describe('CheckInsService', () => {
     const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
       now: () => new Date('2026-04-27T05:30:00.000Z'),
     });
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
     repository.candidates = [receiverCandidate(crypto)];
     const service = new CheckInsService(
       repository,
@@ -283,6 +311,7 @@ describe('CheckInsService', () => {
       audit as unknown as AuditService,
       undefined,
       () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
     );
 
     const result = await service.sendDueCheckIns();
@@ -361,6 +390,34 @@ describe('CheckInsService', () => {
 
     expect(result).toEqual({ created: 0, sent: 0, skipped: 3 });
     expect(repository.created).toEqual([]);
+    expect(repository.sent).toEqual([]);
+    expect(whatsapp.sentMessages).toEqual([]);
+    expect(audit.events).toEqual([]);
+  });
+
+  it('skips due receivers whose sender does not have paid access', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
+    const billing = new InMemoryBillingService();
+    repository.candidates = [receiverCandidate(crypto)];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([whatsapp]),
+      audit as unknown as AuditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    const result = await service.sendDueCheckIns();
+
+    expect(result).toEqual({ created: 0, sent: 0, skipped: 1 });
+    expect(billing.checkedUserIds).toEqual(['sender-user-1']);
+    expect(repository.created).toEqual([]);
+    expect(repository.attempts).toEqual([]);
     expect(repository.sent).toEqual([]);
     expect(whatsapp.sentMessages).toEqual([]);
     expect(audit.events).toEqual([]);
@@ -453,12 +510,81 @@ describe('CheckInsService', () => {
       failed: 1,
     });
   });
+
+  it('uses the sticky caller ID when sending an initial voice check-in', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    const voice = new FakeChannelProvider(Channel.VOICE);
+    const billing = new InMemoryBillingService();
+    const callerIds = new InMemoryVoiceCallerIds();
+    billing.entitledByUserId.set('sender-user-1', true);
+    callerIds.callerIdByReceiverId.set('receiver-1', '+15559990000');
+    repository.candidates = [
+      {
+        ...receiverCandidate(crypto),
+        techProfile: TechProfile.VOICE_ONLY,
+        primaryChannel: Channel.VOICE,
+        fallbackChannels: [],
+      },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([voice]),
+      audit as unknown as AuditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+      callerIds,
+    );
+
+    await service.sendDueCheckIns();
+
+    expect(callerIds.resolved).toEqual([{ receiverId: 'receiver-1', countryCode: 'AE' }]);
+    expect(voice.voiceCalls[0]?.options).toEqual({ fromNumber: '+15559990000' });
+  });
+
+  it('falls back to configured voice caller ID when no sticky assignment is available', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    const voice = new FakeChannelProvider(Channel.VOICE);
+    const billing = new InMemoryBillingService();
+    const callerIds = new InMemoryVoiceCallerIds();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [
+      {
+        ...receiverCandidate(crypto),
+        techProfile: TechProfile.VOICE_ONLY,
+        primaryChannel: Channel.VOICE,
+        fallbackChannels: [],
+      },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([voice]),
+      audit as unknown as AuditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+      callerIds,
+    );
+
+    await service.sendDueCheckIns();
+
+    expect(callerIds.resolved).toEqual([{ receiverId: 'receiver-1', countryCode: 'AE' }]);
+    expect(voice.voiceCalls[0]?.options).toBeUndefined();
+  });
 });
 
 function receiverCandidate(crypto: CryptoService): CheckInReceiverCandidate {
   return {
     id: 'receiver-1',
+    userId: 'sender-user-1',
     phoneEncrypted: crypto.encrypt('+971501234567'),
+    countryCode: 'AE',
     language: 'en',
     timezone: 'Asia/Dubai',
     techProfile: TechProfile.WHATSAPP,
