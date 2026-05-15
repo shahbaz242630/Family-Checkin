@@ -3192,6 +3192,16 @@ Slice 1 completed - mobile startup import splitting:
   - `npm.cmd exec -- vitest run apps/mobile/src/services/backendApi.spec.ts apps/mobile/src/utils/channelProfiles.spec.ts apps/mobile/src/services/auth.spec.ts`
   - Passed: 3 files, 4 tests.
 
+Slice 2 completed - drawer context render stability:
+
+- Gap: `DrawerProvider` recreated every open/close/toggle handler and the provider value object on each render. Because the provider wraps every authenticated route, this increased avoidable rerender churn for layout consumers.
+- Fix:
+  - Wrapped drawer/profile menu handlers in `useCallback`.
+  - Memoized the context value with `useMemo`.
+- Verification:
+  - `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+
 ## First Command In A New Session
 
 Read this file first:

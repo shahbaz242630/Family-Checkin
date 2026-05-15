@@ -1,5 +1,5 @@
 // DrawerContext - manages sidebar and profile menu state
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, ReactNode } from 'react';
 
 interface DrawerContextType {
   isSidebarOpen: boolean;
@@ -19,47 +19,60 @@ export function DrawerProvider({ children }: { children: ReactNode }) {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
 
-  const openSidebar = () => {
+  const openSidebar = useCallback(() => {
     setIsProfileMenuOpen(false);
     setIsSidebarOpen(true);
-  };
+  }, []);
 
-  const closeSidebar = () => setIsSidebarOpen(false);
-  const toggleSidebar = () => {
+  const closeSidebar = useCallback(() => setIsSidebarOpen(false), []);
+  const toggleSidebar = useCallback(() => {
     setIsProfileMenuOpen(false);
     setIsSidebarOpen((prev) => !prev);
-  };
+  }, []);
 
-  const openProfileMenu = () => {
+  const openProfileMenu = useCallback(() => {
     setIsSidebarOpen(false);
     setIsProfileMenuOpen(true);
-  };
+  }, []);
 
-  const closeProfileMenu = () => setIsProfileMenuOpen(false);
-  const toggleProfileMenu = () => {
+  const closeProfileMenu = useCallback(() => setIsProfileMenuOpen(false), []);
+  const toggleProfileMenu = useCallback(() => {
     setIsSidebarOpen(false);
     setIsProfileMenuOpen((prev) => !prev);
-  };
+  }, []);
 
-  const closeAll = () => {
+  const closeAll = useCallback(() => {
     setIsSidebarOpen(false);
     setIsProfileMenuOpen(false);
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      isSidebarOpen,
+      isProfileMenuOpen,
+      openSidebar,
+      closeSidebar,
+      toggleSidebar,
+      openProfileMenu,
+      closeProfileMenu,
+      toggleProfileMenu,
+      closeAll,
+    }),
+    [
+      isSidebarOpen,
+      isProfileMenuOpen,
+      openSidebar,
+      closeSidebar,
+      toggleSidebar,
+      openProfileMenu,
+      closeProfileMenu,
+      toggleProfileMenu,
+      closeAll,
+    ],
+  );
 
   return (
-    <DrawerContext.Provider
-      value={{
-        isSidebarOpen,
-        isProfileMenuOpen,
-        openSidebar,
-        closeSidebar,
-        toggleSidebar,
-        openProfileMenu,
-        closeProfileMenu,
-        toggleProfileMenu,
-        closeAll,
-      }}
-    >
+    <DrawerContext.Provider value={value}>
       {children}
     </DrawerContext.Provider>
   );
