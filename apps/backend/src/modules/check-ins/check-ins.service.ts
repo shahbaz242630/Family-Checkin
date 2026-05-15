@@ -273,12 +273,19 @@ export class CheckInsService {
     checkInId: string,
     scheduledAt: Date,
   ): Array<{ checkInId: string; attemptNumber: number; channel: Channel; scheduledAt: Date }> {
+    if (receiver.techProfile === TechProfile.VOICE_ONLY || receiver.techProfile === TechProfile.LANDLINE) {
+      return [0, 15, 45].map((offsetMinutes, index) => ({
+        checkInId,
+        attemptNumber: index + 1,
+        channel: Channel.VOICE,
+        scheduledAt: new Date(scheduledAt.getTime() + offsetMinutes * 60 * 1000),
+      }));
+    }
+
     const channels =
-      receiver.techProfile === TechProfile.VOICE_ONLY || receiver.techProfile === TechProfile.LANDLINE
-        ? [Channel.VOICE]
-        : [receiver.primaryChannel, ...(receiver.fallbackChannels ?? [])].filter(
-            (channel, index, all) => all.indexOf(channel) === index,
-          );
+      [receiver.primaryChannel, ...(receiver.fallbackChannels ?? [])].filter(
+        (channel, index, all) => all.indexOf(channel) === index,
+      );
     const offsets = channels.map((channel, index) => {
       if (index === 0) {
         return 0;

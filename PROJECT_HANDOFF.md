@@ -3123,10 +3123,26 @@ Slice 4 completed - SMS profile voice fallback:
   - `npm.cmd --prefix apps/mobile run type-check`
   - Passed.
 
-Full verification after slices 1-4:
+Slice 5 completed - voice-only retry attempt schedule:
+
+- Twilio review finding: the Twilio voice provider, signed Twilio webhook endpoints, hosted-audio `<Gather><Play>` TwiML, AMD/status callback persistence, and sticky caller-ID assignment are wired structurally. Live Twilio credential setup and sandbox/live smoke remain pending.
+- Gap: the handoff/BRD voice retry plan requires a voice-only/landline check-in to have the initial call plus two retry attempts, with retry 1 after 15 minutes and retry 2 after another 30 minutes. The coded cascade created only one voice attempt record for voice-only/landline receivers.
+- Fix: `CheckInsService.buildCascadeAttempts` now creates three voice attempts for `VOICE_ONLY` and `LANDLINE` receiver tech profiles at scheduled offsets `0`, `15`, and `45` minutes.
+- Regression test: `check-ins.service.spec.ts` verifies that a voice-only receiver creates three scheduled voice attempts while sending only the first attempt immediately.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- check-ins.service.spec.ts`
+  - Failed before fix because only attempt 1 existed.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- check-ins.service.spec.ts`
+  - Passed: 1 file, 8 tests.
+- Remaining Twilio code gaps found in review:
+  - Voice AMD/status callbacks are persisted to `provider_webhook_events`, but they do not yet drive attempt status transitions/retry dispatch from Twilio `CallStatus` or `AnsweredBy`.
+  - Twilio WhatsApp outbound is structurally wired through Twilio Messages API, but live approved template/content configuration and sandbox/live smoke are still pending.
+
+Full verification after slices 1-5:
 
 - `npm.cmd --prefix apps/backend test`
-  - Passed: 44 files, 206 tests.
+  - Passed: 44 files, 207 tests.
 - `npm.cmd --prefix apps/backend run type-check`
   - Passed.
 - `npm.cmd --prefix apps/mobile run type-check`

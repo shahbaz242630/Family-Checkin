@@ -545,6 +545,58 @@ describe('CheckInsService', () => {
     expect(voice.voiceCalls[0]?.options).toEqual({ fromNumber: '+15559990000' });
   });
 
+  it('creates two scheduled voice retries for voice-only receivers', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    const voice = new FakeChannelProvider(Channel.VOICE);
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [
+      {
+        ...receiverCandidate(crypto),
+        techProfile: TechProfile.VOICE_ONLY,
+        primaryChannel: Channel.VOICE,
+        fallbackChannels: [],
+      },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([voice]),
+      audit as unknown as AuditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    await service.sendDueCheckIns();
+
+    expect(repository.attempts.map((attempt) => ({
+      attemptNumber: attempt.attemptNumber,
+      channel: attempt.channel,
+      scheduledAt: attempt.scheduledAt,
+    }))).toEqual([
+      {
+        attemptNumber: 1,
+        channel: Channel.VOICE,
+        scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+      },
+      {
+        attemptNumber: 2,
+        channel: Channel.VOICE,
+        scheduledAt: new Date('2026-04-27T05:45:00.000Z'),
+      },
+      {
+        attemptNumber: 3,
+        channel: Channel.VOICE,
+        scheduledAt: new Date('2026-04-27T06:15:00.000Z'),
+      },
+    ]);
+    expect(repository.attemptsSent).toEqual(['attempt-1']);
+    expect(voice.voiceCalls).toHaveLength(1);
+  });
+
   it('falls back to configured voice caller ID when no sticky assignment is available', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
