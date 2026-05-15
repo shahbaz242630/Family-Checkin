@@ -3176,6 +3176,22 @@ Full verification after slices 1-6:
 - Nest `AppModule` fake-provider bootstrap with RevenueCat webhook auth configured:
   - Passed: `app-context-ok`.
 
+### 33. Optimization pass - in progress 2026-05-15
+
+Slice 1 completed - mobile startup import splitting:
+
+- Gap: several mobile routes imported the broad `services` barrel, which re-exported backend API, user-data, biometric, and RevenueCat modules together. This made route bundles more likely to pull unrelated native-facing code.
+- Gap: `AuthContext` imported push notification registration at root layout startup, even though registration only runs after an authenticated session exists.
+- Fixes:
+  - Changed mobile screens/hooks/utils to import directly from `services/backendApi`, `services/backendErrors`, `services/userData`, or specific data modules instead of broad barrels.
+  - Changed authenticated push registration to dynamic import `services/pushNotifications` only after `session.user` exists.
+  - Changed onboarding/sign-up/receiver screens and selectors to import `COUNTRIES`, language data, and country types from their specific data files instead of the `data` barrel.
+- Verification:
+  - `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+  - `npm.cmd exec -- vitest run apps/mobile/src/services/backendApi.spec.ts apps/mobile/src/utils/channelProfiles.spec.ts apps/mobile/src/services/auth.spec.ts`
+  - Passed: 3 files, 4 tests.
+
 ## First Command In A New Session
 
 Read this file first:

@@ -1,7 +1,7 @@
 // Receiver dashboard hook - manages receiver summary data.
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from './useAuth';
-import { listReceivers, type BackendReceiverSummary } from '../services';
+import { listReceivers, type BackendReceiverSummary } from '../services/backendApi';
 
 export interface ReceiverDashboardItem {
   id: string;

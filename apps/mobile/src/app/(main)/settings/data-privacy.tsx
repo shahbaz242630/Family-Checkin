@@ -13,13 +13,11 @@ import { useRouter } from 'expo-router';
 import { colors, spacing, fontSize, borderRadius } from '../../../theme';
 import { useAuthContext } from '../../../contexts/AuthContext';
 import { StepUpCodeModal } from '../../../components/common';
+import { requestAccountStepUp, verifyAccountStepUp, type BackendSensitiveAction } from '../../../services/backendApi';
 import {
   downloadUserData,
   deleteUserAccount,
-  requestAccountStepUp,
-  verifyAccountStepUp,
-  type BackendSensitiveAction,
-} from '../../../services';
+} from '../../../services/userData';
 
 export default function DataPrivacyScreen() {
   const router = useRouter();

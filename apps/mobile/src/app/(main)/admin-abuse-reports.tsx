@@ -7,7 +7,7 @@ import {
   markAdminAbuseReportSafe,
   type BackendAdminAbuseReport,
   type BackendAdminMe,
-} from '../../services';
+} from '../../services/backendApi';
 import { borderRadius, colors, fontSize, spacing } from '../../theme';
 import { formatOperationsDateTime } from '../../utils/adminOperations';
 

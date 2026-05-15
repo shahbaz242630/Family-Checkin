@@ -1,4 +1,4 @@
-import type { BackendChannel, BackendTechProfile } from '../services';
+import type { BackendChannel, BackendTechProfile } from '../services/backendApi';
 
 export interface ChannelProfileOption {
   value: BackendTechProfile;

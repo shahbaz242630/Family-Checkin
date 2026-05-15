@@ -15,7 +15,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { SocialButton, TextInput, Button, Divider } from '../../components/auth';
 import { useAuth } from '../../hooks/useAuth';
-import { syncAuthenticatedUser } from '../../services';
+import { syncAuthenticatedUser } from '../../services/backendApi';
 
 export default function LoginScreen() {
   const router = useRouter();

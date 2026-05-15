@@ -15,9 +15,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { SocialButton, TextInput, Button, Divider } from '../../components/auth';
 import { ReceiverPhoneInput } from '../../components/onboarding';
-import { COUNTRIES } from '../../data';
+import { COUNTRIES } from '../../data/constants';
 import { useAuth } from '../../hooks/useAuth';
-import { syncAuthenticatedUser } from '../../services';
+import { syncAuthenticatedUser } from '../../services/backendApi';
 
 export default function SignupScreen() {
   const router = useRouter();

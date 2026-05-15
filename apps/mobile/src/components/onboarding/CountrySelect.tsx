@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
-import { COUNTRIES, type CountryOption } from '../../data';
+import { COUNTRIES } from '../../data/constants';
+import type { CountryOption } from '../../data/countries';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 
 interface CountrySelectProps {

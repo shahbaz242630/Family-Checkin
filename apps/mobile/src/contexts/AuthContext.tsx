@@ -2,7 +2,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../services/supabase';
-import { registerSenderPushNotifications } from '../services/pushNotifications';
 
 interface AuthContextType {
   user: User | null;
@@ -61,9 +60,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    registerSenderPushNotifications().catch((error) => {
-      console.warn('Unable to register push notifications:', error);
-    });
+    let cancelled = false;
+    void import('../services/pushNotifications')
+      .then(({ registerSenderPushNotifications }) => {
+        if (!cancelled) {
+          return registerSenderPushNotifications();
+        }
+      })
+      .catch((error) => {
+        console.warn('Unable to register push notifications:', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [session?.user?.id]);
 
   const value: AuthContextType = {

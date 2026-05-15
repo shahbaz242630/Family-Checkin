@@ -4,16 +4,16 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, TextInput } from '../../components/auth';
 import { CountrySelect, LanguageSelect, ReceiverPhoneInput, TimeSelect, TimezoneSelect } from '../../components/onboarding';
-import { COUNTRIES } from '../../data';
+import { COUNTRIES } from '../../data/constants';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { CHANNEL_PROFILE_OPTIONS } from '../../utils/channelProfiles';
+import { isPaidAccessRequiredError } from '../../services/backendErrors';
 import {
   createReceiver,
-  isPaidAccessRequiredError,
   type BackendRelationshipType,
   type BackendTechProfile,
   type ReceiverSetupInput,
-} from '../../services';
+} from '../../services/backendApi';
 
 const relationshipOptions: Array<{ value: BackendRelationshipType; label: string }> = [
   { value: 'PARENT', label: 'Parent' },

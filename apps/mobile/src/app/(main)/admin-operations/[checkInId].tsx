@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { getOperationsCheckInDetail, type BackendOperationsCheckInDetail } from '../../../services';
+import { getOperationsCheckInDetail, type BackendOperationsCheckInDetail } from '../../../services/backendApi';
 import { borderRadius, colors, fontSize, spacing } from '../../../theme';
 import {
   attemptStatusLabel,

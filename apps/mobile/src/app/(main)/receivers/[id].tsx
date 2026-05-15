@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StepUpCodeModal } from '../../../components/common';
 import { TextInput } from '../../../components/auth';
 import { CountrySelect, LanguageSelect, ReceiverPhoneInput, TimeSelect, TimezoneSelect } from '../../../components/onboarding';
-import { COUNTRIES } from '../../../data';
+import { COUNTRIES } from '../../../data/constants';
 import {
   alertBackupForReceiverCheckIn,
   createBackupContact,
@@ -26,7 +26,7 @@ import {
   type BackendReceiverDetail,
   type BackendRelationshipType,
   type ReceiverUpdateInput,
-} from '../../../services';
+} from '../../../services/backendApi';
 import { colors, spacing, fontSize, borderRadius } from '../../../theme';
 import { CHANNEL_PROFILE_OPTIONS } from '../../../utils/channelProfiles';
 import { getReceiverStatusDisplay, type ReceiverStatusTone } from '../../../utils/receiverStatus';

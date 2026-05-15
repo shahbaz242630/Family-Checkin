@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'expo-router';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { getAdminMe, getOperationsCheckInSummary, type BackendAdminMe, type BackendOperationsSummary } from '../../services';
+import { getAdminMe, getOperationsCheckInSummary, type BackendAdminMe, type BackendOperationsSummary } from '../../services/backendApi';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { formatOperationsDateTime, operationsStatusLabel, sortStatusCounts } from '../../utils/adminOperations';
 

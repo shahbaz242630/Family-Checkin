@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
-import { getLanguage, LANGUAGES, type LanguageOption } from '../../data';
+import { getLanguage, LANGUAGES, type LanguageOption } from '../../data/languages';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 
 interface LanguageSelectProps {
