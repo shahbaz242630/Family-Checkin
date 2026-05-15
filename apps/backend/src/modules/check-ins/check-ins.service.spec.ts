@@ -119,6 +119,30 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     });
   }
 
+  async markSentAttemptProviderFailure(input: {
+    providerMessageId: string;
+    completedAt: Date;
+    providerStatus: string;
+    failureReason: string;
+  }): Promise<CheckInAttemptRecord | null> {
+    const attempt = [...this.attempts]
+      .filter(
+        (candidate) =>
+          candidate.providerMessageId === input.providerMessageId && candidate.status === CheckInAttemptStatus.SENT,
+      )
+      .sort((left, right) => (right.sentAt?.getTime() ?? 0) - (left.sentAt?.getTime() ?? 0))[0];
+    if (!attempt) {
+      return null;
+    }
+    return this.updateAttempt(attempt.id, {
+      status: CheckInAttemptStatus.FAILED,
+      completedAt: input.completedAt,
+      providerStatus: input.providerStatus,
+      failureReason: input.failureReason,
+      updatedAt: input.completedAt,
+    });
+  }
+
   async markAttemptTimedOut(input: { attemptId: string; completedAt: Date }): Promise<CheckInAttemptRecord> {
     return this.updateAttempt(input.attemptId, {
       status: CheckInAttemptStatus.TIMED_OUT,
@@ -595,6 +619,49 @@ describe('CheckInsService', () => {
     ]);
     expect(repository.attemptsSent).toEqual(['attempt-1']);
     expect(voice.voiceCalls).toHaveLength(1);
+  });
+
+  it('marks sent voice attempts failed from terminal Twilio provider callbacks', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    const voice = new FakeChannelProvider(Channel.VOICE);
+    repository.attempts = [
+      {
+        id: 'attempt-1',
+        checkInId: 'check-in-1',
+        attemptNumber: 1,
+        channel: Channel.VOICE,
+        status: CheckInAttemptStatus.SENT,
+        scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+        sentAt: new Date('2026-04-27T05:30:00.000Z'),
+        providerMessageId: 'CA123',
+        providerStatus: 'queued',
+        createdAt: new Date('2026-04-27T05:30:00.000Z'),
+        updatedAt: new Date('2026-04-27T05:30:00.000Z'),
+      },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([voice]),
+      audit as unknown as AuditService,
+      undefined,
+      () => new Date('2026-04-27T05:31:00.000Z'),
+    );
+
+    const result = await service.recordVoiceProviderFailure({
+      providerMessageId: 'CA123',
+      providerStatus: 'busy',
+    });
+
+    expect(result).toEqual({ updated: true });
+    expect(repository.attempts[0]).toMatchObject({
+      status: CheckInAttemptStatus.FAILED,
+      providerStatus: 'busy',
+      completedAt: new Date('2026-04-27T05:31:00.000Z'),
+      failureReason: 'twilio_status_busy',
+    });
   });
 
   it('falls back to configured voice caller ID when no sticky assignment is available', async () => {

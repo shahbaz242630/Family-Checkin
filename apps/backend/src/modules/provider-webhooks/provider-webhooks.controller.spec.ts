@@ -27,6 +27,15 @@ class FakeProviderWebhookEventsRepository {
   }
 }
 
+class FakeCheckInsService {
+  public voiceProviderFailures: Array<{ providerMessageId?: string; providerStatus?: string; answeredBy?: string }> = [];
+
+  async recordVoiceProviderFailure(input: { providerMessageId?: string; providerStatus?: string; answeredBy?: string }) {
+    this.voiceProviderFailures.push(input);
+    return { updated: true };
+  }
+}
+
 const config = {
   channelWebhookSecret: 'provider-webhook-secret',
   twilioAuthToken: 'twilio-auth-token',
@@ -37,9 +46,10 @@ describe('ProviderWebhooksController', () => {
   function makeController() {
     const service = new FakeReceiverReplyService();
     const eventsRepository = new FakeProviderWebhookEventsRepository();
-    const controller = new ProviderWebhooksController(service as never, config, eventsRepository);
+    const checkInsService = new FakeCheckInsService();
+    const controller = new ProviderWebhooksController(service as never, config, eventsRepository, checkInsService);
 
-    return { controller, service, eventsRepository };
+    return { controller, service, eventsRepository, checkInsService };
   }
 
   it('normalizes WhatsApp text messages into receiver replies', async () => {
@@ -294,7 +304,7 @@ describe('ProviderWebhooksController', () => {
   });
 
   it('accepts signed Twilio voice status callbacks without treating them as receiver replies', async () => {
-    const { controller, service, eventsRepository } = makeController();
+    const { controller, service, eventsRepository, checkInsService } = makeController();
     const params = {
       CallSid: 'CA123',
       CallStatus: 'completed',
@@ -322,10 +332,16 @@ describe('ProviderWebhooksController', () => {
         payload: params,
       },
     ]);
+    expect(checkInsService.voiceProviderFailures).toEqual([
+      {
+        providerMessageId: 'CA123',
+        providerStatus: 'completed',
+      },
+    ]);
   });
 
   it('accepts signed Twilio AMD callbacks without treating machine answers as receiver replies', async () => {
-    const { controller, service, eventsRepository } = makeController();
+    const { controller, service, eventsRepository, checkInsService } = makeController();
     const params = {
       CallSid: 'CA124',
       AnsweredBy: 'machine_start',
@@ -350,6 +366,12 @@ describe('ProviderWebhooksController', () => {
         providerEventId: 'CA124:machine_start',
         providerMessageId: 'CA124',
         payload: params,
+      },
+    ]);
+    expect(checkInsService.voiceProviderFailures).toEqual([
+      {
+        providerMessageId: 'CA124',
+        answeredBy: 'machine_start',
       },
     ]);
   });

@@ -16,6 +16,7 @@ import type {
   MarkCheckInAttemptTimedOutInput,
   MarkCheckInRespondedInput,
   MarkCheckInSentInput,
+  MarkSentCheckInAttemptProviderFailureInput,
   SkipPendingCheckInAttemptsInput,
 } from './check-ins.repository';
 
@@ -99,8 +100,10 @@ interface CheckInsPrismaClient {
       orderBy: Array<{ scheduledAt?: 'asc' } | { attemptNumber?: 'asc' }>;
     }): Promise<Array<CheckInAttempt & { checkIn: CheckIn & { receiver: { phoneEncrypted: string; countryCode: string; language: string } } }>>;
     findFirst(args: {
-      where: { checkInId: string; status: CheckInAttemptStatus };
-      orderBy: { attemptNumber: 'desc' };
+      where:
+        | { checkInId: string; status: CheckInAttemptStatus }
+        | { providerMessageId: string; status: CheckInAttemptStatus };
+      orderBy: { attemptNumber: 'desc' } | { sentAt: 'desc' };
     }): Promise<CheckInAttempt | null>;
     update(args: {
       where: { id: string };
@@ -248,6 +251,31 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       data: {
         status: CheckInAttemptStatus.FAILED,
         completedAt: input.completedAt,
+        failureReason: input.failureReason,
+      },
+    });
+
+    return this.toCheckInAttemptRecord(attempt);
+  }
+
+  async markSentAttemptProviderFailure(input: MarkSentCheckInAttemptProviderFailureInput): Promise<CheckInAttemptRecord | null> {
+    const latest = await this.prisma.checkInAttempt.findFirst({
+      where: {
+        providerMessageId: input.providerMessageId,
+        status: CheckInAttemptStatus.SENT,
+      },
+      orderBy: { sentAt: 'desc' },
+    });
+    if (!latest) {
+      return null;
+    }
+
+    const attempt = await this.prisma.checkInAttempt.update({
+      where: { id: latest.id },
+      data: {
+        status: CheckInAttemptStatus.FAILED,
+        completedAt: input.completedAt,
+        providerStatus: input.providerStatus,
         failureReason: input.failureReason,
       },
     });

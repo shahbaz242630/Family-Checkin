@@ -356,6 +356,10 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     };
   }
 
+  async markSentAttemptProviderFailure(): Promise<null> {
+    return null;
+  }
+
   async markAttemptTimedOut(input: { attemptId: string; completedAt: Date }) {
     return {
       id: input.attemptId,

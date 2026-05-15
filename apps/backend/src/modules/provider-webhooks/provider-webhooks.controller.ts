@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Body, Controller, Headers, Inject, Ip, Post, UnauthorizedException } from '@nestjs/common';
 import { Channel } from '@prisma/client';
 import { AppConfigService } from '../../shared/config/app-config.service';
+import { CheckInsService } from '../check-ins/check-ins.service';
 import type { HandleInboundReceiverReplyInput } from '../receivers/receiver-reply.service';
 import { ReceiverReplyService } from '../receivers/receiver-reply.service';
 import type { ProviderWebhookEventsRepository } from './provider-webhook-events.repository';
@@ -80,6 +81,8 @@ export class ProviderWebhooksController {
     private readonly config: Pick<AppConfigService, 'channelWebhookSecret' | 'twilioAuthToken' | 'publicApiBaseUrl'>,
     @Inject(PROVIDER_WEBHOOK_EVENTS_REPOSITORY)
     private readonly providerWebhookEventsRepository: ProviderWebhookEventsRepository,
+    @Inject(CheckInsService)
+    private readonly checkInsService: Pick<CheckInsService, 'recordVoiceProviderFailure'>,
   ) {}
 
   @Post('whatsapp')
@@ -167,6 +170,10 @@ export class ProviderWebhooksController {
       providerMessageId: body.CallSid,
       payload: body,
     });
+    await this.checkInsService.recordVoiceProviderFailure({
+      providerMessageId: body.CallSid,
+      providerStatus: body.CallStatus,
+    });
 
     return { ok: true, processed: 1 };
   }
@@ -183,6 +190,10 @@ export class ProviderWebhooksController {
       providerEventId: this.twilioProviderEventId(body.CallSid, body.AnsweredBy),
       providerMessageId: body.CallSid,
       payload: body,
+    });
+    await this.checkInsService.recordVoiceProviderFailure({
+      providerMessageId: body.CallSid,
+      answeredBy: body.AnsweredBy,
     });
 
     return { ok: true, processed: 1 };

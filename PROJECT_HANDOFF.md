@@ -3136,13 +3136,35 @@ Slice 5 completed - voice-only retry attempt schedule:
   - `npm.cmd --prefix apps/backend test -- check-ins.service.spec.ts`
   - Passed: 1 file, 8 tests.
 - Remaining Twilio code gaps found in review:
-  - Voice AMD/status callbacks are persisted to `provider_webhook_events`, but they do not yet drive attempt status transitions/retry dispatch from Twilio `CallStatus` or `AnsweredBy`.
   - Twilio WhatsApp outbound is structurally wired through Twilio Messages API, but live approved template/content configuration and sandbox/live smoke are still pending.
 
-Full verification after slices 1-5:
+Slice 6 completed - Twilio voice callback attempt failure state:
+
+- Gap: Twilio voice AMD/status callbacks were persisted for audit but did not update the matching `check_in_attempts` row. Terminal Twilio results such as `busy`, `failed`, `no-answer`, `canceled`, or non-human AMD values could leave a sent voice attempt in `SENT` state until generic timeout handling.
+- Fixes:
+  - Added `CheckInsService.recordVoiceProviderFailure` to translate terminal Twilio status/AMD fields into failed voice attempt state.
+  - Added repository support to find the latest sent attempt by Twilio `CallSid` / `providerMessageId` and mark it `FAILED` with `providerStatus`, `completedAt`, and a Twilio-specific `failureReason`.
+  - Twilio voice status and AMD webhook handlers now persist the raw event and then call the check-in service failure transition path. Human AMD and non-terminal statuses intentionally return `updated: false`.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- check-ins.service.spec.ts`
+  - Failed before fix because `recordVoiceProviderFailure` did not exist.
+  - `npm.cmd --prefix apps/backend test -- provider-webhooks.controller.spec.ts`
+  - Failed before controller wiring because the signed status/AMD endpoints did not call the check-in service.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- check-ins.service.spec.ts`
+  - Passed: 1 file, 9 tests.
+  - `npm.cmd --prefix apps/backend test -- provider-webhooks.controller.spec.ts`
+  - Passed: 1 file, 11 tests.
+  - `npm.cmd --prefix apps/backend test -- receiver-reply.service.spec.ts provider-webhooks.controller.spec.ts check-ins.service.spec.ts`
+  - Passed: 3 files, 28 tests.
+- Remaining Twilio work:
+  - Live Twilio credentials, approved WhatsApp template/content setup, compliant sender/caller IDs, and sandbox/live smoke remain pending.
+  - Status/AMD callbacks now mark terminal attempt failure; retry dispatch still depends on the existing cascade processing job picking up due pending attempts rather than being launched synchronously inside the webhook request.
+
+Full verification after slices 1-6:
 
 - `npm.cmd --prefix apps/backend test`
-  - Passed: 44 files, 207 tests.
+  - Passed: 44 files, 208 tests.
 - `npm.cmd --prefix apps/backend run type-check`
   - Passed.
 - `npm.cmd --prefix apps/mobile run type-check`

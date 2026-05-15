@@ -30,6 +30,16 @@ export interface ProcessCascadeAttemptsResult {
   skipped: number;
 }
 
+export interface RecordVoiceProviderFailureInput {
+  providerMessageId?: string;
+  providerStatus?: string;
+  answeredBy?: string;
+}
+
+export interface RecordVoiceProviderFailureResult {
+  updated: boolean;
+}
+
 @Injectable()
 export class CheckInsService {
   private static readonly defaultResponseWindowMinutes = 30;
@@ -220,6 +230,24 @@ export class CheckInsService {
     return result;
   }
 
+  async recordVoiceProviderFailure(input: RecordVoiceProviderFailureInput): Promise<RecordVoiceProviderFailureResult> {
+    const providerMessageId = input.providerMessageId?.trim();
+    const failureReason = this.voiceProviderFailureReason(input);
+    const providerStatus = input.providerStatus ?? input.answeredBy;
+    if (!providerMessageId || !failureReason || !providerStatus) {
+      return { updated: false };
+    }
+
+    const attempt = await this.checkInsRepository.markSentAttemptProviderFailure({
+      providerMessageId,
+      completedAt: this.now(),
+      providerStatus,
+      failureReason,
+    });
+
+    return { updated: attempt !== null };
+  }
+
   private isEligible(receiver: CheckInReceiverCandidate, now: Date): boolean {
     if (receiver.consentStatus !== ConsentStatus.GRANTED) {
       return false;
@@ -355,6 +383,20 @@ export class CheckInsService {
     }
     const windowMinutes = attempt.channel === Channel.WHATSAPP ? 15 : 30;
     return attempt.sentAt.getTime() + windowMinutes * 60 * 1000 <= now.getTime();
+  }
+
+  private voiceProviderFailureReason(input: RecordVoiceProviderFailureInput): string | null {
+    const status = input.providerStatus?.trim().toLowerCase();
+    if (status && ['busy', 'failed', 'no-answer', 'canceled'].includes(status)) {
+      return `twilio_status_${status}`;
+    }
+
+    const answeredBy = input.answeredBy?.trim().toLowerCase();
+    if (answeredBy && answeredBy !== 'human') {
+      return `twilio_answered_by_${answeredBy}`;
+    }
+
+    return null;
   }
 
   private isClosed(status: CheckInStatus): boolean {
