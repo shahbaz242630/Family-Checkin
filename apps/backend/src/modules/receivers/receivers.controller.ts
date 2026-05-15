@@ -14,9 +14,11 @@ import {
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
+import { SensitiveAction } from '@prisma/client';
 import type { Channel, RelationshipType, TechProfile } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
+import { StepUpService } from '../account/step-up.service';
 import { BackupContactsService } from '../backup-contacts/backup-contacts.service';
 import { BillingService } from '../billing/billing.service';
 import { UsersService } from '../users/users.service';
@@ -77,6 +79,9 @@ export class ReceiversController {
     private readonly backupContactsService?: Pick<BackupContactsService, 'listForReceiver'>,
     @Inject(BillingService)
     private readonly billingService?: Pick<BillingService, 'getBillingStatus'>,
+    @Optional()
+    @Inject(StepUpService)
+    private readonly stepUpService?: Pick<StepUpService, 'consumeStepUpToken'>,
   ) {}
 
   @Get()
@@ -207,6 +212,7 @@ export class ReceiversController {
   @Delete(':receiverId')
   async delete(
     @Headers('authorization') authorization: string | undefined,
+    @Headers('x-nearby-step-up-token') stepUpToken: string | undefined,
     @Headers('x-forwarded-for') forwardedFor: string | undefined,
     @Headers('user-agent') userAgent: string | undefined,
     @Param('receiverId') receiverId: string,
@@ -214,6 +220,7 @@ export class ReceiversController {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
     const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    await this.consumeReceiverRemoveStepUp(sender.id, stepUpToken);
     const receiver = await this.receiversService.deleteForSender({
       userId: sender.id,
       receiverId,
@@ -382,6 +389,22 @@ export class ReceiversController {
 
   private firstForwardedIp(forwardedFor: string | undefined): string | undefined {
     return forwardedFor?.split(',')[0]?.trim() || undefined;
+  }
+
+  private async consumeReceiverRemoveStepUp(userId: string, stepUpToken: string | undefined): Promise<void> {
+    const token = stepUpToken?.trim();
+    if (!token) {
+      throw new ForbiddenException('Step-up verification is required');
+    }
+    if (!this.stepUpService) {
+      throw new ForbiddenException('Step-up verification is required');
+    }
+
+    await this.stepUpService.consumeStepUpToken({
+      userId,
+      action: SensitiveAction.REMOVE_RECEIVER,
+      stepUpToken: token,
+    });
   }
 
   private optionalDate(value: string | undefined, message: string): Date | undefined {

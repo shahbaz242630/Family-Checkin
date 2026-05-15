@@ -53,4 +53,30 @@ describe('backend API error handling', () => {
       message: 'Active subscription required to add receivers',
     });
   });
+
+  it('sends the step-up token when deleting a receiver', async () => {
+    vi.stubEnv('EXPO_PUBLIC_BACKEND_URL', 'https://backend.example');
+    const fetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        receiver: { id: 'receiver-1', deleted: true },
+      }),
+    }));
+    vi.stubGlobal('fetch', fetch);
+
+    const { deleteReceiver } = await import('./backendApi');
+
+    await deleteReceiver('receiver-1', 'remove-token');
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://backend.example/receivers/receiver-1',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({
+          'x-nearby-step-up-token': 'remove-token',
+        }),
+      }),
+    );
+  });
 });

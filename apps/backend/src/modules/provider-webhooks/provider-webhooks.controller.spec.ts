@@ -264,7 +264,8 @@ describe('ProviderWebhooksController', () => {
   it('validates Twilio voice signatures and normalizes DTMF replies', async () => {
     const { controller, service } = makeController();
     const params = {
-      From: '+971501234571',
+      From: '+15550003333',
+      To: '+971501234571',
       Digits: '1',
       CallSid: 'CA123',
     };

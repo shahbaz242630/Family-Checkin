@@ -20,7 +20,7 @@ interface UseAuthReturn {
   error: AuthError | null;
   isAuthenticated: boolean;
   signIn: (email: string, password: string) => Promise<boolean>;
-  signUp: (email: string, password: string, fullName: string) => Promise<boolean>;
+  signUp: (email: string, password: string, fullName: string, metadata?: { phone?: string; country?: string; timezone?: string }) => Promise<boolean>;
   signInGoogle: () => Promise<boolean>;
   signInApple: () => Promise<boolean>;
   signOut: () => Promise<void>;
@@ -93,12 +93,13 @@ export function useAuth(): UseAuthReturn {
   const signUp = useCallback(async (
     email: string,
     password: string,
-    fullName: string
+    fullName: string,
+    metadata?: { phone?: string; country?: string; timezone?: string },
   ): Promise<boolean> => {
     setLoading(true);
     setError(null);
 
-    const result = await signUpWithEmail(email, password, fullName);
+    const result = await signUpWithEmail(email, password, fullName, metadata);
 
     setLoading(false);
 

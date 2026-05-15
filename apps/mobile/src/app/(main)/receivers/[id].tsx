@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { StepUpCodeModal } from '../../../components/common';
 import { TextInput } from '../../../components/auth';
 import { CountrySelect, LanguageSelect, ReceiverPhoneInput, TimeSelect, TimezoneSelect } from '../../../components/onboarding';
 import { COUNTRIES } from '../../../data';
@@ -12,21 +13,22 @@ import {
   getReceiver,
   listBackupContacts,
   pauseReceiver,
+  requestAccountStepUp,
   resolveReceiverCheckIn,
   resumeReceiver,
   tryReceiverCheckInLater,
   updateBackupContact,
   updateReceiver,
+  verifyAccountStepUp,
   type BackupContactSetupInput,
   type BackupContactUpdateInput,
   type BackendBackupContact,
-  type BackendChannel,
   type BackendReceiverDetail,
   type BackendRelationshipType,
-  type BackendTechProfile,
   type ReceiverUpdateInput,
 } from '../../../services';
 import { colors, spacing, fontSize, borderRadius } from '../../../theme';
+import { CHANNEL_PROFILE_OPTIONS } from '../../../utils/channelProfiles';
 import { getReceiverStatusDisplay, type ReceiverStatusTone } from '../../../utils/receiverStatus';
 
 const relationshipOptions: Array<{ value: BackendRelationshipType; label: string }> = [
@@ -39,17 +41,7 @@ const relationshipOptions: Array<{ value: BackendRelationshipType; label: string
   { value: 'OTHER', label: 'Other' },
 ];
 
-const profileOptions: Array<{
-  value: BackendTechProfile;
-  label: string;
-  primaryChannel: BackendChannel;
-  fallbackChannels: BackendChannel[];
-}> = [
-  { value: 'WHATSAPP', label: 'WhatsApp if available', primaryChannel: 'WHATSAPP', fallbackChannels: ['SMS', 'VOICE'] },
-  { value: 'SMS', label: 'SMS only', primaryChannel: 'SMS', fallbackChannels: [] },
-  { value: 'VOICE_ONLY', label: 'Voice call', primaryChannel: 'VOICE', fallbackChannels: [] },
-  { value: 'LANDLINE', label: 'Landline', primaryChannel: 'VOICE', fallbackChannels: [] },
-];
+const profileOptions = CHANNEL_PROFILE_OPTIONS;
 
 export default function ReceiverDetailScreen() {
   const router = useRouter();
@@ -71,6 +63,9 @@ export default function ReceiverDetailScreen() {
   });
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [stepUpPrompt, setStepUpPrompt] = useState<{ title: string; message: string } | null>(null);
+  const [stepUpCode, setStepUpCode] = useState('');
+  const stepUpResolver = useRef<((code: string | null) => void) | null>(null);
 
   const loadReceiver = useCallback(async () => {
     if (!id) {
@@ -378,7 +373,12 @@ export default function ReceiverDetailScreen() {
       try {
         setIsSaving(true);
         setActionError(null);
-        await deleteReceiver(id);
+        const stepUpToken = await completeStepUpForReceiverRemoval();
+        if (!stepUpToken) {
+          setIsSaving(false);
+          return;
+        }
+        await deleteReceiver(id, stepUpToken);
         router.replace('/(main)');
       } catch (err) {
         setActionError(err instanceof Error ? err.message : 'Unable to remove receiver');
@@ -408,6 +408,38 @@ export default function ReceiverDetailScreen() {
     );
   };
 
+  const completeStepUpForReceiverRemoval = async (): Promise<string | null> => {
+    const requested = await requestAccountStepUp('REMOVE_RECEIVER');
+    const code = await promptForOtp(requested.expiresAt);
+
+    if (!code) {
+      Alert.alert('Verification required', 'Enter the SMS code to remove this receiver.');
+      return null;
+    }
+
+    const verified = await verifyAccountStepUp({ challengeId: requested.challengeId, code });
+    return verified.stepUpToken;
+  };
+
+  const promptForOtp = async (expiresAt: string): Promise<string | null> => {
+    setStepUpCode('');
+    setStepUpPrompt({
+      title: 'Confirm receiver removal',
+      message: `Enter the SMS verification code. It expires at ${new Date(expiresAt).toLocaleTimeString()}.`,
+    });
+
+    return await new Promise((resolve) => {
+      stepUpResolver.current = resolve;
+    });
+  };
+
+  const resolveStepUpPrompt = (code: string | null) => {
+    stepUpResolver.current?.(code);
+    stepUpResolver.current = null;
+    setStepUpPrompt(null);
+    setStepUpCode('');
+  };
+
   const selectProfile = (profile: (typeof profileOptions)[number]) => {
     if (!draft) return;
     setDraft({
@@ -419,6 +451,7 @@ export default function ReceiverDetailScreen() {
   };
 
   return (
+    <>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Pressable style={styles.backButton} onPress={() => router.back()}>
         <Text style={styles.backButtonText}>Back</Text>
@@ -670,6 +703,16 @@ export default function ReceiverDetailScreen() {
         </Pressable>
       </View>
     </ScrollView>
+    <StepUpCodeModal
+      visible={Boolean(stepUpPrompt)}
+      title={stepUpPrompt?.title ?? ''}
+      message={stepUpPrompt?.message ?? ''}
+      code={stepUpCode}
+      onChangeCode={setStepUpCode}
+      onCancel={() => resolveStepUpPrompt(null)}
+      onSubmit={() => resolveStepUpPrompt(stepUpCode.trim() || null)}
+    />
+    </>
   );
 }
 

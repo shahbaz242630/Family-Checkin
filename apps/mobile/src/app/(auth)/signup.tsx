@@ -14,6 +14,8 @@ import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { SocialButton, TextInput, Button, Divider } from '../../components/auth';
+import { ReceiverPhoneInput } from '../../components/onboarding';
+import { COUNTRIES } from '../../data';
 import { useAuth } from '../../hooks/useAuth';
 import { syncAuthenticatedUser } from '../../services';
 
@@ -23,16 +25,21 @@ export default function SignupScreen() {
 
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
+  const [phoneCountry, setPhoneCountry] = useState('AE');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [nameError, setNameError] = useState('');
   const [emailError, setEmailError] = useState('');
+  const [phoneError, setPhoneError] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  const selectedPhoneCountry = COUNTRIES.find((country) => country.isoCode === phoneCountry) ?? COUNTRIES[0];
 
   const validateForm = (): boolean => {
     let valid = true;
     clearError();
     setNameError('');
     setEmailError('');
+    setPhoneError('');
     setPasswordError('');
 
     if (!fullName || fullName.length < 2) {
@@ -45,6 +52,14 @@ export default function SignupScreen() {
       valid = false;
     } else if (!email.includes('@')) {
       setEmailError('Please enter a valid email');
+      valid = false;
+    }
+
+    if (!phone.trim()) {
+      setPhoneError('Phone number is required');
+      valid = false;
+    } else if (phone.trim().startsWith('0')) {
+      setPhoneError('Remove the leading 0. Use the local number after the country code.');
       valid = false;
     }
 
@@ -62,7 +77,12 @@ export default function SignupScreen() {
   const handleEmailSignUp = async () => {
     if (!validateForm()) return;
 
-    const success = await signUp(email, password, fullName);
+    const senderPhone = `${selectedPhoneCountry.dialCode}${phone.replace(/\D/g, '')}`;
+    const success = await signUp(email, password, fullName, {
+      phone: senderPhone,
+      country: phoneCountry,
+      timezone: 'Asia/Dubai',
+    });
     if (success) {
       try {
         await syncAuthenticatedUser();
@@ -164,6 +184,18 @@ export default function SignupScreen() {
               error={emailError}
             />
 
+            <ReceiverPhoneInput
+              phoneCountry={phoneCountry}
+              phone={phone}
+              onChangePhoneCountry={setPhoneCountry}
+              onChangePhone={(value) => {
+                setPhone(value.replace(/\D/g, ''));
+                setPhoneError('');
+              }}
+              error={phoneError}
+              disabled={loading}
+            />
+
             <View>
               <TextInput
                 label="Password"
@@ -193,7 +225,7 @@ export default function SignupScreen() {
               title="Create account"
               onPress={handleEmailSignUp}
               loading={loading}
-              disabled={!fullName || !email || !password}
+              disabled={!fullName || !email || !phone || !password}
             />
 
             {/* Terms & Privacy */}

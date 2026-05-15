@@ -50,6 +50,7 @@ type TwilioMessagingWebhookBody = {
 
 type TwilioVoiceWebhookBody = {
   From?: string;
+  To?: string;
   Digits?: string;
   SpeechResult?: string;
   CallSid?: string;
@@ -287,12 +288,12 @@ export class ProviderWebhooksController {
     userAgent: string | undefined,
   ): HandleInboundReceiverReplyInput | null {
     const replyBody = body.Digits ?? body.SpeechResult;
-    if (!body.From || !replyBody) {
+    if (!body.To || !replyBody) {
       return null;
     }
 
     const reply: HandleInboundReceiverReplyInput = {
-      fromPhone: this.toInternationalPhone(body.From),
+      fromPhone: this.toInternationalPhone(body.To),
       channel: Channel.VOICE,
       body: replyBody,
       ipAddress,

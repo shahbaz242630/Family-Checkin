@@ -29,7 +29,7 @@ export async function signUpWithEmail(
   email: string,
   password: string,
   fullName: string,
-  metadata?: { timezone?: string; country?: string }
+  metadata?: { phone?: string; timezone?: string; country?: string }
 ): Promise<AuthResult> {
   try {
     const { data, error } = await supabase.auth.signUp({
@@ -39,6 +39,7 @@ export async function signUpWithEmail(
         emailRedirectTo: 'familycheckin://auth/callback',
         data: {
           full_name: fullName,
+          phone: metadata?.phone,
           timezone: metadata?.timezone || 'Asia/Dubai',
           country: metadata?.country || 'AE',
         },

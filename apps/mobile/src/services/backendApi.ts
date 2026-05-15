@@ -9,7 +9,7 @@ export type BackendTechProfile = 'WHATSAPP' | 'SMS' | 'VOICE_ONLY' | 'LANDLINE';
 export type BackendChannel = 'WHATSAPP' | 'SMS' | 'VOICE';
 export type BackendConsentStatus = 'PENDING' | 'GRANTED' | 'DECLINED' | 'REVOKED';
 export type BackendCheckInAttemptStatus = 'PENDING' | 'SENT' | 'RESPONDED' | 'FAILED' | 'TIMED_OUT' | 'SKIPPED';
-export type BackendSensitiveAction = 'EXPORT_DATA' | 'DELETE_ACCOUNT';
+export type BackendSensitiveAction = 'EXPORT_DATA' | 'DELETE_ACCOUNT' | 'REMOVE_RECEIVER';
 export type BackendCheckInStatus =
   | 'PENDING'
   | 'SENT'
@@ -324,9 +324,12 @@ export async function updateReceiver(receiverId: string, input: ReceiverUpdateIn
   return response.receiver;
 }
 
-export async function deleteReceiver(receiverId: string): Promise<void> {
+export async function deleteReceiver(receiverId: string, stepUpToken: string): Promise<void> {
   await backendRequest<{ receiver: BackendReceiverDetail }>(`/receivers/${receiverId}`, {
     method: 'DELETE',
+    headers: {
+      'x-nearby-step-up-token': stepUpToken,
+    },
   });
 }
 

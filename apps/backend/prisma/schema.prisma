@@ -117,6 +117,7 @@ enum AdminRole {
 enum SensitiveAction {
   EXPORT_DATA
   DELETE_ACCOUNT
+  REMOVE_RECEIVER
 }
 
 model User {

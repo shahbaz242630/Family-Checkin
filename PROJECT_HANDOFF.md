@@ -3041,6 +3041,103 @@ Use this before beta, production launch, or inviting real users into the hosted 
 - Payments/tier gating.
 - Rotate the Supabase access token and DB password pasted in chat.
 
+### 32. BRD gap closure pass - in progress 2026-05-15
+
+Purpose:
+
+- Close audited gaps in small slices.
+- For each slice: write/adjust a regression test first, verify it fails for the expected gap, implement the smallest fix, rerun targeted verification, update this handoff, then continue.
+- Terms/privacy links are intentionally deferred until the end per product-owner instruction.
+
+Slice 1 completed - Twilio voice reply receiver matching:
+
+- Gap: outbound Twilio voice calls use `From` as the platform caller ID and `To` as the receiver, but the voice DTMF webhook normalized `From` into the receiver reply identity. Voice `1` / `2` replies could therefore fail to match the receiver/check-in.
+- Fix: `ProviderWebhooksController.extractTwilioVoiceReply` now normalizes `body.To` as the receiver phone for voice replies.
+- Regression test: `provider-webhooks.controller.spec.ts` now models real Twilio voice callback shape with `From` as caller ID and `To` as receiver.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/provider-webhooks/provider-webhooks.controller.spec.ts`
+  - Failed before fix because handled `fromPhone` was `+15550003333` instead of `+971501234571`.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/provider-webhooks/provider-webhooks.controller.spec.ts`
+  - Passed: 1 file, 11 tests.
+
+Slice 2 completed - receiver removal step-up and native OTP entry:
+
+- Gap: BRD requires MFA/OTP for removing a receiver. Mobile could delete a receiver directly, and backend `DELETE /receivers/:receiverId` did not consume a step-up token.
+- Gap: account data privacy step-up depended on browser `prompt` or platform-specific `Alert.prompt`; Android/native paths could show "SMS code entry is not available" and fail to complete step-up.
+- Fixes:
+  - Added Prisma `SensitiveAction.REMOVE_RECEIVER` and migration `202605150001_receiver_remove_step_up`.
+  - `AccountController` now allows `REMOVE_RECEIVER` step-up requests.
+  - `ReceiversController.delete` now requires `x-nearby-step-up-token` and consumes it for `REMOVE_RECEIVER` before soft-delete.
+  - Mobile `deleteReceiver` now requires and forwards the step-up token.
+  - Receiver detail removal flow now requests/verifies `REMOVE_RECEIVER` before calling delete.
+  - Data/privacy and receiver removal flows now use an in-app `StepUpCodeModal`, so native Android/iOS do not depend on browser prompt support.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/receivers/receivers.controller.spec.ts`
+  - Failed before fix because receiver delete did not consume a step-up token.
+  - `npm.cmd exec -- vitest run apps/mobile/src/services/backendApi.spec.ts`
+  - Failed before fix because delete request headers did not include `x-nearby-step-up-token`.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/receivers/receivers.controller.spec.ts src/modules/account/account.controller.spec.ts`
+  - Passed: 2 files, 14 tests.
+  - `npm.cmd exec -- vitest run apps/mobile/src/services/backendApi.spec.ts`
+  - Passed: 1 file, 2 tests.
+  - `npm.cmd --prefix apps/backend run type-check`
+  - Passed.
+  - `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+- Remaining in this category:
+  - Payment-method-change MFA is still not applicable to a coded route because payment-method mutation is not implemented yet.
+
+Slice 3 completed - signup sender phone metadata:
+
+- Gap: BRD requires sender signup with email and phone. The mobile signup screen collected only name/email/password, while backend sender sync requires a phone number from Supabase Auth `phone` or `user_metadata.phone`.
+- Fixes:
+  - Signup screen now collects sender phone with country code.
+  - `useAuth.signUp` and `signUpWithEmail` now accept phone/country/timezone metadata.
+  - Supabase email signup now stores `user_metadata.phone`, allowing backend sync to create the sender profile when Supabase Auth `phone` is empty.
+- Red verification:
+  - `npm.cmd exec -- vitest run apps/mobile/src/services/auth.spec.ts`
+  - Failed before fix because signup metadata did not include `phone`.
+- Green verification:
+  - `npm.cmd exec -- vitest run apps/mobile/src/services/auth.spec.ts`
+  - Passed: 1 file, 1 test.
+  - `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+- Remaining in this category:
+  - Actual SMS OTP verification for sender phone still requires a provider-backed phone verification flow/Supabase phone auth configuration. Code now preserves the phone needed by backend sync, but live OTP should not be claimed complete until Supabase/Twilio phone verification is enabled and smoke-tested.
+
+Slice 4 completed - SMS profile voice fallback:
+
+- Gap: BRD defines the SMS receiver tech profile as SMS primary with voice fallback. Mobile onboarding and receiver edit both sent `fallbackChannels: []` for SMS.
+- Fixes:
+  - Added shared `CHANNEL_PROFILE_OPTIONS` utility for mobile channel profile defaults.
+  - SMS profile now uses `primaryChannel: SMS` and `fallbackChannels: [VOICE]`.
+  - Onboarding and receiver detail edit now consume the same shared profile defaults.
+- Red verification:
+  - `npm.cmd exec -- vitest run apps/mobile/src/utils/channelProfiles.spec.ts`
+  - Failed before utility implementation because the shared profile defaults did not exist.
+- Green verification:
+  - `npm.cmd exec -- vitest run apps/mobile/src/utils/channelProfiles.spec.ts`
+  - Passed: 1 file, 1 test.
+  - `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+
+Full verification after slices 1-4:
+
+- `npm.cmd --prefix apps/backend test`
+  - Passed: 44 files, 206 tests.
+- `npm.cmd --prefix apps/backend run type-check`
+  - Passed.
+- `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+- `npm.cmd exec -- vitest run apps/mobile/src/services/backendApi.spec.ts apps/mobile/src/services/auth.spec.ts apps/mobile/src/utils/channelProfiles.spec.ts`
+  - Passed: 3 files, 4 tests.
+- `$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate`
+  - Passed.
+- Nest `AppModule` fake-provider bootstrap with RevenueCat webhook auth configured:
+  - Passed: `app-context-ok`.
+
 ## First Command In A New Session
 
 Read this file first:

@@ -83,7 +83,11 @@ export class AccountController {
   }
 
   private parseSensitiveAction(action: SensitiveAction | undefined): SensitiveAction {
-    if (action === SensitiveAction.EXPORT_DATA || action === SensitiveAction.DELETE_ACCOUNT) {
+    if (
+      action === SensitiveAction.EXPORT_DATA ||
+      action === SensitiveAction.DELETE_ACCOUNT ||
+      action === SensitiveAction.REMOVE_RECEIVER
+    ) {
       return action;
     }
 

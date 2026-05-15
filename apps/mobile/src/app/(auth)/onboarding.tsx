@@ -6,10 +6,10 @@ import { Button, TextInput } from '../../components/auth';
 import { CountrySelect, LanguageSelect, ReceiverPhoneInput, TimeSelect, TimezoneSelect } from '../../components/onboarding';
 import { COUNTRIES } from '../../data';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
+import { CHANNEL_PROFILE_OPTIONS } from '../../utils/channelProfiles';
 import {
   createReceiver,
   isPaidAccessRequiredError,
-  type BackendChannel,
   type BackendRelationshipType,
   type BackendTechProfile,
   type ReceiverSetupInput,
@@ -25,17 +25,7 @@ const relationshipOptions: Array<{ value: BackendRelationshipType; label: string
   { value: 'OTHER', label: 'Other' },
 ];
 
-const profileOptions: Array<{
-  value: BackendTechProfile;
-  label: string;
-  primaryChannel: BackendChannel;
-  fallbackChannels: BackendChannel[];
-}> = [
-  { value: 'WHATSAPP', label: 'WhatsApp if available', primaryChannel: 'WHATSAPP', fallbackChannels: ['SMS', 'VOICE'] },
-  { value: 'SMS', label: 'SMS only', primaryChannel: 'SMS', fallbackChannels: [] },
-  { value: 'VOICE_ONLY', label: 'Voice call', primaryChannel: 'VOICE', fallbackChannels: [] },
-  { value: 'LANDLINE', label: 'Landline', primaryChannel: 'VOICE', fallbackChannels: [] },
-];
+const profileOptions = CHANNEL_PROFILE_OPTIONS;
 
 export default function OnboardingScreen() {
   const router = useRouter();

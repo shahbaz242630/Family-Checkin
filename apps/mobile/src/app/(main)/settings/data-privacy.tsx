@@ -1,5 +1,5 @@
 // Data & Privacy settings screen
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
 import { useRouter } from 'expo-router';
 import { colors, spacing, fontSize, borderRadius } from '../../../theme';
 import { useAuthContext } from '../../../contexts/AuthContext';
+import { StepUpCodeModal } from '../../../components/common';
 import {
   downloadUserData,
   deleteUserAccount,
@@ -25,6 +26,9 @@ export default function DataPrivacyScreen() {
   const { user } = useAuthContext();
   const [isExporting, setIsExporting] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [stepUpPrompt, setStepUpPrompt] = useState<{ title: string; message: string } | null>(null);
+  const [stepUpCode, setStepUpCode] = useState('');
+  const stepUpResolver = useRef<((code: string | null) => void) | null>(null);
 
   const handleExportData = async () => {
     if (!user?.id) return;
@@ -115,7 +119,27 @@ export default function DataPrivacyScreen() {
     return verified.stepUpToken;
   };
 
+  const promptForOtp = async (action: BackendSensitiveAction, expiresAt: string): Promise<string | null> => {
+    const title = action === 'DELETE_ACCOUNT' ? 'Confirm account deletion' : 'Confirm data export';
+    const message = `Enter the SMS verification code. It expires at ${new Date(expiresAt).toLocaleTimeString()}.`;
+
+    setStepUpCode('');
+    setStepUpPrompt({ title, message });
+
+    return await new Promise((resolve) => {
+      stepUpResolver.current = resolve;
+    });
+  };
+
+  const resolveStepUpPrompt = (code: string | null) => {
+    stepUpResolver.current?.(code);
+    stepUpResolver.current = null;
+    setStepUpPrompt(null);
+    setStepUpCode('');
+  };
+
   return (
+    <>
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       {/* Back Button */}
       <Pressable onPress={() => router.back()} style={styles.backButton}>
@@ -187,6 +211,16 @@ export default function DataPrivacyScreen() {
         </Text>
       </View>
     </ScrollView>
+    <StepUpCodeModal
+      visible={Boolean(stepUpPrompt)}
+      title={stepUpPrompt?.title ?? ''}
+      message={stepUpPrompt?.message ?? ''}
+      code={stepUpCode}
+      onChangeCode={setStepUpCode}
+      onCancel={() => resolveStepUpPrompt(null)}
+      onSubmit={() => resolveStepUpPrompt(stepUpCode.trim() || null)}
+    />
+    </>
   );
 }
 
@@ -306,30 +340,3 @@ const styles = StyleSheet.create({
   },
 });
 
-async function promptForOtp(action: BackendSensitiveAction, expiresAt: string): Promise<string | null> {
-  const title = action === 'DELETE_ACCOUNT' ? 'Confirm account deletion' : 'Confirm data export';
-  const message = `Enter the SMS verification code. It expires at ${new Date(expiresAt).toLocaleTimeString()}.`;
-  const browserPrompt = globalThis.prompt;
-
-  if (typeof browserPrompt === 'function') {
-    return browserPrompt(`${title}\n\n${message}`)?.trim() || null;
-  }
-
-  const nativePrompt = (Alert as unknown as { prompt?: Function }).prompt;
-  if (typeof nativePrompt === 'function') {
-    return await new Promise((resolve) => {
-      nativePrompt(
-        title,
-        message,
-        [
-          { text: 'Cancel', style: 'cancel', onPress: () => resolve(null) },
-          { text: 'Verify', onPress: (value?: string) => resolve(value?.trim() || null) },
-        ],
-        'plain-text',
-      );
-    });
-  }
-
-  Alert.alert('Verification required', 'SMS code entry is not available on this platform yet.');
-  return null;
-}

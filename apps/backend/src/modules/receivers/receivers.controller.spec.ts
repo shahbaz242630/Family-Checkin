@@ -1,4 +1,4 @@
-import { Channel, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
+import { Channel, ConsentStatus, RelationshipType, SensitiveAction, TechProfile } from '@prisma/client';
 import { ForbiddenException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { ReceiversController } from './receivers.controller';
@@ -213,6 +213,14 @@ class FakeBackupContactsService {
   }
 }
 
+class FakeStepUpService {
+  public consumedInput: Record<string, unknown> | null = null;
+
+  async consumeStepUpToken(input: Record<string, unknown>) {
+    this.consumedInput = input;
+  }
+}
+
 describe('ReceiversController', () => {
   it('lists receivers for the authenticated sender', async () => {
     const receiversService = new FakeReceiversService();
@@ -424,20 +432,30 @@ describe('ReceiversController', () => {
 
   it('soft deletes a receiver for the authenticated sender', async () => {
     const receiversService = new FakeReceiversService();
+    const stepUpService = new FakeStepUpService();
     const controller = new ReceiversController(
       new FakeSupabaseAuthService() as never,
       new FakeUsersService() as never,
       receiversService as never,
       new FakeReceiverConsentService() as never,
+      undefined,
+      undefined,
+      stepUpService as never,
     );
 
     const response = await controller.delete(
       'Bearer access-token',
+      'receiver-remove-token',
       '203.0.113.10, 198.51.100.7',
       'Nearby Mobile/1.0',
       '1aef91f9-64c9-4548-baa5-d70b52386efb',
     );
 
+    expect(stepUpService.consumedInput).toEqual({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      action: SensitiveAction.REMOVE_RECEIVER,
+      stepUpToken: 'receiver-remove-token',
+    });
     expect(receiversService.detailInput).toMatchObject({
       userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
       receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
