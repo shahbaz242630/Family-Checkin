@@ -169,6 +169,54 @@ describe('NotificationsService', () => {
     ]);
     expect(repository.deactivated).toEqual(['ExpoPushToken[stale]:2026-05-07T10:00:00.000Z']);
   });
+
+  it('sends escalation alerts with siren baseline delivery fields', async () => {
+    const repository = new InMemoryPushNotificationsRepository();
+    const audit = new InMemoryAuditService();
+    repository.tokens = [tokenFixture('sender-1', 'ExpoPushToken[good]')];
+    const sentPayloads: unknown[] = [];
+    const service = new NotificationsService(
+      repository,
+      audit as unknown as AuditService,
+      async (messages) => {
+        sentPayloads.push(messages);
+        return [{ ok: true, id: 'expo-ticket-good' }];
+      },
+      () => new Date('2026-05-07T10:00:00.000Z'),
+    );
+
+    await service.sendEscalationAlertToUser({
+      userId: 'sender-1',
+      title: 'Receiver needs attention',
+      body: 'A receiver missed a check-in.',
+      data: {
+        checkInId: 'check-in-1',
+        receiverId: 'receiver-1',
+        reason: 'missed_check_in',
+      },
+    });
+
+    expect(sentPayloads).toEqual([
+      [
+        {
+          to: 'ExpoPushToken[good]',
+          title: 'Receiver needs attention',
+          body: 'A receiver missed a check-in.',
+          data: {
+            checkInId: 'check-in-1',
+            receiverId: 'receiver-1',
+            reason: 'missed_check_in',
+            notificationType: 'escalation_siren',
+            deepLink: '/(main)',
+          },
+          sound: 'default',
+          priority: 'high',
+          channelId: 'emergency-alerts',
+          interruptionLevel: 'timeSensitive',
+        },
+      ],
+    ]);
+  });
 });
 
 function tokenFixture(userId: string, token: string): PushDeviceTokenRecord {

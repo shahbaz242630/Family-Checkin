@@ -3,19 +3,17 @@
 export type RelationshipType =
   | 'PARENT'
   | 'GRANDPARENT'
-  | 'SPOUSE'
   | 'SIBLING'
+  | 'SPOUSE'
   | 'CHILD'
-  | 'AUNT_UNCLE'
-  | 'COUSIN'
   | 'FRIEND'
   | 'OTHER';
 
 export type Channel = 'WHATSAPP' | 'SMS' | 'VOICE';
 
-export type TechProfile = 'WHATSAPP' | 'SMS' | 'VOICE_ONLY';
+export type TechProfile = 'WHATSAPP' | 'SMS' | 'VOICE_ONLY' | 'LANDLINE';
 
-export type ConsentStatus = 'PENDING' | 'GRANTED' | 'REVOKED' | 'ABUSE_REPORTED' | 'EXPIRED';
+export type ConsentStatus = 'PENDING' | 'GRANTED' | 'DECLINED' | 'REVOKED';
 
 export type CheckInStatus =
   | 'PENDING'
@@ -35,9 +33,9 @@ export type SupportedLanguage = 'en' | 'ar' | 'ur' | string;
 
 export type Platform = 'ios' | 'android';
 
-export type SubscriptionTier = 'free' | 'single_receiver' | 'family';
+export type SubscriptionTier = 'TIER_1' | 'TIER_2' | 'TIER_3';
 
-export type SubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'canceled' | 'expired';
+export type SubscriptionStatus = 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'SUSPENDED';
 
 export interface EscalationStep {
   channel: EscalationChannel;

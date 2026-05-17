@@ -87,6 +87,35 @@ export class NotificationsService {
   }
 
   async sendToUser(input: SendUserPushInput): Promise<SendUserPushResult> {
+    return this.sendToUserWithMessage(input, (token) => ({
+      to: token.token,
+      title: input.title,
+      body: input.body,
+      data: input.data,
+    }));
+  }
+
+  async sendEscalationAlertToUser(input: SendUserPushInput): Promise<SendUserPushResult> {
+    return this.sendToUserWithMessage(input, (token) => ({
+      to: token.token,
+      title: input.title,
+      body: input.body,
+      data: {
+        ...input.data,
+        notificationType: 'escalation_siren',
+        deepLink: input.data.deepLink ?? '/(main)',
+      },
+      sound: 'default',
+      priority: 'high',
+      channelId: 'emergency-alerts',
+      interruptionLevel: 'timeSensitive',
+    }));
+  }
+
+  private async sendToUserWithMessage(
+    input: SendUserPushInput,
+    buildMessage: (token: { token: string }) => ExpoPushMessage,
+  ): Promise<SendUserPushResult> {
     const tokens = await this.notificationsRepository.findActiveDeviceTokensForUser({ userId: input.userId.trim() });
     const sentAt = this.now();
     if (tokens.length === 0) {
@@ -97,12 +126,7 @@ export class NotificationsService {
       };
     }
 
-    const messages: ExpoPushMessage[] = tokens.map((token) => ({
-      to: token.token,
-      title: input.title,
-      body: input.body,
-      data: input.data,
-    }));
+    const messages = tokens.map(buildMessage);
     const tickets = await this.sendPush(messages);
     let sent = 0;
     let failed = 0;

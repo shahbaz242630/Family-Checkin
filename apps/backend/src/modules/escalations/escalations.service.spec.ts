@@ -78,6 +78,11 @@ class InMemoryNotificationsService {
     this.sent.push(input);
     return this.result;
   }
+
+  async sendEscalationAlertToUser(input: { userId: string; title: string; body: string; data: Record<string, string> }) {
+    this.sent.push(input);
+    return this.result;
+  }
 }
 
 class FailingFirstSmsProvider implements ChannelProvider {
@@ -130,6 +135,9 @@ describe('EscalationsService', () => {
     const sms = new FakeChannelProvider(Channel.SMS, {
       now: () => new Date('2026-04-29T10:00:00.000Z'),
     });
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
+      now: () => new Date('2026-04-29T10:00:00.000Z'),
+    });
     repository.backupContacts = [
       backupContactFixture(crypto, {
         id: 'backup-contact-second',
@@ -147,7 +155,7 @@ describe('EscalationsService', () => {
     const service = new EscalationsService(
       repository,
       crypto,
-      new ChannelRouterService([sms]),
+      new ChannelRouterService([sms, whatsapp]),
       audit as unknown as AuditService,
       () => new Date('2026-04-29T10:00:00.000Z'),
     );
@@ -189,28 +197,19 @@ describe('EscalationsService', () => {
         },
       },
     ]);
-    expect(repository.createdEvents).toEqual([
-      {
-        checkInId: 'check-in-1',
-        attemptNumber: 1,
-        channel: Channel.SMS,
-        startedAt: new Date('2026-04-29T10:00:00.000Z'),
-        completedAt: new Date('2026-04-29T10:00:00.000Z'),
-        result: EscalationResult.SUCCESS,
-        backupAlertedAt: new Date('2026-04-29T10:00:00.000Z'),
-      },
-      {
-        checkInId: 'check-in-1',
-        attemptNumber: 2,
-        channel: Channel.SMS,
-        startedAt: new Date('2026-04-29T10:00:00.000Z'),
-        completedAt: new Date('2026-04-29T10:00:00.000Z'),
-        result: EscalationResult.SUCCESS,
-        backupAlertedAt: new Date('2026-04-29T10:00:00.000Z'),
-      },
+    expect(whatsapp.sentMessages.map((sent) => sent.to)).toEqual(['+971502222222', '+971501111111']);
+    expect(repository.createdEvents.map((event) => ({
+      attemptNumber: event.attemptNumber,
+      channel: event.channel,
+      result: event.result,
+    }))).toEqual([
+      { attemptNumber: 1, channel: Channel.SMS, result: EscalationResult.SUCCESS },
+      { attemptNumber: 1, channel: Channel.WHATSAPP, result: EscalationResult.SUCCESS },
+      { attemptNumber: 2, channel: Channel.SMS, result: EscalationResult.SUCCESS },
+      { attemptNumber: 2, channel: Channel.WHATSAPP, result: EscalationResult.SUCCESS },
     ]);
     expect(repository.escalatedCheckIns).toEqual(['check-in-1']);
-    expect(audit.events).toHaveLength(3);
+    expect(audit.events).toHaveLength(5);
     expect(audit.events[0]).toMatchObject({
       entityType: 'escalation_event',
       entityId: 'escalation-event-1',
@@ -226,7 +225,7 @@ describe('EscalationsService', () => {
         sourceChannel: Channel.WHATSAPP,
       },
     });
-    expect(audit.events[2]).toMatchObject({
+    expect(audit.events[4]).toMatchObject({
       entityType: 'check_in',
       entityId: 'check-in-1',
       action: 'check_in.escalated',
@@ -240,6 +239,62 @@ describe('EscalationsService', () => {
     expect(JSON.stringify(audit.events)).not.toContain('+971502222222');
     expect(JSON.stringify(audit.events)).not.toContain('+971501111111');
     expect(JSON.stringify(audit.events)).not.toContain('First Backup');
+  });
+
+  it('alerts each backup contact over both SMS and WhatsApp', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const audit = new InMemoryAuditService();
+    const sms = new FakeChannelProvider(Channel.SMS, {
+      now: () => new Date('2026-04-29T10:00:00.000Z'),
+    });
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
+      now: () => new Date('2026-04-29T10:00:00.000Z'),
+    });
+    repository.backupContacts = [
+      backupContactFixture(crypto, {
+        id: 'backup-contact-first',
+        phone: '+971502222222',
+        priorityOrder: 1,
+        createdAt: new Date('2026-04-29T08:20:00.000Z'),
+      }),
+    ];
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms, whatsapp]),
+      audit as unknown as AuditService,
+      () => new Date('2026-04-29T10:00:00.000Z'),
+    );
+
+    const result = await service.escalateSenderRequestedBackup({
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+    });
+
+    expect(result).toEqual({
+      checkInId: 'check-in-1',
+      status: CheckInStatus.ESCALATED,
+      attempted: 1,
+      succeeded: 1,
+      failed: 0,
+    });
+    expect(sms.sentMessages).toHaveLength(1);
+    expect(whatsapp.sentMessages).toHaveLength(1);
+    expect(repository.createdEvents).toEqual([
+      expect.objectContaining({
+        checkInId: 'check-in-1',
+        attemptNumber: 1,
+        channel: Channel.SMS,
+        result: EscalationResult.SUCCESS,
+      }),
+      expect.objectContaining({
+        checkInId: 'check-in-1',
+        attemptNumber: 1,
+        channel: Channel.WHATSAPP,
+        result: EscalationResult.SUCCESS,
+      }),
+    ]);
   });
 
   it('notifies the sender by mobile push when a receiver help response escalates', async () => {
@@ -351,6 +406,9 @@ describe('EscalationsService', () => {
     const repository = new InMemoryEscalationsRepository();
     const audit = new InMemoryAuditService();
     const sms = new FailingFirstSmsProvider();
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
+      now: () => new Date('2026-04-29T10:00:00.000Z'),
+    });
     repository.backupContacts = [
       backupContactFixture(crypto, {
         id: 'backup-contact-first',
@@ -368,7 +426,7 @@ describe('EscalationsService', () => {
     const service = new EscalationsService(
       repository,
       crypto,
-      new ChannelRouterService([sms]),
+      new ChannelRouterService([sms, whatsapp]),
       audit as unknown as AuditService,
       () => new Date('2026-04-29T10:00:00.000Z'),
     );
@@ -383,32 +441,24 @@ describe('EscalationsService', () => {
       checkInId: 'check-in-1',
       status: CheckInStatus.ESCALATED,
       attempted: 2,
-      succeeded: 1,
-      failed: 1,
+      succeeded: 2,
+      failed: 0,
     });
-    expect(repository.createdEvents).toEqual([
-      {
-        checkInId: 'check-in-1',
-        attemptNumber: 1,
-        channel: Channel.SMS,
-        startedAt: new Date('2026-04-29T10:00:00.000Z'),
-        completedAt: new Date('2026-04-29T10:00:00.000Z'),
-        result: EscalationResult.ERROR,
-        errorDetails: 'provider_send_failed',
-      },
-      {
-        checkInId: 'check-in-1',
-        attemptNumber: 2,
-        channel: Channel.SMS,
-        startedAt: new Date('2026-04-29T10:00:00.000Z'),
-        completedAt: new Date('2026-04-29T10:00:00.000Z'),
-        result: EscalationResult.SUCCESS,
-        backupAlertedAt: new Date('2026-04-29T10:00:00.000Z'),
-      },
+    expect(repository.createdEvents.map((event) => ({
+      attemptNumber: event.attemptNumber,
+      channel: event.channel,
+      result: event.result,
+    }))).toEqual([
+      { attemptNumber: 1, channel: Channel.SMS, result: EscalationResult.ERROR },
+      { attemptNumber: 1, channel: Channel.WHATSAPP, result: EscalationResult.SUCCESS },
+      { attemptNumber: 2, channel: Channel.SMS, result: EscalationResult.SUCCESS },
+      { attemptNumber: 2, channel: Channel.WHATSAPP, result: EscalationResult.SUCCESS },
     ]);
     expect(repository.escalatedCheckIns).toEqual(['check-in-1']);
     expect(audit.events.map((event) => event.action)).toEqual([
       'escalation.backup_contact_failed',
+      'escalation.backup_contact_alerted',
+      'escalation.backup_contact_alerted',
       'escalation.backup_contact_alerted',
       'check_in.escalated',
     ]);
@@ -423,6 +473,9 @@ describe('EscalationsService', () => {
     const sms = new FakeChannelProvider(Channel.SMS, {
       now: () => new Date('2026-04-29T10:45:00.000Z'),
     });
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
+      now: () => new Date('2026-04-29T10:45:00.000Z'),
+    });
     repository.backupContacts = [
       backupContactFixture(crypto, {
         id: 'backup-contact-first',
@@ -434,7 +487,7 @@ describe('EscalationsService', () => {
     const service = new EscalationsService(
       repository,
       crypto,
-      new ChannelRouterService([sms]),
+      new ChannelRouterService([sms, whatsapp]),
       audit as unknown as AuditService,
       () => new Date('2026-04-29T10:45:00.000Z'),
     );
@@ -466,6 +519,7 @@ describe('EscalationsService', () => {
         },
       },
     ]);
+    expect(whatsapp.sentMessages).toHaveLength(1);
     expect(audit.events[0]).toMatchObject({
       entityType: 'escalation_event',
       entityId: 'escalation-event-1',
@@ -584,22 +638,33 @@ describe('EscalationsService', () => {
       failed: 2,
     });
     expect(repository.terminalStatuses).toEqual([{ checkInId: 'check-in-1', status: CheckInStatus.FAILED }]);
-    expect(repository.createdEvents).toEqual([
+    expect(repository.createdEvents.map((event) => ({
+      attemptNumber: event.attemptNumber,
+      channel: event.channel,
+      result: event.result,
+      errorDetails: event.errorDetails,
+    })).sort((left, right) => left.attemptNumber - right.attemptNumber || left.channel.localeCompare(right.channel))).toEqual([
       {
-        checkInId: 'check-in-1',
         attemptNumber: 1,
         channel: Channel.SMS,
-        startedAt: new Date('2026-04-29T10:45:00.000Z'),
-        completedAt: new Date('2026-04-29T10:45:00.000Z'),
         result: EscalationResult.ERROR,
         errorDetails: 'provider_send_failed',
       },
       {
-        checkInId: 'check-in-1',
+        attemptNumber: 1,
+        channel: Channel.WHATSAPP,
+        result: EscalationResult.ERROR,
+        errorDetails: 'provider_send_failed',
+      },
+      {
         attemptNumber: 2,
         channel: Channel.SMS,
-        startedAt: new Date('2026-04-29T10:45:00.000Z'),
-        completedAt: new Date('2026-04-29T10:45:00.000Z'),
+        result: EscalationResult.ERROR,
+        errorDetails: 'provider_send_failed',
+      },
+      {
+        attemptNumber: 2,
+        channel: Channel.WHATSAPP,
         result: EscalationResult.ERROR,
         errorDetails: 'provider_send_failed',
       },

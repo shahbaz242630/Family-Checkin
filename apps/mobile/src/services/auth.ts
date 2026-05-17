@@ -19,9 +19,35 @@ export interface AuthResult {
   error: AuthError | null;
 }
 
+export interface SenderSignupMetadata {
+  phone?: string;
+  timezone?: string;
+  country?: string;
+}
+
 async function generateOAuthState(): Promise<string> {
   const bytes = await Crypto.getRandomBytesAsync(16);
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function persistSenderSignupMetadata(metadata?: SenderSignupMetadata): Promise<AuthError | null> {
+  if (!metadata?.phone) {
+    return null;
+  }
+
+  const { error } = await supabase.auth.updateUser({
+    data: {
+      phone: metadata.phone,
+      timezone: metadata.timezone || 'Asia/Dubai',
+      country: metadata.country || 'AE',
+    },
+  });
+
+  if (error) {
+    return { message: error.message, code: error.code };
+  }
+
+  return null;
 }
 
 // Email/Password Sign Up
@@ -29,7 +55,7 @@ export async function signUpWithEmail(
   email: string,
   password: string,
   fullName: string,
-  metadata?: { phone?: string; timezone?: string; country?: string }
+  metadata?: SenderSignupMetadata
 ): Promise<AuthResult> {
   try {
     const { data, error } = await supabase.auth.signUp({
@@ -75,7 +101,7 @@ export async function signInWithEmail(email: string, password: string): Promise<
 }
 
 // Google Sign In
-export async function signInWithGoogle(): Promise<{ error: AuthError | null }> {
+export async function signInWithGoogle(metadata?: SenderSignupMetadata): Promise<{ error: AuthError | null }> {
   try {
     // Create redirect URI that works for both Expo Go and standalone builds
     const redirectTo = makeRedirectUri({
@@ -117,6 +143,11 @@ export async function signInWithGoogle(): Promise<{ error: AuthError | null }> {
         if (!handleResult.success) {
           return { error: { message: handleResult.error || 'Authentication failed' } };
         }
+
+        const metadataError = await persistSenderSignupMetadata(metadata);
+        if (metadataError) {
+          return { error: metadataError };
+        }
       } else if (result.type === 'cancel') {
         await clearExpectedOAuthState();
         return { error: { message: 'Sign in was cancelled' } };
@@ -132,7 +163,7 @@ export async function signInWithGoogle(): Promise<{ error: AuthError | null }> {
 }
 
 // Apple Sign In
-export async function signInWithApple(): Promise<{ error: AuthError | null }> {
+export async function signInWithApple(metadata?: SenderSignupMetadata): Promise<{ error: AuthError | null }> {
   try {
     const redirectTo = makeRedirectUri({
       scheme: 'familycheckin',
@@ -163,6 +194,11 @@ export async function signInWithApple(): Promise<{ error: AuthError | null }> {
         const handleResult = await handleAuthDeepLink(result.url);
         if (!handleResult.success) {
           return { error: { message: handleResult.error || 'Authentication failed' } };
+        }
+
+        const metadataError = await persistSenderSignupMetadata(metadata);
+        if (metadataError) {
+          return { error: metadataError };
         }
       } else if (result.type === 'cancel') {
         await clearExpectedOAuthState();

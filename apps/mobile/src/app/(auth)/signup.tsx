@@ -74,15 +74,32 @@ export default function SignupScreen() {
     return valid;
   };
 
+  const validateSocialSignup = (): boolean => {
+    let valid = true;
+    clearError();
+    setPhoneError('');
+
+    if (!phone.trim()) {
+      setPhoneError('Phone number is required');
+      valid = false;
+    } else if (phone.trim().startsWith('0')) {
+      setPhoneError('Remove the leading 0. Use the local number after the country code.');
+      valid = false;
+    }
+
+    return valid;
+  };
+
+  const senderSignupMetadata = () => ({
+    phone: `${selectedPhoneCountry.dialCode}${phone.replace(/\D/g, '')}`,
+    country: phoneCountry,
+    timezone: 'Asia/Dubai',
+  });
+
   const handleEmailSignUp = async () => {
     if (!validateForm()) return;
 
-    const senderPhone = `${selectedPhoneCountry.dialCode}${phone.replace(/\D/g, '')}`;
-    const success = await signUp(email, password, fullName, {
-      phone: senderPhone,
-      country: phoneCountry,
-      timezone: 'Asia/Dubai',
-    });
+    const success = await signUp(email, password, fullName, senderSignupMetadata());
     if (success) {
       try {
         await syncAuthenticatedUser();
@@ -94,16 +111,20 @@ export default function SignupScreen() {
   };
 
   const handleGoogleSignUp = async () => {
-    const success = await signInGoogle();
+    if (!validateSocialSignup()) return;
+
+    const success = await signInGoogle(senderSignupMetadata());
     if (success) {
-      // OAuth will redirect automatically
+      await syncAuthenticatedUser();
     }
   };
 
   const handleAppleSignUp = async () => {
-    const success = await signInApple();
+    if (!validateSocialSignup()) return;
+
+    const success = await signInApple(senderSignupMetadata());
     if (success) {
-      // OAuth will redirect automatically
+      await syncAuthenticatedUser();
     }
   };
 

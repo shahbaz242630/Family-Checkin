@@ -4,7 +4,9 @@
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 export type Channel = 'WHATSAPP' | 'SMS' | 'VOICE';
-export type ConsentStatus = 'PENDING' | 'GRANTED' | 'REVOKED' | 'ABUSE_REPORTED' | 'EXPIRED';
+export type RelationshipType = 'PARENT' | 'GRANDPARENT' | 'SIBLING' | 'SPOUSE' | 'CHILD' | 'FRIEND' | 'OTHER';
+export type TechProfile = 'WHATSAPP' | 'SMS' | 'VOICE_ONLY' | 'LANDLINE';
+export type ConsentStatus = 'PENDING' | 'GRANTED' | 'DECLINED' | 'REVOKED';
 export type CheckInStatus =
   | 'PENDING'
   | 'SENT'
@@ -58,10 +60,10 @@ export interface Database {
           phone_encrypted: string;
           phone_hash: string;
           country_code: string;
-          relationship_type: string;
+          relationship_type: RelationshipType;
           language: string;
           timezone: string;
-          tech_profile: string;
+          tech_profile: TechProfile;
           primary_channel: Channel;
           fallback_channels: Channel[];
           schedule_frequency: string;
@@ -83,10 +85,10 @@ export interface Database {
           phone_encrypted: string;
           phone_hash: string;
           country_code: string;
-          relationship_type: string;
+          relationship_type: RelationshipType;
           language: string;
           timezone: string;
-          tech_profile: string;
+          tech_profile: TechProfile;
           primary_channel: Channel;
           fallback_channels?: Channel[];
           schedule_frequency: string;
@@ -99,10 +101,10 @@ export interface Database {
         Update: {
           name_encrypted?: string;
           country_code?: string;
-          relationship_type?: string;
+          relationship_type?: RelationshipType;
           language?: string;
           timezone?: string;
-          tech_profile?: string;
+          tech_profile?: TechProfile;
           primary_channel?: Channel;
           fallback_channels?: Channel[];
           schedule_frequency?: string;

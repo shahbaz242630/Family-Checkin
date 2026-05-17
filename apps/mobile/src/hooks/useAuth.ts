@@ -11,6 +11,7 @@ import {
   getCurrentSession,
   onAuthStateChange,
   type AuthError,
+  type SenderSignupMetadata,
 } from '../services/auth';
 
 interface UseAuthReturn {
@@ -20,9 +21,9 @@ interface UseAuthReturn {
   error: AuthError | null;
   isAuthenticated: boolean;
   signIn: (email: string, password: string) => Promise<boolean>;
-  signUp: (email: string, password: string, fullName: string, metadata?: { phone?: string; country?: string; timezone?: string }) => Promise<boolean>;
-  signInGoogle: () => Promise<boolean>;
-  signInApple: () => Promise<boolean>;
+  signUp: (email: string, password: string, fullName: string, metadata?: SenderSignupMetadata) => Promise<boolean>;
+  signInGoogle: (metadata?: SenderSignupMetadata) => Promise<boolean>;
+  signInApple: (metadata?: SenderSignupMetadata) => Promise<boolean>;
   signOut: () => Promise<void>;
   forgotPassword: (email: string) => Promise<boolean>;
   resetPassword: (email: string) => Promise<boolean>;
@@ -94,7 +95,7 @@ export function useAuth(): UseAuthReturn {
     email: string,
     password: string,
     fullName: string,
-    metadata?: { phone?: string; country?: string; timezone?: string },
+    metadata?: SenderSignupMetadata,
   ): Promise<boolean> => {
     setLoading(true);
     setError(null);
@@ -111,11 +112,11 @@ export function useAuth(): UseAuthReturn {
     return true;
   }, []);
 
-  const signInGoogle = useCallback(async (): Promise<boolean> => {
+  const signInGoogle = useCallback(async (metadata?: SenderSignupMetadata): Promise<boolean> => {
     setLoading(true);
     setError(null);
 
-    const result = await signInWithGoogle();
+    const result = await signInWithGoogle(metadata);
 
     setLoading(false);
 
@@ -127,11 +128,11 @@ export function useAuth(): UseAuthReturn {
     return true;
   }, []);
 
-  const signInApple = useCallback(async (): Promise<boolean> => {
+  const signInApple = useCallback(async (metadata?: SenderSignupMetadata): Promise<boolean> => {
     setLoading(true);
     setError(null);
 
-    const result = await signInWithApple();
+    const result = await signInWithApple(metadata);
 
     setLoading(false);
 

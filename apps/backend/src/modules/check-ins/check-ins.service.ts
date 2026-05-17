@@ -181,16 +181,9 @@ export class CheckInsService {
       if (await this.sendNextPendingAttempt(attempt.checkIn.id, now)) {
         result.sent += 1;
       } else {
-        await this.checkInsRepository.markNeedsAttention({ checkInId: attempt.checkIn.id });
-        await this.auditService.append({
-          entityType: 'check_in',
-          entityId: attempt.checkIn.id,
-          action: 'check_in.needs_attention',
-          actorType: ActorType.SYSTEM,
-          metadata: {
-            receiverId: attempt.checkIn.receiverId,
-            reason: 'cascade_exhausted',
-          },
+        await this.markCheckInNeedsAttention({
+          checkInId: attempt.checkIn.id,
+          receiverId: attempt.checkIn.receiverId,
         });
         result.needsAttention += 1;
       }
@@ -244,6 +237,14 @@ export class CheckInsService {
       providerStatus,
       failureReason,
     });
+
+    if (attempt && !(await this.hasPendingAttempts(attempt.checkInId))) {
+      const checkIn = await this.checkInsRepository.findById(attempt.checkInId);
+      await this.markCheckInNeedsAttention({
+        checkInId: attempt.checkInId,
+        receiverId: checkIn?.receiverId ?? attempt.checkInId,
+      });
+    }
 
     return { updated: attempt !== null };
   }
@@ -370,6 +371,26 @@ export class CheckInsService {
 
     await this.sendAttempt(next, now);
     return true;
+  }
+
+  private async hasPendingAttempts(checkInId: string): Promise<boolean> {
+    return (await this.checkInsRepository.findDuePendingAttempts({ now: new Date('9999-12-31T23:59:59.999Z') })).some(
+      (attempt) => attempt.checkIn.id === checkInId,
+    );
+  }
+
+  private async markCheckInNeedsAttention(input: { checkInId: string; receiverId: string }): Promise<void> {
+    await this.checkInsRepository.markNeedsAttention({ checkInId: input.checkInId });
+    await this.auditService.append({
+      entityType: 'check_in',
+      entityId: input.checkInId,
+      action: 'check_in.needs_attention',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: input.receiverId,
+        reason: 'cascade_exhausted',
+      },
+    });
   }
 
   private async voiceCallOptions(receiverId: string, countryCode: string): Promise<{ fromNumber: string } | undefined> {

@@ -141,6 +141,7 @@ export interface CheckInsRepository {
   markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }): Promise<CheckInAttemptRecord | null>;
   skipPendingAttemptsForCheckIn(input: SkipPendingCheckInAttemptsInput): Promise<number>;
   markNeedsAttention(input: { checkInId: string }): Promise<CheckInRecord>;
+  findById(checkInId: string): Promise<CheckInRecord | null>;
   findLatestOpenForReceiver(receiverId: string): Promise<CheckInRecord | null>;
   findLatestActionableForReceiver(receiverId: string): Promise<CheckInRecord | null>;
   markResponded(input: MarkCheckInRespondedInput): Promise<CheckInRecord>;

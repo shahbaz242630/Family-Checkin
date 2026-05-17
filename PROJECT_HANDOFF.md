@@ -1,6 +1,6 @@
 # Nearby Project Handoff
 
-Last updated: 2026-05-07
+Last updated: 2026-05-15
 
 ## Current Product Direction
 
@@ -18,7 +18,9 @@ Core product model:
 Source of truth:
 
 - `Business Requirements Document.txt`
+- `PROJECT_HANDOFF.md`
 - `README.md` has been refreshed for the Nearby direction as of 2026-04-27. It no longer describes the old Family Check-In scope.
+- `docs/PROJECT_HANDOFF.md` is intentionally only a redirect stub. Do not use it as the working handoff.
 
 ## Repository Layout
 
@@ -27,7 +29,7 @@ The repo was restructured toward the BRD layout:
 - `apps/mobile` - existing Expo/React Native mobile app
 - `apps/backend` - new NestJS/Prisma backend foundation
 - `packages/shared-types` - shared type package moved from old `shared`
-- `docs` - project docs and handoff files
+- `docs` - project docs and implementation plans/specs
 
 Root scripts:
 
@@ -482,7 +484,7 @@ Verified results:
 Remaining Twilio work before live credentials:
 
 - Add sender siren fallback voice call flow.
-- Add mobile Emergency Alert channel, iOS Critical Alerts entitlement-gated path, Android DND onboarding, and "Test my siren".
+- Add iOS Critical Alerts entitlement-gated path, Android DND onboarding/settings support, custom siren sound, and "Test my siren".
 - Add real Twilio sandbox/live smoke tests after account credentials and compliant sender numbers are available.
 
 Sticky Twilio caller-ID selection completed 2026-05-10:
@@ -2399,7 +2401,7 @@ Verified results:
 Current finish-before-integration blockers:
 
 - Billing/payment is still UI-only and must not be treated as product-complete.
-- Sender push/mobile notifications for escalation are not fully wired.
+- Sender escalation push baseline is wired; remaining siren work is entitlement/settings polish and live push credential/device smoke.
 - Channel auto-detection remains a product risk; treat it as best-effort/manual selection, not a guaranteed WhatsApp lookup.
 - Real Twilio production credentials and live/sandbox smoke should wait until the current functional gaps above are closed or explicitly deferred.
 
@@ -2996,7 +2998,7 @@ Verified results:
 Immediate first commands in next session:
 
 ```powershell
-Get-Content -LiteralPath docs\PROJECT_HANDOFF.md
+Get-Content -LiteralPath PROJECT_HANDOFF.md
 git status --short --branch
 npm.cmd --prefix apps/backend test -- src/modules/billing/billing.service.spec.ts src/modules/billing/billing.controller.spec.ts src/modules/receivers/receivers.controller.spec.ts
 ```
@@ -3035,10 +3037,10 @@ Use this before beta, production launch, or inviting real users into the hosted 
 
 ### 31. Remaining launch work
 
-- Finish current-surface BRD gaps before moving to new integration work:
-  - billing/payment gating
+- Continue the BRD gap closure pass for any newly identified current-surface gaps. Terms/privacy links remain intentionally deferred until the end per product-owner instruction.
+- RevenueCat/App Store Connect/Google Play external setup and real purchase/restore/cancel smoke testing.
 - Twilio production credential setup and end-to-end sandbox/live smoke for WhatsApp, SMS, and voice after current-surface gaps are handled or explicitly deferred.
-- Payments/tier gating.
+- Production Expo/EAS push credentials before production device push testing.
 - Rotate the Supabase access token and DB password pasted in chat.
 
 ### 32. BRD gap closure pass - in progress 2026-05-15
@@ -3161,16 +3163,144 @@ Slice 6 completed - Twilio voice callback attempt failure state:
   - Live Twilio credentials, approved WhatsApp template/content setup, compliant sender/caller IDs, and sandbox/live smoke remain pending.
   - Status/AMD callbacks now mark terminal attempt failure; retry dispatch still depends on the existing cascade processing job picking up due pending attempts rather than being launched synchronously inside the webhook request.
 
-Full verification after slices 1-6:
+Slice 7 completed - final Twilio voice failure closes cascade:
+
+- Gap: after Slice 6, terminal Twilio status/AMD callbacks could mark the final sent voice attempt `FAILED` without moving the parent check-in out of `SENT` when no pending retry attempts remained. This could leave a fully exhausted voice cascade stuck instead of surfacing sender action.
+- Fixes:
+  - `CheckInsService.recordVoiceProviderFailure` now checks whether the failed attempt's check-in still has pending attempts.
+  - If no pending attempts remain, it marks the check-in `NEEDS_ATTENTION` and writes the same `check_in.needs_attention` audit event used by normal cascade exhaustion.
+  - Added `CheckInsRepository.findById` so the callback path can load the real receiver id for PII-safe audit metadata.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/check-ins/check-ins.service.spec.ts`
+  - Failed before fix because `repository.needsAttentionCheckInIds` stayed empty after a final `no-answer` callback.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/check-ins/check-ins.service.spec.ts`
+  - Passed: 1 file, 10 tests.
+  - `npm.cmd --prefix apps/backend run type-check`
+  - Passed.
+  - `npm.cmd --prefix apps/backend test -- src/modules/receivers/receiver-reply.service.spec.ts src/modules/provider-webhooks/provider-webhooks.controller.spec.ts src/modules/check-ins/prisma-check-ins.repository.spec.ts`
+  - Passed: 3 files, 24 tests.
+
+Slice 8 completed - backup alerts use SMS and WhatsApp:
+
+- Gap: BRD requires sender-initiated backup alerts to send via SMS and WhatsApp simultaneously to each backup contact, but the coded escalation path sent only SMS.
+- Fixes:
+  - `EscalationsService` now attempts each backup contact over both `SMS` and `WHATSAPP`.
+  - It records one escalation event per contact/channel and keeps result counts contact-oriented: a backup contact is `succeeded` if at least one channel is accepted, and `failed` only if all attempted channels fail.
+  - Existing PII-safe audit behavior is preserved; audit metadata records channel/status/contact ids without raw phone/name content.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/escalations/escalations.service.spec.ts`
+  - Failed before fix because the WhatsApp fake provider received zero messages.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/escalations/escalations.service.spec.ts`
+  - Passed: 1 file, 8 tests.
+  - `npm.cmd --prefix apps/backend run type-check`
+  - Passed.
+  - `npm.cmd --prefix apps/backend test -- src/modules/receivers/receivers.service.spec.ts src/modules/receivers/receiver-reply.service.spec.ts src/modules/escalations/prisma-escalations.repository.spec.ts`
+  - Passed: 3 files, 29 tests.
+
+Slice 9 completed - social signup preserves sender phone:
+
+- Gap: the mobile signup screen exposed Google/Apple signup, but the OAuth path did not collect or persist sender phone metadata. Backend sender sync rejects Supabase users without `phone` or `user_metadata.phone`, so social signup could authenticate but fail the app-user sync contract.
+- Fixes:
+  - `signInWithGoogle` and `signInWithApple` now accept sender signup metadata and persist phone/country/timezone with `supabase.auth.updateUser` after OAuth deep-link completion.
+  - Signup Google/Apple buttons now require the sender phone field before launching OAuth and pass the same metadata shape used by email signup.
+  - Successful social signup now calls `syncAuthenticatedUser()` after OAuth metadata persistence, matching the backend sender creation contract.
+- Red verification:
+  - `npx vitest run apps/mobile/src/services/auth.spec.ts`
+  - Failed before fix because `supabase.auth.updateUser` was never called after Google OAuth completion.
+- Green verification:
+  - `npx vitest run apps/mobile/src/services/auth.spec.ts`
+  - Passed: 1 file, 2 tests.
+  - `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+  - `npx vitest run apps/mobile/src`
+  - Passed: 8 files, 24 tests.
+- Remaining in this category:
+  - Live provider-side social OAuth configuration and sender phone verification smoke remain pending until accounts/credentials are available.
+
+Slice 10 completed - escalation push siren baseline:
+
+- Gap: escalation notifications to the sender were plain Expo push payloads. BRD baseline calls for emergency-style sender alerts: high-priority push, Android emergency channel, iOS time-sensitive behavior where available, and an incident/status deep-link signal.
+- Fixes:
+  - Added `NotificationsService.sendEscalationAlertToUser` so escalation alerts use a dedicated push shape instead of the generic push method.
+  - Escalation sender notifications now send `sound: 'default'`, `priority: 'high'`, `channelId: 'emergency-alerts'`, `interruptionLevel: 'timeSensitive'`, and data markers `notificationType: 'escalation_siren'` plus `deepLink`.
+  - Mobile push registration now creates the Android `emergency-alerts` channel before token registration, with max importance, default sound, vibration, lock-screen visibility, and no DND bypass claim until onboarding/settings support is available.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/notifications/notifications.service.spec.ts`
+  - Failed before fix because `sendEscalationAlertToUser` did not exist.
+  - `npx vitest run apps/mobile/src/services/pushNotifications.spec.ts`
+  - Failed before fix because Android registration did not create the emergency alert channel.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/notifications/notifications.service.spec.ts`
+  - Passed: 1 file, 3 tests.
+  - `npm.cmd --prefix apps/backend test -- src/modules/notifications/notifications.service.spec.ts src/modules/escalations/escalations.service.spec.ts`
+  - Passed: 2 files, 11 tests.
+  - `npx vitest run apps/mobile/src/services/pushNotifications.spec.ts apps/mobile/src/services/auth.spec.ts`
+  - Passed: 2 files, 3 tests.
+  - `npm.cmd --prefix apps/backend run type-check`
+  - Passed.
+  - `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+- Remaining in this category:
+  - iOS Critical Alerts entitlement/authorization, Android DND bypass onboarding/settings, custom bundled siren sound, "Test my siren", and sender no-acknowledgement fallback voice remain future slices.
+
+Slice 11 completed - receiver request validation returns 400-class errors:
+
+- Gap: receiver create/update request-shape checks used a controller `required()` helper that threw plain `Error`. Missing enum/body fields could therefore surface as generic server errors instead of bad requests.
+- Fix: `ReceiversController.required()` now throws `BadRequestException`, keeping missing required receiver request fields in the 400-class validation path.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/receivers/receivers.controller.spec.ts`
+  - Failed before fix because missing `relationshipType` rejected with plain `Error`, not `BadRequestException`.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/receivers/receivers.controller.spec.ts`
+  - Passed: 1 file, 12 tests.
+  - `npm.cmd --prefix apps/backend run type-check`
+  - Passed.
+  - `npm.cmd --prefix apps/backend test`
+  - Passed: 44 files, 212 tests.
+
+Slice 11b completed - receiver service validation maps to 400-class errors:
+
+- Gap: the fresh scan found that receiver create/update empty string validation still happened inside `ReceiversService` and threw plain `Error`. Those service validation errors could still escape controller handling as generic server errors.
+- Fix: `ReceiversController` now maps known receiver input validation failures from create/update service calls to `BadRequestException` while preserving unrelated service failures.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/receivers/receivers.controller.spec.ts`
+  - Failed before fix because a simulated `Receiver name is required` service validation error escaped as plain `Error`.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/receivers/receivers.controller.spec.ts`
+  - Passed: 1 file, 13 tests.
+
+Slice 12 completed - manual/shared type enums align with Prisma schema:
+
+- Gap: manual/shared type surfaces had drifted from `apps/backend/prisma/schema.prisma`: `TechProfile` missed `LANDLINE`, consent statuses included old non-Prisma values, shared relationship types included old values, and subscription enum names did not match the backend schema.
+- Fixes:
+  - Updated `packages/shared-types/types/index.ts` enum unions to match Prisma for `RelationshipType`, `TechProfile`, `ConsentStatus`, `SubscriptionTier`, and `SubscriptionStatus`.
+  - Updated `apps/mobile/src/services/database.types.ts` to export `RelationshipType` and `TechProfile`, include `LANDLINE`, align `ConsentStatus`, and type receiver `relationship_type` / `tech_profile` fields with those unions.
+  - Added compile-time schema alignment contract files so future enum drift fails under `tsc`.
+- Red verification:
+  - `npx tsc --noEmit --strict --moduleResolution node --target ES2020 packages/shared-types/types/schema-alignment.spec.ts apps/mobile/src/services/database.types.spec.ts`
+  - Failed before fix because mobile DB types lacked `RelationshipType`/`TechProfile` exports and both type surfaces differed from Prisma enum unions.
+- Green verification:
+  - `npx tsc --noEmit --strict --module ESNext --moduleResolution bundler --target ES2020 packages/shared-types/types/schema-alignment.spec.ts apps/mobile/src/services/database.types.spec.ts`
+  - Passed.
+  - `npx vitest run apps/mobile/src packages/shared-types/types/schema-alignment.spec.ts`
+  - Passed: 11 files, 27 tests.
+  - `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+  - `npm.cmd --prefix apps/backend run type-check`
+  - Passed.
+
+Full verification after slices 1-12 plus 11b:
 
 - `npm.cmd --prefix apps/backend test`
-  - Passed: 44 files, 208 tests.
+  - Passed: 44 files, 213 tests.
 - `npm.cmd --prefix apps/backend run type-check`
   - Passed.
 - `npm.cmd --prefix apps/mobile run type-check`
   - Passed.
-- `npm.cmd exec -- vitest run apps/mobile/src/services/backendApi.spec.ts apps/mobile/src/services/auth.spec.ts apps/mobile/src/utils/channelProfiles.spec.ts`
-  - Passed: 3 files, 4 tests.
+- `npx vitest run apps/mobile/src`
+  - Passed: 10 files, 26 tests.
 - `$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate`
   - Passed.
 - Nest `AppModule` fake-provider bootstrap with RevenueCat webhook auth configured:
@@ -3207,7 +3337,7 @@ Slice 2 completed - drawer context render stability:
 Read this file first:
 
 ```powershell
-Get-Content -LiteralPath docs\PROJECT_HANDOFF.md
+Get-Content -LiteralPath PROJECT_HANDOFF.md
 ```
 
 Then check current state:

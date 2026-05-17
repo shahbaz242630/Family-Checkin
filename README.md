@@ -9,7 +9,7 @@ This is not an emergency service, a surveillance product, or a medical device. R
 ## Source Of Truth
 
 - Product requirements: `Business Requirements Document.txt`
-- Current engineering handoff: `docs/PROJECT_HANDOFF.md`
+- Current engineering handoff: `PROJECT_HANDOFF.md`
 
 Read both before starting feature work. The handoff is updated after each completed task so a fresh session can resume quickly.
 
@@ -40,9 +40,9 @@ apps/
 packages/
   shared-types/    Shared TypeScript types and constants
 docs/
-  PROJECT_HANDOFF.md
   superpowers/
 Business Requirements Document.txt
+PROJECT_HANDOFF.md
 ```
 
 ## Current Stack

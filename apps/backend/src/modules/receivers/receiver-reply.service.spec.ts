@@ -405,6 +405,17 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     };
   }
 
+  async findById(checkInId: string): Promise<CheckInRecord | null> {
+    return {
+      id: checkInId,
+      receiverId: 'receiver-1',
+      scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+      status: CheckInStatus.SENT,
+      createdAt: new Date('2026-04-27T05:30:00.000Z'),
+      updatedAt: new Date('2026-04-27T05:30:00.000Z'),
+    };
+  }
+
   async findLatestActionableForReceiver(receiverId: string): Promise<CheckInRecord | null> {
     return this.actionableCheckIn?.receiverId === receiverId ? this.actionableCheckIn : null;
   }

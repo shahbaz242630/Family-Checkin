@@ -4,7 +4,7 @@ import { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
-import type { EscalationsRepository } from './escalations.repository';
+import type { EscalationBackupContactRecord, EscalationsRepository } from './escalations.repository';
 import { ESCALATIONS_REPOSITORY } from './escalations.tokens';
 
 export interface EscalateHelpResponseInput {
@@ -33,10 +33,12 @@ export interface EscalateHelpResponseResult {
   failed: number;
 }
 
+const BACKUP_CONTACT_ALERT_CHANNELS = [Channel.SMS, Channel.WHATSAPP] as const;
+
 @Injectable()
 export class EscalationsService {
   private readonly now: () => Date;
-  private readonly notificationsService?: Pick<NotificationsService, 'sendToUser'>;
+  private readonly notificationsService?: Pick<NotificationsService, 'sendToUser' | 'sendEscalationAlertToUser'>;
 
   constructor(
     @Inject(ESCALATIONS_REPOSITORY) private readonly escalationsRepository: EscalationsRepository,
@@ -48,7 +50,7 @@ export class EscalationsService {
     private readonly auditService: AuditService,
     @Optional()
     @Inject(NotificationsService)
-    notificationsOrNow?: Pick<NotificationsService, 'sendToUser'> | (() => Date),
+    notificationsOrNow?: Pick<NotificationsService, 'sendToUser' | 'sendEscalationAlertToUser'> | (() => Date),
     now?: () => Date,
   ) {
     this.now = () => new Date();
@@ -192,71 +194,25 @@ export class EscalationsService {
 
     for (const [index, contact] of backupContacts.entries()) {
       const attemptNumber = index + 1;
-      const startedAt = this.now();
-
-      try {
-        const providerResult = await this.channelRouter.sendMessage(Channel.SMS, this.cryptoService.decrypt(contact.phoneEncrypted), {
-          templateKey: input.templateKey,
-          language: 'en',
-          variables: {
-            checkInId: input.checkInId,
+      const channelResults = await Promise.all(
+        BACKUP_CONTACT_ALERT_CHANNELS.map((channel) =>
+          this.alertBackupContactChannel({
             receiverId: input.receiverId,
-          },
-        });
-        const event = await this.escalationsRepository.createEvent({
-          checkInId: input.checkInId,
-          attemptNumber,
-          channel: Channel.SMS,
-          startedAt,
-          completedAt: this.now(),
-          result: EscalationResult.SUCCESS,
-          senderNotifiedAt,
-          backupAlertedAt: providerResult.acceptedAt,
-        });
+            checkInId: input.checkInId,
+            contact,
+            attemptNumber,
+            channel,
+            templateKey: input.templateKey,
+            senderNotifiedAt,
+            auditMetadata: input.auditMetadata,
+          }),
+        ),
+      );
+
+      if (channelResults.some(Boolean)) {
         succeeded += 1;
-
-        await this.auditService.append({
-          entityType: 'escalation_event',
-          entityId: event.id,
-          action: 'escalation.backup_contact_alerted',
-          actorType: ActorType.SYSTEM,
-          metadata: {
-            receiverId: input.receiverId,
-            checkInId: input.checkInId,
-            backupContactId: contact.id,
-            channel: Channel.SMS,
-            attemptNumber,
-            providerStatus: providerResult.providerStatus,
-            ...input.auditMetadata,
-          },
-        });
-      } catch {
-        const event = await this.escalationsRepository.createEvent({
-          checkInId: input.checkInId,
-          attemptNumber,
-          channel: Channel.SMS,
-          startedAt,
-          completedAt: this.now(),
-          result: EscalationResult.ERROR,
-          errorDetails: 'provider_send_failed',
-          senderNotifiedAt,
-        });
+      } else {
         failed += 1;
-
-        await this.auditService.append({
-          entityType: 'escalation_event',
-          entityId: event.id,
-          action: 'escalation.backup_contact_failed',
-          actorType: ActorType.SYSTEM,
-          metadata: {
-            receiverId: input.receiverId,
-            checkInId: input.checkInId,
-            backupContactId: contact.id,
-            channel: Channel.SMS,
-            attemptNumber,
-            ...input.auditMetadata,
-          },
-        });
       }
     }
 
@@ -303,6 +259,86 @@ export class EscalationsService {
     };
   }
 
+  private async alertBackupContactChannel(input: {
+    receiverId: string;
+    checkInId: string;
+    contact: EscalationBackupContactRecord;
+    attemptNumber: number;
+    channel: Channel;
+    templateKey: string;
+    senderNotifiedAt?: Date;
+    auditMetadata: Record<string, string | number>;
+  }): Promise<boolean> {
+    const startedAt = this.now();
+
+    try {
+      const providerResult = await this.channelRouter.sendMessage(input.channel, this.cryptoService.decrypt(input.contact.phoneEncrypted), {
+        templateKey: input.templateKey,
+        language: 'en',
+        variables: {
+          checkInId: input.checkInId,
+          receiverId: input.receiverId,
+        },
+      });
+      const event = await this.escalationsRepository.createEvent({
+        checkInId: input.checkInId,
+        attemptNumber: input.attemptNumber,
+        channel: input.channel,
+        startedAt,
+        completedAt: this.now(),
+        result: EscalationResult.SUCCESS,
+        senderNotifiedAt: input.senderNotifiedAt,
+        backupAlertedAt: providerResult.acceptedAt,
+      });
+
+      await this.auditService.append({
+        entityType: 'escalation_event',
+        entityId: event.id,
+        action: 'escalation.backup_contact_alerted',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: input.receiverId,
+          checkInId: input.checkInId,
+          backupContactId: input.contact.id,
+          channel: input.channel,
+          attemptNumber: input.attemptNumber,
+          providerStatus: providerResult.providerStatus,
+          ...input.auditMetadata,
+        },
+      });
+
+      return true;
+    } catch {
+      const event = await this.escalationsRepository.createEvent({
+        checkInId: input.checkInId,
+        attemptNumber: input.attemptNumber,
+        channel: input.channel,
+        startedAt,
+        completedAt: this.now(),
+        result: EscalationResult.ERROR,
+        errorDetails: 'provider_send_failed',
+        senderNotifiedAt: input.senderNotifiedAt,
+      });
+
+      await this.auditService.append({
+        entityType: 'escalation_event',
+        entityId: event.id,
+        action: 'escalation.backup_contact_failed',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: input.receiverId,
+          checkInId: input.checkInId,
+          backupContactId: input.contact.id,
+          channel: input.channel,
+          attemptNumber: input.attemptNumber,
+          ...input.auditMetadata,
+        },
+      });
+
+      return false;
+    }
+  }
+
   private async notifySender(input: {
     receiverId: string;
     checkInId: string;
@@ -320,7 +356,7 @@ export class EscalationsService {
     }
 
     try {
-      const result = await this.notificationsService.sendToUser({
+      const result = await this.notificationsService.sendEscalationAlertToUser({
         userId: owner.userId,
         title: input.title,
         body: input.body,

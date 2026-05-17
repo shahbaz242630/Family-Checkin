@@ -27,6 +27,18 @@ import { ReceiversService } from './receivers.service';
 
 const PAID_ACCESS_REQUIRED_CODE = 'PAID_ACCESS_REQUIRED';
 const PAID_ACCESS_REQUIRED_MESSAGE = 'Active subscription required to add receivers';
+const RECEIVER_VALIDATION_MESSAGES = new Set([
+  'Sender user id is required',
+  'Receiver id is required',
+  'Receiver name is required',
+  'Receiver phone is required',
+  'Receiver primary channel is required',
+  'Receiver country code is required',
+  'Receiver language is required',
+  'Receiver timezone is required',
+  'Receiver schedule frequency is required',
+  'Invalid phone number',
+]);
 
 interface CreateReceiverBody {
   name?: string;
@@ -184,23 +196,25 @@ export class ReceiversController {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
     const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
-    const receiver = await this.receiversService.updateForSender({
-      userId: sender.id,
-      receiverId,
-      name: body.name ?? '',
-      countryCode: body.countryCode ?? '',
-      relationshipType: this.required(body.relationshipType, 'Receiver relationship type is required'),
-      language: body.language ?? '',
-      timezone: body.timezone ?? '',
-      techProfile: this.required(body.techProfile, 'Receiver tech profile is required'),
-      primaryChannel: this.required(body.primaryChannel, 'Receiver primary channel is required'),
-      fallbackChannels: body.fallbackChannels ?? [],
-      scheduleFrequency: body.scheduleFrequency ?? '',
-      scheduleTimeWindow: body.scheduleTimeWindow ?? {},
-      scheduleCustomCron: body.scheduleCustomCron,
-      ipAddress: this.firstForwardedIp(forwardedFor),
-      userAgent,
-    });
+    const receiver = await this.mapReceiverValidationFailure(() =>
+      this.receiversService.updateForSender({
+        userId: sender.id,
+        receiverId,
+        name: body.name ?? '',
+        countryCode: body.countryCode ?? '',
+        relationshipType: this.required(body.relationshipType, 'Receiver relationship type is required'),
+        language: body.language ?? '',
+        timezone: body.timezone ?? '',
+        techProfile: this.required(body.techProfile, 'Receiver tech profile is required'),
+        primaryChannel: this.required(body.primaryChannel, 'Receiver primary channel is required'),
+        fallbackChannels: body.fallbackChannels ?? [],
+        scheduleFrequency: body.scheduleFrequency ?? '',
+        scheduleTimeWindow: body.scheduleTimeWindow ?? {},
+        scheduleCustomCron: body.scheduleCustomCron,
+        ipAddress: this.firstForwardedIp(forwardedFor),
+        userAgent,
+      }),
+    );
 
     if (!receiver) {
       throw new NotFoundException('Receiver not found');
@@ -332,25 +346,27 @@ export class ReceiversController {
       });
     }
 
-    const receiver = await this.receiversService.createForSender({
-      userId: sender.id,
-      name: body.name ?? '',
-      phone: body.phone ?? '',
-      phoneCountry: body.phoneCountry,
-      countryCode: body.countryCode ?? '',
-      relationshipType: this.required(body.relationshipType, 'Receiver relationship type is required'),
-      language: body.language ?? '',
-      timezone: body.timezone ?? '',
-      techProfile: this.required(body.techProfile, 'Receiver tech profile is required'),
-      primaryChannel: this.required(body.primaryChannel, 'Receiver primary channel is required'),
-      fallbackChannels: body.fallbackChannels ?? [],
-      scheduleFrequency: body.scheduleFrequency ?? '',
-      scheduleTimeWindow: body.scheduleTimeWindow ?? {},
-      scheduleCustomCron: body.scheduleCustomCron,
-      personalNote: body.personalNote,
-      ipAddress: this.firstForwardedIp(forwardedFor),
-      userAgent,
-    });
+    const receiver = await this.mapReceiverValidationFailure(() =>
+      this.receiversService.createForSender({
+        userId: sender.id,
+        name: body.name ?? '',
+        phone: body.phone ?? '',
+        phoneCountry: body.phoneCountry,
+        countryCode: body.countryCode ?? '',
+        relationshipType: this.required(body.relationshipType, 'Receiver relationship type is required'),
+        language: body.language ?? '',
+        timezone: body.timezone ?? '',
+        techProfile: this.required(body.techProfile, 'Receiver tech profile is required'),
+        primaryChannel: this.required(body.primaryChannel, 'Receiver primary channel is required'),
+        fallbackChannels: body.fallbackChannels ?? [],
+        scheduleFrequency: body.scheduleFrequency ?? '',
+        scheduleTimeWindow: body.scheduleTimeWindow ?? {},
+        scheduleCustomCron: body.scheduleCustomCron,
+        personalNote: body.personalNote,
+        ipAddress: this.firstForwardedIp(forwardedFor),
+        userAgent,
+      }),
+    );
     await this.receiverConsentService.requestConsent({
       receiver,
       actorUserId: sender.id,
@@ -422,9 +438,21 @@ export class ReceiversController {
 
   private required<T>(value: T | undefined, message: string): T {
     if (!value) {
-      throw new Error(message);
+      throw new BadRequestException(message);
     }
 
     return value;
+  }
+
+  private async mapReceiverValidationFailure<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof Error && RECEIVER_VALIDATION_MESSAGES.has(error.message)) {
+        throw new BadRequestException(error.message);
+      }
+
+      throw error;
+    }
   }
 }

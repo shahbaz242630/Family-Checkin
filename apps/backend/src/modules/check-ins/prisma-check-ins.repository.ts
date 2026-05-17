@@ -61,13 +61,19 @@ interface CheckInsPrismaClient {
   };
   checkIn: {
     create(args: { data: { receiverId: string; scheduledAt: Date; status: CheckInStatus } }): Promise<CheckIn>;
-    findFirst(args: {
-      where: {
-        receiverId: string;
-        status: { in: CheckInStatus[] };
-      };
-      orderBy: { scheduledAt: 'desc' };
-    }): Promise<CheckIn | null>;
+    findFirst(args:
+      | {
+          where: {
+            id: string;
+          };
+        }
+      | {
+          where: {
+            receiverId: string;
+            status: { in: CheckInStatus[] };
+          };
+          orderBy: { scheduledAt: 'desc' };
+        }): Promise<CheckIn | null>;
     findMany(args: {
       where: {
         status: CheckInStatus;
@@ -339,6 +345,16 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     });
 
     return this.toCheckInRecord(checkIn);
+  }
+
+  async findById(checkInId: string): Promise<CheckInRecord | null> {
+    const checkIn = await this.prisma.checkIn.findFirst({
+      where: {
+        id: checkInId,
+      },
+    });
+
+    return checkIn ? this.toCheckInRecord(checkIn) : null;
   }
 
   async findLatestOpenForReceiver(receiverId: string): Promise<CheckInRecord | null> {

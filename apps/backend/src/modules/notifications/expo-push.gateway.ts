@@ -5,6 +5,10 @@ export interface ExpoPushMessage {
   title: string;
   body: string;
   data: Record<string, string>;
+  sound?: 'default' | string;
+  priority?: 'default' | 'normal' | 'high';
+  channelId?: string;
+  interruptionLevel?: 'passive' | 'active' | 'timeSensitive' | 'critical';
 }
 
 export interface ExpoPushTicket {

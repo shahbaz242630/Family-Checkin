@@ -1,5 +1,5 @@
 import { Channel, ConsentStatus, RelationshipType, SensitiveAction, TechProfile } from '@prisma/client';
-import { ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { ReceiversController } from './receivers.controller';
 
@@ -32,6 +32,7 @@ class FakeReceiversService {
   public resolveInput: Record<string, unknown> | null = null;
   public alertBackupInput: Record<string, unknown> | null = null;
   public tryLaterInput: Record<string, unknown> | null = null;
+  public nextCreateError: Error | null = null;
 
   async listForSender(userId: string) {
     this.listedForUserId = userId;
@@ -126,6 +127,10 @@ class FakeReceiversService {
   }
 
   async createForSender(input: Record<string, unknown>) {
+    if (this.nextCreateError) {
+      throw this.nextCreateError;
+    }
+
     this.createInput = input;
     return {
       id: 'created-receiver-1',
@@ -602,6 +607,66 @@ describe('ReceiversController', () => {
       message: 'Active subscription required to add receivers',
     });
     expect(receiversService.createInput).toBeNull();
+    expect(receiverConsentService.requestInput).toBeNull();
+  });
+
+  it('rejects missing receiver enum fields as a bad request', async () => {
+    const receiversService = new FakeReceiversService();
+    const receiverConsentService = new FakeReceiverConsentService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      receiverConsentService as never,
+      undefined,
+      new FakeBillingService(true) as never,
+    );
+
+    await expect(
+      controller.create('Bearer access-token', 'Nearby Mobile/1.0', '203.0.113.10', {
+        name: 'Fatima Parent',
+        phone: '+971501234567',
+        countryCode: 'AE',
+        language: 'en',
+        timezone: 'Asia/Dubai',
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(receiversService.createInput).toBeNull();
+    expect(receiverConsentService.requestInput).toBeNull();
+  });
+
+  it('maps receiver service validation failures to bad requests', async () => {
+    const receiversService = new FakeReceiversService();
+    receiversService.nextCreateError = new Error('Receiver name is required');
+    const receiverConsentService = new FakeReceiverConsentService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      receiverConsentService as never,
+      undefined,
+      new FakeBillingService(true) as never,
+    );
+
+    await expect(
+      controller.create('Bearer access-token', 'Nearby Mobile/1.0', '203.0.113.10', {
+        name: 'Fatima Parent',
+        phone: '+971501234567',
+        countryCode: 'AE',
+        relationshipType: RelationshipType.PARENT,
+        language: 'en',
+        timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
     expect(receiverConsentService.requestInput).toBeNull();
   });
 });
