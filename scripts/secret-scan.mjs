@@ -96,14 +96,28 @@ export function scanFiles(cwd, files) {
     const normalised = relativePath.replace(/\\/g, '/');
     findings.push(...checkPath(normalised));
     if (SKIP_PATHS.some((pattern) => pattern.test(normalised))) continue;
-    const absolute = path.join(cwd, normalised);
-    if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) continue;
-    if (fs.statSync(absolute).size > MAX_BYTES) continue;
-    const buffer = fs.readFileSync(absolute);
+    const buffer = readSmallFile(path.join(cwd, normalised));
+    if (!buffer) continue; // deleted, not a regular file, or too large
     if (buffer.subarray(0, 8192).includes(0)) continue; // binary
     findings.push(...scanContent(normalised, buffer.toString('utf8')));
   }
   return findings;
+}
+
+/** Open once and stat the descriptor so there is no check-then-read race. */
+function readSmallFile(absolute) {
+  let fd;
+  try {
+    fd = fs.openSync(absolute, 'r');
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > MAX_BYTES) return null;
+    return fs.readFileSync(fd);
+  } catch (error) {
+    if (error && (error.code === 'ENOENT' || error.code === 'EISDIR')) return null;
+    throw error;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
 }
 
 function main(argv) {

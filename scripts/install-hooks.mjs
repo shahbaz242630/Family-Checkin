@@ -38,6 +38,15 @@ function hooksDirectory() {
   return path.resolve(result.stdout.trim());
 }
 
+function readIfPresent(file) {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 function main() {
   if (process.env.CI) {
     console.log('install-hooks: CI detected, skipping.');
@@ -52,7 +61,8 @@ function main() {
 
   for (const [name, contents] of Object.entries(HOOKS)) {
     const file = path.join(directory, name);
-    if (fs.existsSync(file) && !fs.readFileSync(file, 'utf8').includes(MARKER)) {
+    const existing = readIfPresent(file);
+    if (existing !== null && !existing.includes(MARKER)) {
       console.log(`install-hooks: ${name} exists and is not managed here; leaving it alone.`);
       continue;
     }

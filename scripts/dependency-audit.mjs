@@ -102,9 +102,12 @@ export function runNpmAudit(cwd) {
 }
 
 export function loadAllowlist(cwd) {
-  const file = path.join(cwd, ALLOWLIST_PATH);
-  if (!fs.existsSync(file)) return { entries: [] };
-  return JSON.parse(fs.readFileSync(file, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(path.join(cwd, ALLOWLIST_PATH), 'utf8'));
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return { entries: [] };
+    throw error;
+  }
 }
 
 function main() {
