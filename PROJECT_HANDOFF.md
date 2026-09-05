@@ -786,6 +786,10 @@ Prisma 7 note:
 
 Start the next session by reading this handoff, then continue with the BRD core workflow. Do not start with real channel vendors yet; keep using `CHANNEL_PROVIDER_MODE=fake` until the local end-to-end flow is proven.
 
+### 0. Completion backlog first (added 2026-09-05)
+
+Four independent audits (backend wiring, backend robustness, mobile wiring, BRD coverage) were run on 2026-09-05. The consolidated, prioritised result is `docs/COMPLETION_BACKLOG.md`; the raw reports are in `docs/audits/2026-09-05/`. Rule agreed with the founder: work the backlog top to bottom (Phase 0 safety-loop blockers, then Phase 1 completing the built journeys) and do not start a new BRD feature until the items for the built ones are done, with their tests. The slice notes below remain the history of how things were built, not the plan.
+
 ### 1. Scheduled check-in engine foundation - completed 2026-04-27
 
 Completed backend slice:
