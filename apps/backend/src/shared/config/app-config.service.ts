@@ -26,9 +26,14 @@ const envSchema = z.object({
   VOICE_PROVIDER_API_KEY: z.string().optional(),
   VOICE_PROVIDER_FROM_NUMBER: z.string().optional(),
   PORT: z.coerce.number().int().positive().optional(),
+  RATE_LIMIT_TTL_SECONDS: z.coerce.number().int().positive().default(60),
+  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(300),
+  TRUST_PROXY: z.string().optional(),
+  CORS_ALLOWED_ORIGINS: z.string().optional(),
 });
 
 export type BackendEnv = Record<string, string | undefined>;
+export type TrustProxySetting = boolean | number | string;
 
 @Injectable()
 export class AppConfigService {
@@ -144,5 +149,46 @@ export class AppConfigService {
 
   get port(): number {
     return this.env.PORT ?? 3000;
+  }
+
+  get rateLimitTtlSeconds(): number {
+    return this.env.RATE_LIMIT_TTL_SECONDS;
+  }
+
+  get rateLimitMaxRequests(): number {
+    return this.env.RATE_LIMIT_MAX_REQUESTS;
+  }
+
+  /**
+   * Express `trust proxy` setting. Environment values are strings, so the two forms Express
+   * cannot accept as strings are converted: `true`/`false` become booleans and a bare integer
+   * becomes a hop count. Everything else (`loopback`, a CIDR, a comma-separated list) is passed
+   * through verbatim for Express to interpret.
+   */
+  get trustProxy(): TrustProxySetting | undefined {
+    const raw = this.env.TRUST_PROXY?.trim();
+    if (!raw) {
+      return undefined;
+    }
+
+    const lowered = raw.toLowerCase();
+    if (lowered === 'true') {
+      return true;
+    }
+    if (lowered === 'false') {
+      return false;
+    }
+    if (/^\d+$/.test(raw)) {
+      return Number(raw);
+    }
+
+    return raw;
+  }
+
+  get corsAllowedOrigins(): string[] {
+    return (this.env.CORS_ALLOWED_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter((origin) => origin.length > 0);
   }
 }
