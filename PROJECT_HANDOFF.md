@@ -845,7 +845,7 @@ Completed validation slice:
 - Simulated consent reply:
 
 ```powershell
-Invoke-RestMethod -Method Post -Uri http://localhost:3000/receiver-replies/fake -ContentType 'application/json' -Body '{"fromPhone":"+971501234567","channel":"WHATSAPP","body":"YES","providerMessageId":"local-consent-1"}'
+Invoke-RestMethod -Method Post -Uri http://localhost:3000/receiver-replies/fake -ContentType 'application/json' -Body '{"fromPhone":"+971500000000","channel":"WHATSAPP","body":"YES","providerMessageId":"local-consent-1"}'
 ```
 
 - Invoked `CheckInsService.sendDueCheckIns()` directly through a one-off `tsx` command.
@@ -866,7 +866,7 @@ Completed validation slice:
   - added `/(main)/receiver-setup` that reuses the existing backend-backed receiver form
   - pointed dashboard and sidebar "Add Loved One" actions to `/(main)/receiver-setup`
 - Created a receiver through the Expo web UI:
-  - phone `+971501234894`
+  - phone `+971500000000`
   - receiver id `aae5f5ea-dd86-459f-9b7b-be6b07b2c08c`
   - schedule window `00:00` to `23:59`
 - Simulated receiver consent via fake webhook; result `consent_granted`.
@@ -1410,7 +1410,7 @@ Android emulator smoke:
 - Booted `Pixel_7` AVD as `emulator-5554`.
 - Launched Expo Go through `exp://10.0.2.2:8082/--/`.
 - Confirmed the app loads on Android.
-- Signed in manually through the native login screen after correcting an adb text-entry issue where the password initially became `Iloveyou123@g`.
+- Signed in manually through the native login screen after correcting an adb text-entry issue where the password initially became `<mistyped password, redacted>`.
 - Android then loaded the app shell and Add Receiver screen.
 - Direct navigation to the receiver detail route loaded the screen, but receiver API calls reported `You need to sign in again`.
 - Superseded by section 10: native Supabase session persistence was fixed on 2026-04-29 and Android receiver-detail backup-contact create/edit smoke passed after the fix.
@@ -3058,7 +3058,7 @@ Slice 1 completed - Twilio voice reply receiver matching:
 - Regression test: `provider-webhooks.controller.spec.ts` now models real Twilio voice callback shape with `From` as caller ID and `To` as receiver.
 - Red verification:
   - `npm.cmd --prefix apps/backend test -- src/modules/provider-webhooks/provider-webhooks.controller.spec.ts`
-  - Failed before fix because handled `fromPhone` was `+15550003333` instead of `+971501234571`.
+  - Failed before fix because handled `fromPhone` was `+15550003333` instead of `+971500000000`.
 - Green verification:
   - `npm.cmd --prefix apps/backend test -- src/modules/provider-webhooks/provider-webhooks.controller.spec.ts`
   - Passed: 1 file, 11 tests.
