@@ -20,6 +20,7 @@ const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 class InMemoryEscalationsRepository implements EscalationsRepository {
   public backupContacts: EscalationBackupContactRecord[] = [];
   public receiverOwnerUserId = 'sender-1';
+  public receiverOwnerPhoneEncrypted = new CryptoService(masterKey).encrypt('+971509999999');
   public createdEvents: CreateEscalationEventInput[] = [];
   public escalatedCheckIns: string[] = [];
   public terminalStatuses: { checkInId: string; status: CheckInStatus }[] = [];
@@ -30,8 +31,10 @@ class InMemoryEscalationsRepository implements EscalationsRepository {
       .sort((a, b) => a.priorityOrder - b.priorityOrder || a.createdAt.getTime() - b.createdAt.getTime());
   }
 
-  async findReceiverOwner(input: { receiverId: string }): Promise<{ userId: string } | null> {
-    return input.receiverId === 'receiver-1' ? { userId: this.receiverOwnerUserId } : null;
+  async findReceiverOwner(input: { receiverId: string }): Promise<{ userId: string; phoneEncrypted: string } | null> {
+    return input.receiverId === 'receiver-1'
+      ? { userId: this.receiverOwnerUserId, phoneEncrypted: this.receiverOwnerPhoneEncrypted }
+      : null;
   }
 
   async createEvent(input: CreateEscalationEventInput): Promise<EscalationEventRecord> {
@@ -72,7 +75,14 @@ class InMemoryNotificationsService {
     data: Record<string, string>;
   }> = [];
 
-  constructor(private readonly result = { attempted: 1, sent: 1, failed: 0, sentAt: new Date('2026-04-29T10:00:00.000Z') }) {}
+  constructor(
+    private readonly result: { attempted: number; sent: number; failed: number; sentAt?: Date } = {
+      attempted: 1,
+      sent: 1,
+      failed: 0,
+      sentAt: new Date('2026-04-29T10:00:00.000Z'),
+    },
+  ) {}
 
   async sendToUser(input: { userId: string; title: string; body: string; data: Record<string, string> }) {
     this.sent.push(input);
@@ -357,6 +367,64 @@ describe('EscalationsService', () => {
       },
     });
     expect(JSON.stringify(audit.events)).not.toContain('ExpoPushToken');
+  });
+
+  it('places a fallback voice call to the sender when escalation push is not delivered', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const audit = new InMemoryAuditService();
+    const notifications = new InMemoryNotificationsService({
+      attempted: 0,
+      sent: 0,
+      failed: 0,
+      sentAt: undefined,
+    });
+    const voice = new FakeChannelProvider(Channel.VOICE, {
+      now: () => new Date('2026-04-29T10:00:00.000Z'),
+    });
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([voice]),
+      audit as unknown as AuditService,
+      notifications as unknown as NotificationsService,
+      () => new Date('2026-04-29T10:00:00.000Z'),
+    );
+
+    await service.escalateMissedCheckIn({
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      sentAt: new Date('2026-04-29T09:30:00.000Z'),
+      responseWindowMinutes: 30,
+    });
+
+    expect(voice.voiceCalls).toEqual([
+      {
+        to: '+971509999999',
+        script: {
+          scriptKey: 'sender_escalation_siren_voice',
+          language: 'en',
+          variables: {
+            checkInId: 'check-in-1',
+            receiverId: 'receiver-1',
+            reason: 'missed_check_in',
+          },
+        },
+      },
+    ]);
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({
+        entityType: 'check_in',
+        entityId: 'check-in-1',
+        action: 'sender_voice_fallback.sent',
+        metadata: {
+          receiverId: 'receiver-1',
+          reason: 'missed_check_in',
+          providerStatus: 'accepted',
+        },
+      }),
+    );
+    expect(JSON.stringify(audit.events)).not.toContain('+971509999999');
   });
 
   it('audits and leaves the check-in as responded help when there are no active backup contacts', async () => {

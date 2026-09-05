@@ -178,9 +178,9 @@ export class CheckInsService {
       await this.checkInsRepository.markAttemptTimedOut({ attemptId: attempt.id, completedAt: now });
       result.timedOut += 1;
 
-      if (await this.sendNextPendingAttempt(attempt.checkIn.id, now)) {
+      if (await this.sendNextDuePendingAttempt(attempt.checkIn.id, now)) {
         result.sent += 1;
-      } else {
+      } else if (!(await this.hasPendingAttempts(attempt.checkIn.id))) {
         await this.markCheckInNeedsAttention({
           checkInId: attempt.checkIn.id,
           receiverId: attempt.checkIn.receiverId,
@@ -211,9 +211,9 @@ export class CheckInsService {
         });
         result.failed += 1;
 
-        if (await this.sendNextPendingAttempt(attempt.checkIn.id, now)) {
+        if (await this.sendNextDuePendingAttempt(attempt.checkIn.id, now)) {
           result.sent += 1;
-        } else {
+        } else if (!(await this.hasPendingAttempts(attempt.checkIn.id))) {
           await this.checkInsRepository.markNeedsAttention({ checkInId: attempt.checkIn.id });
           result.needsAttention += 1;
         }
@@ -361,8 +361,8 @@ export class CheckInsService {
     });
   }
 
-  private async sendNextPendingAttempt(checkInId: string, now: Date): Promise<boolean> {
-    const next = (await this.checkInsRepository.findDuePendingAttempts({ now: new Date('9999-12-31T23:59:59.999Z') })).find(
+  private async sendNextDuePendingAttempt(checkInId: string, now: Date): Promise<boolean> {
+    const next = (await this.checkInsRepository.findDuePendingAttempts({ now })).find(
       (attempt) => attempt.checkIn.id === checkInId,
     );
     if (!next) {

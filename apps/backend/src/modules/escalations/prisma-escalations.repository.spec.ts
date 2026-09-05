@@ -69,7 +69,7 @@ describe('PrismaEscalationsRepository', () => {
   });
 
   it('finds the active receiver owner for sender push notifications', async () => {
-    const findFirst = vi.fn().mockResolvedValue({ userId: 'sender-1' });
+    const findFirst = vi.fn().mockResolvedValue({ userId: 'sender-1', user: { phoneEncrypted: 'encrypted-phone' } });
     const repository = new PrismaEscalationsRepository({
       receiver: { findFirst },
       backupContact: { findMany: vi.fn() },
@@ -77,7 +77,10 @@ describe('PrismaEscalationsRepository', () => {
       checkIn: { update: vi.fn() },
     });
 
-    await expect(repository.findReceiverOwner({ receiverId: 'receiver-1' })).resolves.toEqual({ userId: 'sender-1' });
+    await expect(repository.findReceiverOwner({ receiverId: 'receiver-1' })).resolves.toEqual({
+      userId: 'sender-1',
+      phoneEncrypted: 'encrypted-phone',
+    });
     expect(findFirst).toHaveBeenCalledWith({
       where: {
         id: 'receiver-1',
@@ -85,6 +88,11 @@ describe('PrismaEscalationsRepository', () => {
       },
       select: {
         userId: true,
+        user: {
+          select: {
+            phoneEncrypted: true,
+          },
+        },
       },
     });
   });

@@ -25,7 +25,7 @@ describe('PrismaVoiceCallerIdRepository', () => {
 
     expect(prisma.voiceCallerIdPool.findFirstCalls).toEqual([
       {
-        where: { countryCode: 'AE', status: VoiceCallerIdStatus.ACTIVE },
+        where: { countryCode: 'AE', status: VoiceCallerIdStatus.ACTIVE, complianceStatus: 'APPROVED' },
         orderBy: [{ assignedCount: 'asc' }, { lastAssignedAt: 'asc' }, { createdAt: 'asc' }],
       },
     ]);
@@ -50,6 +50,27 @@ describe('PrismaVoiceCallerIdRepository', () => {
     await expect(repository.resolveForReceiver({ receiverId: 'receiver-3', countryCode: 'AE' })).resolves.toBeUndefined();
     expect(prisma.receiverVoiceCallerIdAssignment.createCalls).toEqual([]);
     expect(prisma.voiceCallerIdPool.updateCalls).toEqual([]);
+  });
+
+  it('does not reuse a sticky caller ID unless its compliance profile is approved', async () => {
+    const prisma = new FakePrismaVoiceCallerIdClient({
+      existingAssignment: null,
+      selectedPool: null,
+    });
+    const repository = new PrismaVoiceCallerIdRepository(prisma as never);
+
+    await expect(repository.resolveForReceiver({ receiverId: 'receiver-4', countryCode: 'AE' })).resolves.toBeUndefined();
+
+    expect(prisma.receiverVoiceCallerIdAssignment.findFirstCalls).toEqual([
+      {
+        where: {
+          receiverId: 'receiver-4',
+          releasedAt: null,
+          callerIdPool: { status: VoiceCallerIdStatus.ACTIVE, complianceStatus: 'APPROVED' },
+        },
+        include: { callerIdPool: true },
+      },
+    ]);
   });
 });
 

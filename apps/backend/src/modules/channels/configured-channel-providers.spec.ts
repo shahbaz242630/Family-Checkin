@@ -90,7 +90,7 @@ describe('configured channel providers', () => {
     expect(request?.authToken).toBe('twilio-auth-token');
   });
 
-  it('sends WhatsApp messages through Twilio with whatsapp-addressed numbers', async () => {
+  it('sends WhatsApp messages through Twilio approved content templates', async () => {
     const httpClient = new FakeTwilioHttpClient({
       sid: 'SMWA123',
       status: 'sent',
@@ -100,6 +100,9 @@ describe('configured channel providers', () => {
         accountSid: 'AC123',
         authToken: 'twilio-auth-token',
         fromNumber: '+15550002222',
+        contentSidByTemplateKey: {
+          'consent_request:en': 'HX_CONSENT_EN',
+        },
       },
       httpClient,
       () => new Date('2026-05-01T06:01:00.000Z'),
@@ -122,8 +125,26 @@ describe('configured channel providers', () => {
     expect(Object.fromEntries(request?.body ?? new URLSearchParams())).toEqual({
       To: 'whatsapp:+971501234568',
       From: 'whatsapp:+15550002222',
-      Body: 'consent_request\nsenderDisplayName: Ahmed',
+      ContentSid: 'HX_CONSENT_EN',
+      ContentVariables: JSON.stringify({ senderDisplayName: 'Ahmed' }),
     });
+  });
+
+  it('fails clearly when a WhatsApp content template SID is not configured', async () => {
+    const provider = new WhatsappProvider({
+      accountSid: 'AC123',
+      authToken: 'twilio-auth-token',
+      fromNumber: '+15550002222',
+      contentSidByTemplateKey: {},
+    });
+
+    await expect(
+      provider.sendMessage('+971501234568', {
+        templateKey: 'checkin_daily',
+        language: 'en',
+        variables: {},
+      }),
+    ).rejects.toThrow('WhatsApp content template is not configured for checkin_daily:en');
   });
 
   it('starts Twilio voice calls with hosted WAV prompts, no-input repeat, AMD, and status callbacks', async () => {

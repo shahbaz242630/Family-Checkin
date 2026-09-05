@@ -2,12 +2,12 @@ import { Channel } from '@prisma/client';
 import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceScript } from './channel-provider';
 import { ChannelProviderConfigurationError } from './configured-provider-errors';
 import { FetchTwilioHttpClient, type TwilioHttpClient } from './twilio-http-client';
-import { renderTwilioMessage } from './twilio-rendering';
 
 export interface WhatsappProviderConfig {
   accountSid?: string;
   authToken?: string;
   fromNumber?: string;
+  contentSidByTemplateKey?: Record<string, string>;
 }
 
 export class WhatsappProvider implements ChannelProvider {
@@ -21,13 +21,15 @@ export class WhatsappProvider implements ChannelProvider {
 
   async sendMessage(to: string, message: TemplatedMessage): Promise<ChannelSendResult> {
     const config = this.configured();
+    const contentSid = this.contentSidForMessage(message, config.contentSidByTemplateKey);
 
     const response = await this.httpClient.postForm(
       this.messagesUrl(config.accountSid),
       new URLSearchParams({
         To: this.whatsappAddress(to),
         From: this.whatsappAddress(config.fromNumber),
-        Body: renderTwilioMessage(message),
+        ContentSid: contentSid,
+        ContentVariables: JSON.stringify(message.variables),
       }),
       config.authToken,
     );
@@ -49,7 +51,7 @@ export class WhatsappProvider implements ChannelProvider {
   }
 
   private assertConfigured(): void {
-    if (!this.config.accountSid || !this.config.authToken || !this.config.fromNumber) {
+    if (!this.config.accountSid || !this.config.authToken || !this.config.fromNumber || !this.config.contentSidByTemplateKey) {
       throw new ChannelProviderConfigurationError('WhatsApp');
     }
   }
@@ -65,6 +67,16 @@ export class WhatsappProvider implements ChannelProvider {
 
   private whatsappAddress(phone: string): string {
     return phone.startsWith('whatsapp:') ? phone : `whatsapp:${phone}`;
+  }
+
+  private contentSidForMessage(message: TemplatedMessage, contentSidByTemplateKey: Record<string, string>): string {
+    const languageSpecificKey = `${message.templateKey}:${message.language}`;
+    const contentSid = contentSidByTemplateKey[languageSpecificKey] ?? contentSidByTemplateKey[message.templateKey];
+    if (!contentSid) {
+      throw new Error(`WhatsApp content template is not configured for ${languageSpecificKey}`);
+    }
+
+    return contentSid;
   }
 }
 

@@ -9,7 +9,7 @@ interface VoiceCallerIdPrismaClient {
       where: {
         receiverId: string;
         releasedAt: null;
-        callerIdPool: { status: VoiceCallerIdStatus };
+        callerIdPool: { status: VoiceCallerIdStatus; complianceStatus: string };
       };
       include: { callerIdPool: true };
     }): Promise<{ callerIdPool: { phoneNumber: string } } | null>;
@@ -20,6 +20,7 @@ interface VoiceCallerIdPrismaClient {
       where: {
         countryCode: string;
         status: VoiceCallerIdStatus;
+        complianceStatus: string;
       };
       orderBy: Array<{ assignedCount?: 'asc' } | { lastAssignedAt?: 'asc' } | { createdAt?: 'asc' }>;
     }): Promise<{ id: string; phoneNumber: string } | null>;
@@ -40,7 +41,7 @@ export class PrismaVoiceCallerIdRepository implements VoiceCallerIdRepository {
       where: {
         receiverId: input.receiverId,
         releasedAt: null,
-        callerIdPool: { status: VoiceCallerIdStatus.ACTIVE },
+        callerIdPool: { status: VoiceCallerIdStatus.ACTIVE, complianceStatus: 'APPROVED' },
       },
       include: { callerIdPool: true },
     });
@@ -52,6 +53,7 @@ export class PrismaVoiceCallerIdRepository implements VoiceCallerIdRepository {
       where: {
         countryCode: input.countryCode,
         status: VoiceCallerIdStatus.ACTIVE,
+        complianceStatus: 'APPROVED',
       },
       orderBy: [{ assignedCount: 'asc' }, { lastAssignedAt: 'asc' }, { createdAt: 'asc' }],
     });

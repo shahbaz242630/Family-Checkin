@@ -634,6 +634,57 @@ describe('CheckInsService', () => {
     expect(voice.voiceCalls).toHaveLength(1);
   });
 
+  it('does not send a retry attempt before its scheduled retry time', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    const voice = new FakeChannelProvider(Channel.VOICE);
+    repository.attempts = [
+      {
+        id: 'attempt-1',
+        checkInId: 'check-in-1',
+        attemptNumber: 1,
+        channel: Channel.VOICE,
+        status: CheckInAttemptStatus.SENT,
+        scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+        sentAt: new Date('2026-04-27T05:30:00.000Z'),
+        providerMessageId: 'CA123',
+        providerStatus: 'queued',
+        createdAt: new Date('2026-04-27T05:30:00.000Z'),
+        updatedAt: new Date('2026-04-27T05:30:00.000Z'),
+      },
+      {
+        id: 'attempt-2',
+        checkInId: 'check-in-1',
+        attemptNumber: 2,
+        channel: Channel.VOICE,
+        status: CheckInAttemptStatus.PENDING,
+        scheduledAt: new Date('2026-04-27T06:15:00.000Z'),
+        createdAt: new Date('2026-04-27T05:30:00.000Z'),
+        updatedAt: new Date('2026-04-27T05:30:00.000Z'),
+      },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([voice]),
+      audit as unknown as AuditService,
+      undefined,
+      () => new Date('2026-04-27T06:00:00.000Z'),
+    );
+
+    const result = await service.processCascadeAttempts();
+
+    expect(result).toEqual({ sent: 0, timedOut: 1, failed: 0, needsAttention: 0, skipped: 0 });
+    expect(repository.attemptsSent).toEqual([]);
+    expect(repository.attempts[1]).toMatchObject({
+      id: 'attempt-2',
+      status: CheckInAttemptStatus.PENDING,
+      scheduledAt: new Date('2026-04-27T06:15:00.000Z'),
+    });
+    expect(repository.needsAttentionCheckInIds).toEqual([]);
+  });
+
   it('marks sent voice attempts failed from terminal Twilio provider callbacks', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();

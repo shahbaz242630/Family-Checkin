@@ -15,6 +15,7 @@ const envSchema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_SMS_FROM_NUMBER: z.string().optional(),
   TWILIO_WHATSAPP_FROM_NUMBER: z.string().optional(),
+  TWILIO_WHATSAPP_CONTENT_SIDS: z.string().optional(),
   TWILIO_VOICE_FROM_NUMBER: z.string().optional(),
   VOICE_AUDIO_BASE_URL: z.string().url().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
@@ -108,6 +109,24 @@ export class AppConfigService {
 
   get twilioWhatsappFromNumber(): string | undefined {
     return this.env.TWILIO_WHATSAPP_FROM_NUMBER;
+  }
+
+  get twilioWhatsappContentSids(): Record<string, string> | undefined {
+    if (!this.env.TWILIO_WHATSAPP_CONTENT_SIDS) {
+      return undefined;
+    }
+
+    const parsed = JSON.parse(this.env.TWILIO_WHATSAPP_CONTENT_SIDS) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Invalid backend environment: TWILIO_WHATSAPP_CONTENT_SIDS must be a JSON object');
+    }
+
+    const entries = Object.entries(parsed);
+    if (entries.some(([, value]) => typeof value !== 'string' || value.trim().length === 0)) {
+      throw new Error('Invalid backend environment: TWILIO_WHATSAPP_CONTENT_SIDS values must be non-empty strings');
+    }
+
+    return Object.fromEntries(entries.map(([key, value]) => [key, (value as string).trim()]));
   }
 
   get twilioVoiceFromNumber(): string | undefined {
