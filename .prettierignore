@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+coverage/
+.expo/
+.playwright-mcp/
+.idea/
+android/
+ios/
+package-lock.json
+*.md
+*.txt
+*.sql
+*.log
+*.wav
+*.xlsx
+supabase/.temp/

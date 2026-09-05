@@ -1,0 +1,50 @@
+# Dependabot version updates. Alerts and security updates are enabled at the
+# repository level; this file adds weekly grouped version-update PRs and keeps
+# the SHA-pinned GitHub Actions current.
+version: 2
+updates:
+  - package-ecosystem: 'npm' # root lockfile covers all workspaces
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 5
+    # Wait a week before adopting fresh releases (supply-chain hygiene).
+    cooldown:
+      default-days: 7
+    groups:
+      minor-patch:
+        patterns:
+          - '*'
+        update-types:
+          - 'minor'
+          - 'patch'
+    ignore:
+      # Expo SDK and React Native majors are coordinated upgrades done by hand
+      # (`npx expo install --fix`), never one dependency at a time.
+      - dependency-name: 'expo'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'expo-*'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react-native'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react'
+        update-types: ['version-update:semver-major']
+      - dependency-name: 'react-dom'
+        update-types: ['version-update:semver-major']
+    commit-message:
+      prefix: 'chore(deps)'
+
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - '*'
+    commit-message:
+      prefix: 'chore(ci)'

@@ -45,7 +45,7 @@ export default function SecurityScreen() {
       if (value) {
         // Enabling biometric - authenticate first to confirm
         const authResult = await authenticateWithBiometric(
-          `Enable ${getBiometricName(biometricStatus?.biometricType || 'none')} login`
+          `Enable ${getBiometricName(biometricStatus?.biometricType || 'none')} login`,
         );
 
         if (!authResult.success) {
@@ -56,7 +56,7 @@ export default function SecurityScreen() {
 
         const success = await enableBiometric(user.id);
         if (success) {
-          setBiometricStatus(prev => prev ? { ...prev, isEnabled: true } : null);
+          setBiometricStatus((prev) => (prev ? { ...prev, isEnabled: true } : null));
           Alert.alert('Success', `${getBiometricName(biometricStatus?.biometricType || 'none')} login enabled`);
         } else {
           Alert.alert('Error', 'Could not enable biometric login');
@@ -65,7 +65,7 @@ export default function SecurityScreen() {
         // Disabling biometric
         const success = await disableBiometric();
         if (success) {
-          setBiometricStatus(prev => prev ? { ...prev, isEnabled: false } : null);
+          setBiometricStatus((prev) => (prev ? { ...prev, isEnabled: false } : null));
           Alert.alert('Success', 'Biometric login disabled');
         } else {
           Alert.alert('Error', 'Could not disable biometric login');
@@ -103,9 +103,7 @@ export default function SecurityScreen() {
               {!biometricStatus?.isAvailable && (
                 <View style={styles.warningBox}>
                   <Text style={styles.warningIcon}>!</Text>
-                  <Text style={styles.warningText}>
-                    Biometric authentication is not available on this device.
-                  </Text>
+                  <Text style={styles.warningText}>Biometric authentication is not available on this device.</Text>
                 </View>
               )}
 
@@ -113,7 +111,8 @@ export default function SecurityScreen() {
                 <View style={styles.warningBox}>
                   <Text style={styles.warningIcon}>!</Text>
                   <Text style={styles.warningText}>
-                    No {biometricName.toLowerCase()} enrolled. Please set up {biometricName} in your device settings first.
+                    No {biometricName.toLowerCase()} enrolled. Please set up {biometricName} in your device settings
+                    first.
                   </Text>
                 </View>
               )}
@@ -121,9 +120,7 @@ export default function SecurityScreen() {
               {canUseBiometric && (
                 <View style={styles.settingRow}>
                   <View style={styles.settingInfo}>
-                    <Text style={styles.settingIcon}>
-                      {biometricStatus?.biometricType === 'facial' ? '👤' : '👆'}
-                    </Text>
+                    <Text style={styles.settingIcon}>{biometricStatus?.biometricType === 'facial' ? '👤' : '👆'}</Text>
                     <View>
                       <Text style={styles.settingLabel}>Enable {biometricName}</Text>
                       <Text style={styles.settingHint}>
@@ -148,7 +145,9 @@ export default function SecurityScreen() {
 
               <View style={styles.infoRow}>
                 <Text style={styles.infoLabel}>Device Support</Text>
-                <Text style={[styles.infoValue, { color: biometricStatus?.isAvailable ? colors.success : colors.error }]}>
+                <Text
+                  style={[styles.infoValue, { color: biometricStatus?.isAvailable ? colors.success : colors.error }]}
+                >
                   {biometricStatus?.isAvailable ? 'Supported' : 'Not Supported'}
                 </Text>
               </View>
@@ -161,7 +160,12 @@ export default function SecurityScreen() {
                   </View>
                   <View style={styles.infoRow}>
                     <Text style={styles.infoLabel}>Enrollment Status</Text>
-                    <Text style={[styles.infoValue, { color: biometricStatus?.isEnrolled ? colors.success : colors.warning }]}>
+                    <Text
+                      style={[
+                        styles.infoValue,
+                        { color: biometricStatus?.isEnrolled ? colors.success : colors.warning },
+                      ]}
+                    >
                       {biometricStatus?.isEnrolled ? 'Enrolled' : 'Not Enrolled'}
                     </Text>
                   </View>
@@ -174,7 +178,7 @@ export default function SecurityScreen() {
               <Text style={styles.sectionTitle}>Security Tips</Text>
               <View style={styles.tipsList}>
                 <Text style={styles.tip}>• Keep your device passcode secure</Text>
-                <Text style={styles.tip}>• Don't share your login credentials</Text>
+                <Text style={styles.tip}>• Don&apos;t share your login credentials</Text>
                 <Text style={styles.tip}>• Log out when using shared devices</Text>
                 <Text style={styles.tip}>• Review connected devices regularly</Text>
               </View>

@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Body, Controller, Headers, Inject, Ip, Post, UnauthorizedException } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { Channel } from '@prisma/client';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import { CheckInsService } from '../check-ins/check-ins.service';
@@ -72,6 +73,8 @@ type TwilioVoiceAmdWebhookBody = {
   To?: string;
 };
 
+// Machine-called by Twilio/WhatsApp in bursts and authenticated by signature/shared secret, so the global rate limit does not apply.
+@SkipThrottle()
 @Controller('provider-webhooks')
 export class ProviderWebhooksController {
   constructor(

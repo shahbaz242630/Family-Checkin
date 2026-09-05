@@ -1712,7 +1712,7 @@ import { parsePhoneNumber } from 'libphonenumber-js';
 function normalizePhone(input: string, defaultCountry?: string): string {
   const parsed = parsePhoneNumber(input, defaultCountry as any);
   if (!parsed?.isValid()) throw new Error('Invalid phone number');
-  return parsed.format('E.164'); // e.g., "+919876543210"
+  return parsed.format('E.164'); // e.g., "+91XXXXXXXXXX"
 }
 ```
 

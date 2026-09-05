@@ -1,15 +1,6 @@
 // Login screen - Google, Apple, and Email authentication
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Alert,
-} from 'react-native';
+import { View, Text, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ScrollView, Alert } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
@@ -78,10 +69,7 @@ export default function LoginScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <KeyboardAvoidingView style={styles.keyboardView} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
@@ -97,18 +85,8 @@ export default function LoginScreen() {
 
           {/* Social Buttons */}
           <View style={styles.socialButtons}>
-            <SocialButton
-              provider="google"
-              onPress={handleGoogleSignIn}
-              loading={loading}
-              mode="signin"
-            />
-            <SocialButton
-              provider="apple"
-              onPress={handleAppleSignIn}
-              loading={loading}
-              mode="signin"
-            />
+            <SocialButton provider="google" onPress={handleGoogleSignIn} loading={loading} mode="signin" />
+            <SocialButton provider="apple" onPress={handleAppleSignIn} loading={loading} mode="signin" />
           </View>
 
           {/* Divider */}
@@ -143,10 +121,7 @@ export default function LoginScreen() {
             />
 
             {/* Forgot Password Link */}
-            <Pressable
-              style={styles.forgotPassword}
-              onPress={() => router.push('/(auth)/forgot-password')}
-            >
+            <Pressable style={styles.forgotPassword} onPress={() => router.push('/(auth)/forgot-password')}>
               <Text style={styles.forgotPasswordText}>Forgot password?</Text>
             </Pressable>
 
@@ -158,17 +133,12 @@ export default function LoginScreen() {
             )}
 
             {/* Sign In Button */}
-            <Button
-              title="Sign in"
-              onPress={handleEmailSignIn}
-              loading={loading}
-              disabled={!email || !password}
-            />
+            <Button title="Sign in" onPress={handleEmailSignIn} loading={loading} disabled={!email || !password} />
           </View>
 
           {/* Sign Up Link */}
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Don't have an account? </Text>
+            <Text style={styles.footerText}>Don&apos;t have an account? </Text>
             <Pressable onPress={() => router.replace('/(auth)/signup')}>
               <Text style={styles.footerLink}>Sign up</Text>
             </Pressable>

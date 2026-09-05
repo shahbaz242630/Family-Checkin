@@ -1,5 +1,5 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
-import { AbuseReportStatus, ActorType, CheckInStatus, ConsentStatus } from '@prisma/client';
+import { ActorType, CheckInStatus, ConsentStatus } from '@prisma/client';
 import type { Channel } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import type { BackupContactsRepository } from '../backup-contacts/backup-contacts.repository';
@@ -172,12 +172,10 @@ export class ReceiverReplyService {
     return 'UNKNOWN';
   }
 
-  private toConsentTransition(reply: 'YES' | 'NO' | 'STOP' | 'REPORT' | 'UNKNOWN'):
-    | {
-        action: 'consent_granted' | 'consent_declined' | 'consent_revoked';
-        consentStatus: ConsentStatus;
-      }
-    | null {
+  private toConsentTransition(reply: 'YES' | 'NO' | 'STOP' | 'REPORT' | 'UNKNOWN'): {
+    action: 'consent_granted' | 'consent_declined' | 'consent_revoked';
+    consentStatus: ConsentStatus;
+  } | null {
     if (reply === 'YES') {
       return {
         action: 'consent_granted',

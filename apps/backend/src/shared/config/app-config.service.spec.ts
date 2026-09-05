@@ -5,7 +5,7 @@ function validEnv(overrides: Record<string, string | undefined> = {}) {
   return {
     DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/nearby',
     KMS_MASTER_KEY_BASE64: Buffer.from('0123456789abcdef0123456789abcdef').toString('base64'),
-    SUPABASE_URL: 'https://nrohtflgytywovwabvdo.supabase.co',
+    SUPABASE_URL: 'https://nearby-test-project.supabase.co',
     SUPABASE_ANON_KEY: 'anon-key',
     SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
     OPERATIONS_CRON_SECRET: 'operations-cron-secret',
@@ -15,26 +15,28 @@ function validEnv(overrides: Record<string, string | undefined> = {}) {
 
 describe('AppConfigService', () => {
   it('parses required backend environment variables', () => {
-    const config = new AppConfigService(validEnv({
-      PUBLIC_API_BASE_URL: 'https://api.nearby.test/',
-      CHANNEL_PROVIDER_MODE: 'fake',
-      SMS_PROVIDER_API_KEY: 'sms-key',
-      TWILIO_ACCOUNT_SID: 'AC123',
-      TWILIO_SMS_FROM_NUMBER: '+15550001111',
-      TWILIO_WHATSAPP_FROM_NUMBER: '+15550002222',
-      TWILIO_VOICE_FROM_NUMBER: '+15550003333',
-      VOICE_AUDIO_BASE_URL: 'https://cdn.nearby.test/voice/',
-      WHATSAPP_ACCESS_TOKEN: 'whatsapp-token',
-      WHATSAPP_PHONE_NUMBER_ID: 'phone-number-id',
-      TWILIO_AUTH_TOKEN: 'twilio-auth-token',
-      CHANNEL_WEBHOOK_SECRET: 'provider-webhook-secret',
-      VOICE_PROVIDER_API_KEY: 'voice-key',
-      PORT: '4000',
-    }));
+    const config = new AppConfigService(
+      validEnv({
+        PUBLIC_API_BASE_URL: 'https://api.nearby.test/',
+        CHANNEL_PROVIDER_MODE: 'fake',
+        SMS_PROVIDER_API_KEY: 'sms-key',
+        TWILIO_ACCOUNT_SID: 'AC123',
+        TWILIO_SMS_FROM_NUMBER: '+15550001111',
+        TWILIO_WHATSAPP_FROM_NUMBER: '+15550002222',
+        TWILIO_VOICE_FROM_NUMBER: '+15550003333',
+        VOICE_AUDIO_BASE_URL: 'https://cdn.nearby.test/voice/',
+        WHATSAPP_ACCESS_TOKEN: 'whatsapp-token',
+        WHATSAPP_PHONE_NUMBER_ID: 'phone-number-id',
+        TWILIO_AUTH_TOKEN: 'twilio-auth-token',
+        CHANNEL_WEBHOOK_SECRET: 'provider-webhook-secret',
+        VOICE_PROVIDER_API_KEY: 'voice-key',
+        PORT: '4000',
+      }),
+    );
 
     expect(config.databaseUrl).toBe('postgresql://postgres:postgres@localhost:5432/nearby');
     expect(config.kmsMasterKey).toEqual(Buffer.from('0123456789abcdef0123456789abcdef'));
-    expect(config.supabaseUrl).toBe('https://nrohtflgytywovwabvdo.supabase.co');
+    expect(config.supabaseUrl).toBe('https://nearby-test-project.supabase.co');
     expect(config.supabaseAnonKey).toBe('anon-key');
     expect(config.supabaseServiceRoleKey).toBe('service-role-key');
     expect(config.operationsCronSecret).toBe('operations-cron-secret');
@@ -78,5 +80,69 @@ describe('AppConfigService', () => {
           OPERATIONS_CRON_SECRET: '',
         }),
     ).toThrow('Invalid backend environment');
+  });
+
+  it('defaults HTTP hardening settings', () => {
+    const config = new AppConfigService(validEnv());
+
+    expect(config.rateLimitTtlSeconds).toBe(60);
+    expect(config.rateLimitMaxRequests).toBe(300);
+    expect(config.trustProxy).toBeUndefined();
+    expect(config.corsAllowedOrigins).toEqual([]);
+  });
+
+  it('parses rate limit settings as positive integers', () => {
+    const config = new AppConfigService(validEnv({ RATE_LIMIT_TTL_SECONDS: '30', RATE_LIMIT_MAX_REQUESTS: '10' }));
+
+    expect(config.rateLimitTtlSeconds).toBe(30);
+    expect(config.rateLimitMaxRequests).toBe(10);
+  });
+
+  it.each([
+    ['RATE_LIMIT_TTL_SECONDS', '0'],
+    ['RATE_LIMIT_TTL_SECONDS', '-1'],
+    ['RATE_LIMIT_TTL_SECONDS', '1.5'],
+    ['RATE_LIMIT_TTL_SECONDS', 'soon'],
+    ['RATE_LIMIT_MAX_REQUESTS', '0'],
+    ['RATE_LIMIT_MAX_REQUESTS', '-5'],
+    ['RATE_LIMIT_MAX_REQUESTS', 'many'],
+  ])('rejects non-positive or non-integer %s=%s', (key, value) => {
+    expect(() => new AppConfigService(validEnv({ [key]: value }))).toThrow('Invalid backend environment');
+  });
+
+  it.each([
+    ['1', 1],
+    ['2', 2],
+    ['true', true],
+    ['TRUE', true],
+    ['false', false],
+    ['loopback', 'loopback'],
+    ['loopback, linklocal', 'loopback, linklocal'],
+    ['10.0.0.0/8', '10.0.0.0/8'],
+    ['  10.0.0.1  ', '10.0.0.1'],
+  ])('parses TRUST_PROXY=%s into an Express trust proxy value', (raw, expected) => {
+    const config = new AppConfigService(validEnv({ TRUST_PROXY: raw }));
+
+    expect(config.trustProxy).toBe(expected);
+  });
+
+  it('treats a blank TRUST_PROXY as unset', () => {
+    const config = new AppConfigService(validEnv({ TRUST_PROXY: '   ' }));
+
+    expect(config.trustProxy).toBeUndefined();
+  });
+
+  it('parses CORS_ALLOWED_ORIGINS as a trimmed comma-separated list without empty entries', () => {
+    const config = new AppConfigService(
+      validEnv({ CORS_ALLOWED_ORIGINS: ' https://admin.nearby.test , ,https://app.nearby.test,' }),
+    );
+
+    expect(config.corsAllowedOrigins).toEqual(['https://admin.nearby.test', 'https://app.nearby.test']);
+  });
+
+  it('returns no CORS origins for a blank CORS_ALLOWED_ORIGINS', () => {
+    const config = new AppConfigService(validEnv({ CORS_ALLOWED_ORIGINS: '  ,  ' }));
+
+    expect(config.corsAllowedOrigins).toEqual([]);
   });
 });

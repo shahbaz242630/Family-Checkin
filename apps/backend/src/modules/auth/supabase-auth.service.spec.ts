@@ -6,7 +6,7 @@ describe('SupabaseAuthService', () => {
   const config = new AppConfigService({
     DATABASE_URL: 'postgresql://postgres:postgres@localhost:5432/nearby',
     KMS_MASTER_KEY_BASE64: Buffer.from('0123456789abcdef0123456789abcdef').toString('base64'),
-    SUPABASE_URL: 'https://nrohtflgytywovwabvdo.supabase.co',
+    SUPABASE_URL: 'https://nearby-test-project.supabase.co',
     SUPABASE_ANON_KEY: 'anon-key',
     SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
     OPERATIONS_CRON_SECRET: 'operations-cron-secret',
@@ -34,7 +34,7 @@ describe('SupabaseAuthService', () => {
 
     const identity = await service.verifyAccessToken('access-token');
 
-    expect(fetchMock).toHaveBeenCalledWith('https://nrohtflgytywovwabvdo.supabase.co/auth/v1/user', {
+    expect(fetchMock).toHaveBeenCalledWith('https://nearby-test-project.supabase.co/auth/v1/user', {
       headers: {
         apikey: 'anon-key',
         Authorization: 'Bearer access-token',

@@ -1,5 +1,15 @@
 import { timingSafeEqual } from 'node:crypto';
-import { Controller, Get, Headers, Inject, NotFoundException, Param, Post, UnauthorizedException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Headers,
+  Inject,
+  NotFoundException,
+  Param,
+  Post,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { AdminAuthService } from '../auth/admin-auth.service';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import { AppConfigService } from '../../shared/config/app-config.service';
@@ -13,11 +23,18 @@ export class OperationsController {
     @Inject(AppConfigService)
     private readonly config: Pick<AppConfigService, 'operationsCronSecret'>,
     @Inject(OperationsVisibilityService)
-    private readonly operationsVisibilityService: Pick<OperationsVisibilityService, 'getCheckInSummary' | 'getCheckInDetail'>,
+    private readonly operationsVisibilityService: Pick<
+      OperationsVisibilityService,
+      'getCheckInSummary' | 'getCheckInDetail'
+    >,
     @Inject(AdminAuthService)
     private readonly adminAuthService: Pick<AdminAuthService, 'verifyAdminAccessToken'>,
   ) {}
 
+  // Called by the scheduler every 10 minutes in bursts and authenticated by the
+  // cron secret (timing-safe compare), so the global rate limit is skipped here.
+  // The admin GET routes below stay throttled.
+  @SkipThrottle()
   @Post('check-ins/run')
   async runCheckIns(@Headers('authorization') authorization: string | undefined) {
     this.assertOperationsCronBearer(authorization);

@@ -120,3 +120,13 @@ temp/
 *.tmp
 secrets/
 private/
+
+# Added with the CI/security baseline
+.eas/
+*.hprof
+*.har
+.env.vault
+sbom*.json
+*.sarif
+zap-report*
+gitleaks-report*
