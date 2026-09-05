@@ -1,0 +1,12 @@
+# Founder reviews everything. Security-sensitive paths are listed explicitly so
+# the intent survives future edits to the wildcard line.
+* @shahbaz242630
+
+/.github/ @shahbaz242630
+/apps/backend/prisma/ @shahbaz242630
+/supabase/ @shahbaz242630
+/apps/backend/src/shared/crypto/ @shahbaz242630
+/apps/backend/src/shared/config/ @shahbaz242630
+/apps/backend/src/modules/provider-webhooks/ @shahbaz242630
+/scripts/ @shahbaz242630
+/security/ @shahbaz242630

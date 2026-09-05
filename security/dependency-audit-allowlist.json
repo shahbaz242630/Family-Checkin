@@ -1,0 +1,41 @@
+{
+  "$comment": "Reviewed exceptions for scripts/dependency-audit.mjs (npm audit --omit=dev, high/critical). Every entry needs a reason that explains why the advisory is not reachable in production and an expiry date; an expired entry fails CI again so it gets re-reviewed. Remove entries once `npm audit` no longer reports them.",
+  "entries": [
+    {
+      "ghsa": "GHSA-6g55-p6wh-862q",
+      "package": "postcss",
+      "reason": "postcss is pulled in by Expo SDK 54's Metro bundler and only runs at build time on developer machines and EAS; the backend never loads it and no untrusted CSS is processed. Fixed upstream by the Expo SDK 55+ upgrade, which is a coordinated task.",
+      "expires": "2026-12-31"
+    },
+    {
+      "ghsa": "GHSA-r28c-9q8g-f849",
+      "package": "postcss",
+      "reason": "Same Expo/Metro build-time chain as GHSA-6g55-p6wh-862q: source-map auto-loading only affects the developer bundler, not the shipped app or the backend. Cleared by the Expo SDK 55+ upgrade.",
+      "expires": "2026-12-31"
+    },
+    {
+      "ghsa": "GHSA-5p2g-fcmc-qvqq",
+      "package": "image-size",
+      "reason": "image-size is used by Metro/React Native asset resolution at bundle time on developer machines and EAS only; inputs are our own committed assets, never user uploads. Cleared by the React Native/Expo SDK upgrade.",
+      "expires": "2026-12-31"
+    },
+    {
+      "ghsa": "GHSA-w3rx-r6r6-pgpr",
+      "package": "image-size",
+      "reason": "Same Metro bundle-time chain as GHSA-5p2g-fcmc-qvqq; ICNS parsing of our own committed assets only. Cleared by the React Native/Expo SDK upgrade.",
+      "expires": "2026-12-31"
+    },
+    {
+      "ghsa": "GHSA-3f6p-5ww8-9rcr",
+      "package": "mysql2",
+      "reason": "mysql2 ships inside the Prisma 7 CLI bundle but is never loaded: the backend uses Postgres through @prisma/adapter-pg, and the CLI runs only for migrations/validation in CI and locally. Waiting on a Prisma 7.x release that drops or upgrades it.",
+      "expires": "2026-12-31"
+    },
+    {
+      "ghsa": "GHSA-ggr8-5vv4-36mx",
+      "package": "deepmerge-ts",
+      "reason": "deepmerge-ts is used by @prisma/config to merge our own prisma.config.ts at CLI start; there is no untrusted or recursive input. Waiting on a Prisma 7.x release with the patched dependency.",
+      "expires": "2026-12-31"
+    }
+  ]
+}

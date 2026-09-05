@@ -1,4 +1,4 @@
-import { Channel, CheckInAttemptStatus, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
+import { Channel, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { PrismaCheckInsRepository } from './prisma-check-ins.repository';
 

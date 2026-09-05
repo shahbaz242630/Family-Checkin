@@ -7,6 +7,23 @@
     "packages/*"
   ],
   "scripts": {
+    "prepare": "node scripts/install-hooks.mjs",
+    "verify": "npm run prisma:generate && npm run lint && npm run typecheck && npm run prisma:validate && npm run build && npm test && npm run security:workflows && npm run security:secrets && npm run security:deps",
+    "lint": "npm run lint:root && npm run lint --workspaces --if-present",
+    "lint:root": "eslint scripts packages",
+    "typecheck": "npm run type-check --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "build": "npm run build -w apps/backend",
+    "prisma:validate": "npm run prisma:validate -w apps/backend",
+    "prisma:generate": "npm run prisma:generate -w apps/backend",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "security:workflows": "node scripts/github-actions-security-check.mjs",
+    "security:secrets": "node scripts/secret-scan.mjs",
+    "security:deps": "node scripts/dependency-audit.mjs",
+    "security:gitleaks": "node scripts/gitleaks-local.mjs",
     "mobile": "npm --prefix apps/mobile",
     "backend": "npm --prefix apps/backend",
     "backend:test": "npm --prefix apps/backend test",
@@ -16,5 +33,16 @@
     "start": "npm --prefix apps/mobile start",
     "ios": "npm --prefix apps/mobile run ios",
     "android": "npm --prefix apps/mobile run android"
+  },
+  "engines": {
+    "node": ">=22.12"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.5",
+    "eslint": "^9.39.5",
+    "globals": "^16.5.0",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.69.0",
+    "vitest": "^4.1.5"
   }
 }

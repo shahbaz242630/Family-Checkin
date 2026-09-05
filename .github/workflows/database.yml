@@ -1,0 +1,76 @@
+# Database invariants for every pull request and push to master.
+#
+# Builds the production database shape from scratch on a throwaway
+# postgres:16-alpine service (Prisma migrations, then the loose RLS SQL, then
+# supabase/migrations - see apps/backend/scripts/db/apply-all.mjs), asserts the
+# security invariants (RLS on every public table, policy coverage, no PUBLIC
+# write grants, partitioned log objects, audit-log immutability - see
+# check-invariants.mjs) and fails when schema.prisma drifts from
+# prisma/migrations (drift-check.mjs, replayed into a second shadow database).
+#
+# Same baseline as ci.yml: read-only GITHUB_TOKEN, every action pinned to a
+# full commit SHA, no secrets (the database credentials below are for the
+# ephemeral service container only).
+name: Database
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: database-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+  SHADOW_DATABASE_URL: postgresql://ci:ci@localhost:5432/ci_shadow
+
+jobs:
+  database:
+    name: Database invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci -d ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create shadow database for the drift check
+        run: npm run db:ensure-database -w apps/backend
+
+      - name: Apply migrations and manual SQL to a fresh database
+        run: npm run db:apply-all -w apps/backend
+
+      - name: Check database invariants
+        run: npm run db:check-invariants -w apps/backend
+
+      - name: Schema drift check (schema.prisma vs prisma/migrations)
+        run: npm run db:drift-check -w apps/backend

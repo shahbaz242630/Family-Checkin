@@ -1,14 +1,6 @@
 // Forgot Password screen - Email reset flow
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-} from 'react-native';
+import { View, Text, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
@@ -56,10 +48,7 @@ export default function ForgotPasswordScreen() {
   if (emailSent) {
     return (
       <SafeAreaView style={styles.container}>
-        <ScrollView
-          contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
-        >
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
           {/* Header */}
           <View style={styles.header}>
             <Pressable onPress={() => router.back()} style={styles.backButton}>
@@ -73,17 +62,15 @@ export default function ForgotPasswordScreen() {
               <Text style={styles.iconText}>✉️</Text>
             </View>
             <Text style={styles.successTitle}>Check your email</Text>
-            <Text style={styles.successSubtitle}>
-              We've sent a password reset link to
-            </Text>
+            <Text style={styles.successSubtitle}>We&apos;ve sent a password reset link to</Text>
             <Text style={styles.emailText}>{email}</Text>
             <Text style={styles.instructionText}>
-              Click the link in the email to reset your password. If you don't see it, check your spam folder.
+              Click the link in the email to reset your password. If you don&apos;t see it, check your spam folder.
             </Text>
 
             {/* Resend Button */}
             <View style={styles.resendContainer}>
-              <Text style={styles.resendText}>Didn't receive the email? </Text>
+              <Text style={styles.resendText}>Didn&apos;t receive the email? </Text>
               <Pressable onPress={handleResendEmail} disabled={loading}>
                 <Text style={[styles.resendLink, loading && styles.resendLinkDisabled]}>
                   {loading ? 'Sending...' : 'Resend'}
@@ -92,11 +79,7 @@ export default function ForgotPasswordScreen() {
             </View>
 
             {/* Back to Login */}
-            <Button
-              title="Back to login"
-              onPress={() => router.replace('/(auth)/login')}
-              variant="secondary"
-            />
+            <Button title="Back to login" onPress={() => router.replace('/(auth)/login')} variant="secondary" />
           </View>
         </ScrollView>
       </SafeAreaView>
@@ -105,10 +88,7 @@ export default function ForgotPasswordScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <KeyboardAvoidingView style={styles.keyboardView} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
@@ -121,7 +101,7 @@ export default function ForgotPasswordScreen() {
             </Pressable>
             <Text style={styles.title}>Reset your password</Text>
             <Text style={styles.subtitle}>
-              Enter your email address and we'll send you a link to reset your password.
+              Enter your email address and we&apos;ll send you a link to reset your password.
             </Text>
           </View>
 
@@ -149,12 +129,7 @@ export default function ForgotPasswordScreen() {
             )}
 
             {/* Submit Button */}
-            <Button
-              title="Send reset link"
-              onPress={handleResetPassword}
-              loading={loading}
-              disabled={!email}
-            />
+            <Button title="Send reset link" onPress={handleResetPassword} loading={loading} disabled={!email} />
           </View>
 
           {/* Back to Login */}

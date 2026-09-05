@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
-import { BillingInterval, BillingStore, SubscriptionStatus, SubscriptionTier } from '@prisma/client';
+import { BillingStore } from '@prisma/client';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
 import { UsersService } from '../users/users.service';
@@ -67,7 +67,14 @@ export class BillingController {
 
   private parseRevenueCatEvent(body: RevenueCatWebhookBody): RevenueCatWebhookEvent {
     const event = body.event;
-    if (!event?.type || !event.id || !event.app_user_id || !event.product_id || !event.transaction_id || !event.purchased_at_ms) {
+    if (
+      !event?.type ||
+      !event.id ||
+      !event.app_user_id ||
+      !event.product_id ||
+      !event.transaction_id ||
+      !event.purchased_at_ms
+    ) {
       throw new UnauthorizedException('RevenueCat webhook payload is invalid');
     }
 

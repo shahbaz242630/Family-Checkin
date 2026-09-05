@@ -86,7 +86,7 @@ Before and after auth-sensitive work, inspect diffs carefully.
 
 Supabase project ref:
 
-- `nrohtflgytywovwabvdo`
+- `<project-ref, see apps/backend/.env>`
 
 Use this project ref when running Supabase CLI commands that require `--project-ref` or when linking the local workspace to the hosted project.
 
@@ -161,7 +161,7 @@ Check-in RLS update from 2026-04-27:
 
 - Added `apps/backend/prisma/20260427_check_ins_read_rls.sql` as a standalone hosted-project patch.
 - Updated `apps/backend/prisma/supabase_setup.sql` so fresh rebuilds include the same policies.
-- Applied the patch to Supabase project `nrohtflgytywovwabvdo` using the backend `DATABASE_URL`.
+- Applied the patch to Supabase project `<project-ref, see apps/backend/.env>` using the backend `DATABASE_URL`.
 - Verified remote `pg_policies` contains:
   - `check_ins_read_own` (`SELECT`)
   - `check_ins_read_co_monitor` (`SELECT`)
@@ -563,7 +563,7 @@ Verified results:
 Supabase partitioned operational logs migration applied 2026-05-10:
 
 - Created explicit SQL migration `supabase/migrations/20260510181345_partitioned_operational_logs.sql`.
-- Applied to Supabase project `nrohtflgytywovwabvdo` through the backend `DATABASE_URL` using Node `pg`.
+- Applied to Supabase project `<project-ref, see apps/backend/.env>` through the backend `DATABASE_URL` using Node `pg`.
 - Supabase MCP was connected but returned `ReauthenticationRequired: 401`; Supabase CLI could reach the DB but `supabase db push` was blocked by remote migration-history drift, so the SQL was applied directly.
 - Applied prerequisites first because live Supabase did not yet have `check_in_attempts`:
   - `apps/backend/prisma/migrations/202605010001_check_in_attempts/migration.sql`
@@ -702,8 +702,9 @@ Generated build output:
 
 Project git workflow:
 
-- This is a solo project; commit directly to `master` unless the user explicitly asks for a separate branch.
-- After completing a task and updating this handoff, commit the intended changes and push `master` to GitHub.
+- Solo project, but `master` is protected by the `protect-master` ruleset (since 2026-09-05): direct pushes are blocked, a pull request is required, and the CI checks (Verify, Security scans, Dependency review, Analyse, Database invariants) must pass. Zero approvals are required.
+- Work on a short-lived branch. After completing a task and updating this handoff: `npm run verify`, commit, push the branch, `gh pr create --fill`, wait for the checks, then `gh pr merge --squash --delete-branch`.
+- Git hooks are installed by `npm install` (`scripts/install-hooks.mjs`): pre-commit scans staged files for secrets and formats them with Prettier; pre-push runs gitleaks (Docker), lint, and typecheck.
 - Still inspect `git status`, avoid committing ignored/local secret files, and keep generated `apps/backend/dist` out of source control.
 
 Pre-existing user/local changes before restructure:
@@ -714,6 +715,18 @@ Pre-existing user/local changes before restructure:
 The folder move appears in Git as old `frontend`, `backend`, and `shared` files deleted, with new `apps/` and `packages/` files untracked until staged.
 
 Do not revert unrelated user changes.
+
+## CI, Security And Test Gates (Added 2026-09-05)
+
+Full description: `docs/SECURITY.md`. Summary:
+
+- `.github/workflows/ci.yml`: **Verify** (npm ci, prisma generate, lint, typecheck, prisma validate, build, all Vitest projects with coverage thresholds) and **Security scans** (gitleaks, workflow hygiene, secret pattern scan, production dependency audit with `security/dependency-audit-allowlist.json`, zizmor) plus **Dependency review** on PRs.
+- `.github/workflows/codeql.yml` (**Analyse**, weekly too), `.github/workflows/database.yml` (**Database invariants**: migrations + RLS SQL on a throwaway Postgres, RLS/policy/grant assertions, schema drift), `.github/workflows/security-weekly.yml` (full-history gitleaks, Trivy, SBOM).
+- All actions SHA-pinned; `scripts/github-actions-security-check.mjs` fails CI otherwise. Dependabot keeps pins and npm deps current (weekly, grouped; Expo/React Native majors excluded).
+- Root scripts: `npm run verify` (everything CI runs), `npm run lint`, `npm run typecheck`, `npm test`, `npm run test:coverage`, `npm run security:workflows`, `npm run security:secrets`, `npm run security:deps`, `npm run security:gitleaks`, `npm run format`.
+- Tests: one root `vitest.config.ts` with projects `backend`, `mobile`, `shared-types`, `scripts`; `npm test` runs all of them. Coverage thresholds are a ratchet from the 2026-09-05 baseline.
+- Backend HTTP hardening: helmet, global rate limit (`RATE_LIMIT_*`, `TRUST_PROXY`), CORS allow-list (`CORS_ALLOWED_ORIGINS`); cron route and provider webhooks are exempt from throttling.
+- Still open (see `docs/SECURITY.md` section 7): rotate the test-account password and the Supabase token/DB password that were exposed earlier; enable Supabase leaked-password protection; re-enable the check-in scheduler workflow once hosted; Prettier `format:check` becomes a CI gate after a one-off formatting commit.
 
 ## Cleanup Already Done
 
@@ -1609,9 +1622,10 @@ Baseline verification before smoke:
 
 ```powershell
 git status --short --branch
-npm.cmd --prefix apps/backend test
-npm.cmd --prefix apps/backend run type-check
+npm run verify
 ```
+
+`npm run verify` runs the same gates as CI (prisma generate, lint, typecheck, prisma validate, build, all tests, workflow/secret/dependency scans). For a quicker loop use `npm test` or `npm.cmd --prefix apps/backend test -- <spec>`.
 
 Backend baseline passed: 26 test files, 98 tests.
 

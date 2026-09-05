@@ -1,4 +1,4 @@
-import { BillingInterval, BillingStore, SubscriptionStatus, SubscriptionTier } from '@prisma/client';
+import { BillingStore } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import type { AppConfigService } from '../../shared/config/app-config.service';
 import type { SupabaseAuthService } from '../auth/supabase-auth.service';
@@ -75,9 +75,9 @@ describe('BillingController', () => {
   it('rejects RevenueCat webhooks without the configured authorization token', async () => {
     const test = fixture();
 
-    await expect(test.controller.handleRevenueCatWebhook('Bearer wrong-token', undefined, { event: {} })).rejects.toThrow(
-      'RevenueCat webhook authorization is required',
-    );
+    await expect(
+      test.controller.handleRevenueCatWebhook('Bearer wrong-token', undefined, { event: {} }),
+    ).rejects.toThrow('RevenueCat webhook authorization is required');
   });
 
   it('maps RevenueCat webhook payloads into billing service events', async () => {

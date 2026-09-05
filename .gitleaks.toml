@@ -1,0 +1,56 @@
+# Gitleaks configuration. Extends the default ruleset (provider keys, private
+# keys, JWTs, connection strings) and adds two heuristic rules. Nothing here
+# weakens detection of a real secret; the allowlists name specific
+# placeholder values used by tests, docs, and .env.example files.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholder values that are documented as fake"
+paths = [
+  '''package-lock\.json$''',
+  '''\.env\.example$''',
+]
+regexTarget = "secret"
+regexes = [
+  # Fixtures used by the backend config and provider specs.
+  '''^service-role-key$''',
+  '''^anon-key$''',
+  '''^cron-secret$''',
+  # Deliberately all-zero 32-byte key used in docs to show KMS_MASTER_KEY_BASE64 shape.
+  '''^AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=$''',
+  # Expo push token fixtures (`ExpoPushToken[abc123]`) in notification specs.
+  '''^ExpoPushToken\[[A-Za-z0-9_-]+\]$''',
+  # Lower-case dashed words ending in -token/-secret/-key are spec fixtures
+  # (`receiver-remove-token`); real credentials carry digits and mixed case.
+  '''^[a-z]+(?:-[a-z]+)*-(?:token|secret|key)$''',
+  # UUIDs are entity identifiers in this codebase (receiver/check-in ids passed
+  # next to a bearer fixture in controller specs), never credentials.
+  '''^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$''',
+]
+
+[[rules]]
+id = "postgres-connection-string-with-password"
+description = "Postgres connection string carrying a non-placeholder password"
+# RE2 has no lookahead; placeholders are excluded by the rule allowlist below.
+regex = '''postgres(?:ql)?://[a-zA-Z0-9_.-]+:[^@\s:/\[\]]{8,}@'''
+tags = ["database", "credentials"]
+[rules.allowlist]
+paths = ['''.*\.spec\.ts$''', '''.*\.test\.ts$''']
+regexes = [
+  '''(?i)(postgres:postgres@|user:password@|ci:ci@|changeme|placeholder|example|your[_-]?password|\[password\])''',
+]
+
+[[rules]]
+id = "generic-secret-assignment"
+description = "Secret-looking assignment with a long literal value"
+regex = '''(?i)\b(secret|token|api[_-]?key|private[_-]?key|passwd|password)\b\s*[:=]\s*['"][^'"\s]{16,}['"]'''
+tags = ["generic"]
+[rules.allowlist]
+# "match" so the allowlist is tested against keyword AND value, not just the
+# captured keyword.
+regexTarget = "match"
+regexes = [
+  '''(?i)(example|placeholder|fixture|redacted|dummy|fake|test-|-test|your[_-]?|xxx|changeme|local[_-]dev[_-]only|ExpoPushToken\[)''',
+]
