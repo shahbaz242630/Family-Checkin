@@ -111,7 +111,11 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     });
   }
 
-  async markAttemptFailed(input: { attemptId: string; completedAt: Date; failureReason: string }): Promise<CheckInAttemptRecord> {
+  async markAttemptFailed(input: {
+    attemptId: string;
+    completedAt: Date;
+    failureReason: string;
+  }): Promise<CheckInAttemptRecord> {
     return this.updateAttempt(input.attemptId, {
       status: CheckInAttemptStatus.FAILED,
       completedAt: input.completedAt,
@@ -153,7 +157,10 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     });
   }
 
-  async markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }): Promise<CheckInAttemptRecord | null> {
+  async markLatestSentAttemptResponded(input: {
+    checkInId: string;
+    completedAt: Date;
+  }): Promise<CheckInAttemptRecord | null> {
     const attempt = [...this.attempts]
       .filter((candidate) => candidate.checkInId === input.checkInId && candidate.status === CheckInAttemptStatus.SENT)
       .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
@@ -167,7 +174,11 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     });
   }
 
-  async skipPendingAttemptsForCheckIn(input: { checkInId: string; completedAt: Date; failureReason: string }): Promise<number> {
+  async skipPendingAttemptsForCheckIn(input: {
+    checkInId: string;
+    completedAt: Date;
+    failureReason: string;
+  }): Promise<number> {
     const attempts = this.attempts.filter(
       (attempt) => attempt.checkInId === input.checkInId && attempt.status === CheckInAttemptStatus.PENDING,
     );
@@ -609,11 +620,13 @@ describe('CheckInsService', () => {
 
     await service.sendDueCheckIns();
 
-    expect(repository.attempts.map((attempt) => ({
-      attemptNumber: attempt.attemptNumber,
-      channel: attempt.channel,
-      scheduledAt: attempt.scheduledAt,
-    }))).toEqual([
+    expect(
+      repository.attempts.map((attempt) => ({
+        attemptNumber: attempt.attemptNumber,
+        channel: attempt.channel,
+        scheduledAt: attempt.scheduledAt,
+      })),
+    ).toEqual([
       {
         attemptNumber: 1,
         channel: Channel.VOICE,

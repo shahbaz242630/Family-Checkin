@@ -99,7 +99,11 @@ export class StepUpService {
     }
   }
 
-  private assertChallengeUsable(challenge: StepUpChallengeRecord | null, userId: string, now: Date): asserts challenge is StepUpChallengeRecord {
+  private assertChallengeUsable(
+    challenge: StepUpChallengeRecord | null,
+    userId: string,
+    now: Date,
+  ): asserts challenge is StepUpChallengeRecord {
     if (!challenge || challenge.userId !== userId || challenge.consumedAt || challenge.verifiedAt) {
       throw new ForbiddenException('Step-up challenge is invalid');
     }

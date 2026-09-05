@@ -19,7 +19,16 @@ import { RECEIVERS_REPOSITORY } from './receivers.tokens';
 import { ReceiversService } from './receivers.service';
 
 @Module({
-  imports: [AuditModule, AuthModule, UsersModule, ChannelsModule, CheckInsModule, EscalationsModule, BackupContactsModule, BillingModule],
+  imports: [
+    AuditModule,
+    AuthModule,
+    UsersModule,
+    ChannelsModule,
+    CheckInsModule,
+    EscalationsModule,
+    BackupContactsModule,
+    BillingModule,
+  ],
   controllers: [ReceiversController, ReceiverRepliesController],
   providers: [
     PrismaService,

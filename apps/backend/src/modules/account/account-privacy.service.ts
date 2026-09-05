@@ -145,7 +145,9 @@ export class AccountPrivacyService {
         displayName: this.cryptoService.decrypt(contact.nameEncrypted),
         phone: this.cryptoService.decrypt(contact.phoneEncrypted),
         relationshipToReceiver: contact.relationshipToReceiver,
-        locationInstructions: contact.locationInstructionsEncrypted ? this.cryptoService.decrypt(contact.locationInstructionsEncrypted) : undefined,
+        locationInstructions: contact.locationInstructionsEncrypted
+          ? this.cryptoService.decrypt(contact.locationInstructionsEncrypted)
+          : undefined,
         priorityOrder: contact.priorityOrder,
         createdAt: contact.createdAt.toISOString(),
       })),

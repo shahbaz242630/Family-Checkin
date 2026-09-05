@@ -24,7 +24,10 @@ interface VoiceCallerIdPrismaClient {
       };
       orderBy: Array<{ assignedCount?: 'asc' } | { lastAssignedAt?: 'asc' } | { createdAt?: 'asc' }>;
     }): Promise<{ id: string; phoneNumber: string } | null>;
-    update(args: { where: { id: string }; data: { assignedCount: { increment: number }; lastAssignedAt: Date } }): Promise<unknown>;
+    update(args: {
+      where: { id: string };
+      data: { assignedCount: { increment: number }; lastAssignedAt: Date };
+    }): Promise<unknown>;
   };
 }
 

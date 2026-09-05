@@ -89,7 +89,12 @@ class InMemoryNotificationsService {
     return this.result;
   }
 
-  async sendEscalationAlertToUser(input: { userId: string; title: string; body: string; data: Record<string, string> }) {
+  async sendEscalationAlertToUser(input: {
+    userId: string;
+    title: string;
+    body: string;
+    data: Record<string, string>;
+  }) {
     this.sent.push(input);
     return this.result;
   }
@@ -208,11 +213,13 @@ describe('EscalationsService', () => {
       },
     ]);
     expect(whatsapp.sentMessages.map((sent) => sent.to)).toEqual(['+971502222222', '+971501111111']);
-    expect(repository.createdEvents.map((event) => ({
-      attemptNumber: event.attemptNumber,
-      channel: event.channel,
-      result: event.result,
-    }))).toEqual([
+    expect(
+      repository.createdEvents.map((event) => ({
+        attemptNumber: event.attemptNumber,
+        channel: event.channel,
+        result: event.result,
+      })),
+    ).toEqual([
       { attemptNumber: 1, channel: Channel.SMS, result: EscalationResult.SUCCESS },
       { attemptNumber: 1, channel: Channel.WHATSAPP, result: EscalationResult.SUCCESS },
       { attemptNumber: 2, channel: Channel.SMS, result: EscalationResult.SUCCESS },
@@ -512,11 +519,13 @@ describe('EscalationsService', () => {
       succeeded: 2,
       failed: 0,
     });
-    expect(repository.createdEvents.map((event) => ({
-      attemptNumber: event.attemptNumber,
-      channel: event.channel,
-      result: event.result,
-    }))).toEqual([
+    expect(
+      repository.createdEvents.map((event) => ({
+        attemptNumber: event.attemptNumber,
+        channel: event.channel,
+        result: event.result,
+      })),
+    ).toEqual([
       { attemptNumber: 1, channel: Channel.SMS, result: EscalationResult.ERROR },
       { attemptNumber: 1, channel: Channel.WHATSAPP, result: EscalationResult.SUCCESS },
       { attemptNumber: 2, channel: Channel.SMS, result: EscalationResult.SUCCESS },
@@ -706,12 +715,16 @@ describe('EscalationsService', () => {
       failed: 2,
     });
     expect(repository.terminalStatuses).toEqual([{ checkInId: 'check-in-1', status: CheckInStatus.FAILED }]);
-    expect(repository.createdEvents.map((event) => ({
-      attemptNumber: event.attemptNumber,
-      channel: event.channel,
-      result: event.result,
-      errorDetails: event.errorDetails,
-    })).sort((left, right) => left.attemptNumber - right.attemptNumber || left.channel.localeCompare(right.channel))).toEqual([
+    expect(
+      repository.createdEvents
+        .map((event) => ({
+          attemptNumber: event.attemptNumber,
+          channel: event.channel,
+          result: event.result,
+          errorDetails: event.errorDetails,
+        }))
+        .sort((left, right) => left.attemptNumber - right.attemptNumber || left.channel.localeCompare(right.channel)),
+    ).toEqual([
       {
         attemptNumber: 1,
         channel: Channel.SMS,
