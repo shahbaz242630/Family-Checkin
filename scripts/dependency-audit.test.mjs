@@ -110,3 +110,21 @@ describe('evaluate', () => {
     expect(evaluate(advisories, allowlist, { now }).unusedEntries.map((e) => e.ghsa)).toEqual(['GHSA-zzzz-0000-0000']);
   });
 });
+
+describe('dependency-review workflow allowlist', () => {
+  it('matches security/dependency-audit-allowlist.json exactly', async () => {
+    const fs = await import('node:fs');
+    const ci = fs.readFileSync('.github/workflows/ci.yml', 'utf8');
+    const match = ci.match(/allow-ghsas:s*(.+)/);
+    expect(match, 'ci.yml must configure allow-ghsas on the dependency-review step').not.toBeNull();
+    const fromWorkflow = match[1]
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean)
+      .sort();
+    const fromAllowlist = JSON.parse(fs.readFileSync('security/dependency-audit-allowlist.json', 'utf8'))
+      .entries.map((entry) => entry.ghsa)
+      .sort();
+    expect(fromWorkflow).toEqual(fromAllowlist);
+  });
+});
