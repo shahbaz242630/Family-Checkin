@@ -381,7 +381,17 @@ export class EscalationsService {
         },
       });
 
-      return result.sent > 0 ? result.sentAt : undefined;
+      if (result.sent > 0) {
+        return result.sentAt;
+      }
+
+      await this.sendSenderVoiceFallback({
+        ownerPhoneEncrypted: owner.phoneEncrypted,
+        receiverId: input.receiverId,
+        checkInId: input.checkInId,
+        reason: input.reason,
+      });
+      return undefined;
     } catch {
       await this.auditService.append({
         entityType: 'check_in',
@@ -393,7 +403,55 @@ export class EscalationsService {
           reason: input.reason,
         },
       });
+      await this.sendSenderVoiceFallback({
+        ownerPhoneEncrypted: owner.phoneEncrypted,
+        receiverId: input.receiverId,
+        checkInId: input.checkInId,
+        reason: input.reason,
+      });
       return undefined;
+    }
+  }
+
+  private async sendSenderVoiceFallback(input: {
+    ownerPhoneEncrypted: string;
+    receiverId: string;
+    checkInId: string;
+    reason: string;
+  }): Promise<void> {
+    try {
+      const result = await this.channelRouter.makeVoiceCall(Channel.VOICE, this.cryptoService.decrypt(input.ownerPhoneEncrypted), {
+        scriptKey: 'sender_escalation_siren_voice',
+        language: 'en',
+        variables: {
+          checkInId: input.checkInId,
+          receiverId: input.receiverId,
+          reason: input.reason,
+        },
+      });
+
+      await this.auditService.append({
+        entityType: 'check_in',
+        entityId: input.checkInId,
+        action: 'sender_voice_fallback.sent',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: input.receiverId,
+          reason: input.reason,
+          providerStatus: result.providerStatus,
+        },
+      });
+    } catch {
+      await this.auditService.append({
+        entityType: 'check_in',
+        entityId: input.checkInId,
+        action: 'sender_voice_fallback.failed',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: input.receiverId,
+          reason: input.reason,
+        },
+      });
     }
   }
 }

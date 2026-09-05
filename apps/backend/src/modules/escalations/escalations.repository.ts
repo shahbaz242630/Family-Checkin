@@ -26,7 +26,7 @@ export interface EscalationEventRecord extends CreateEscalationEventInput {
 }
 
 export interface EscalationsRepository {
-  findReceiverOwner(input: { receiverId: string }): Promise<{ userId: string } | null>;
+  findReceiverOwner(input: { receiverId: string }): Promise<{ userId: string; phoneEncrypted: string } | null>;
   findActiveBackupContactsForReceiver(input: { receiverId: string }): Promise<EscalationBackupContactRecord[]>;
   createEvent(input: CreateEscalationEventInput): Promise<EscalationEventRecord>;
   markCheckInEscalated(input: { checkInId: string }): Promise<void>;

@@ -13,8 +13,8 @@ interface EscalationsPrismaClient {
   receiver: {
     findFirst(args: {
       where: { id: string; deletedAt: null };
-      select: { userId: true };
-    }): Promise<{ userId: string } | null>;
+      select: { userId: true; user: { select: { phoneEncrypted: true } } };
+    }): Promise<{ userId: string; user: { phoneEncrypted: string } } | null>;
   };
   backupContact: {
     findMany(args: {
@@ -46,16 +46,23 @@ interface EscalationsPrismaClient {
 export class PrismaEscalationsRepository implements EscalationsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: EscalationsPrismaClient | PrismaService) {}
 
-  async findReceiverOwner(input: { receiverId: string }): Promise<{ userId: string } | null> {
-    return await this.prisma.receiver.findFirst({
+  async findReceiverOwner(input: { receiverId: string }): Promise<{ userId: string; phoneEncrypted: string } | null> {
+    const receiver = (await this.prisma.receiver.findFirst({
       where: {
         id: input.receiverId,
         deletedAt: null,
       },
       select: {
         userId: true,
+        user: {
+          select: {
+            phoneEncrypted: true,
+          },
+        },
       },
-    });
+    })) as { userId: string; user: { phoneEncrypted: string } } | null;
+
+    return receiver ? { userId: receiver.userId, phoneEncrypted: receiver.user.phoneEncrypted } : null;
   }
 
   async findActiveBackupContactsForReceiver(input: { receiverId: string }): Promise<EscalationBackupContactRecord[]> {

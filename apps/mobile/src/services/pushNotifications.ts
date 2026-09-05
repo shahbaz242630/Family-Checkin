@@ -2,8 +2,6 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import { registerDeviceToken } from './backendApi';
 
-declare const require: (moduleName: string) => unknown;
-
 type ExpoNotificationsModule = {
   AndroidImportance?: { MAX?: unknown; HIGH?: unknown };
   AndroidNotificationVisibility?: { PUBLIC?: unknown };
@@ -26,7 +24,7 @@ type ExpoNotificationsModule = {
 };
 
 export const EMERGENCY_ALERT_CHANNEL_ID = 'emergency-alerts';
-const EMERGENCY_ALERT_SOUND = 'default';
+const EMERGENCY_ALERT_SOUND = 'escalation-siren.wav';
 const EMERGENCY_ALERT_VIBRATION_PATTERN = [0, 500, 250, 500, 250, 500];
 
 let registrationInFlight: Promise<void> | null = null;
@@ -48,7 +46,11 @@ async function registerSenderPushNotificationsOnce(): Promise<void> {
     return;
   }
 
-  const notifications = loadNotificationsModule();
+  if (Platform.OS === 'android' && Constants.appOwnership === 'expo') {
+    return;
+  }
+
+  const notifications = await loadNotificationsModule();
   if (!notifications) {
     return;
   }
@@ -95,20 +97,9 @@ async function ensurePushPermission(notifications: ExpoNotificationsModule): Pro
   return requested.status === 'granted';
 }
 
-function loadNotificationsModule(): ExpoNotificationsModule | null {
+async function loadNotificationsModule(): Promise<ExpoNotificationsModule | null> {
   try {
-    const runtimeRequire =
-      typeof (globalThis as { require?: unknown }).require === 'function'
-        ? ((globalThis as { require: (moduleName: string) => unknown }).require)
-        : typeof require === 'function'
-          ? require
-          : null;
-
-    if (!runtimeRequire) {
-      return null;
-    }
-
-    return runtimeRequire('expo-notifications') as ExpoNotificationsModule;
+    return (await import('expo-notifications')) as ExpoNotificationsModule;
   } catch {
     return null;
   }

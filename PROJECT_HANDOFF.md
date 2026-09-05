@@ -3346,6 +3346,114 @@ Slice 2 completed - drawer context render stability:
   - `npm.cmd --prefix apps/mobile run type-check`
   - Passed.
 
+### 34. Production readiness gap closure - in progress 2026-05-18
+
+Purpose:
+
+- Close the P1/P2 readiness gaps found in the handoff-vs-BRD review before moving to new product scope.
+- Keep each fix as a small TDD slice with red verification, green verification, and handoff update.
+
+Slice 1 completed - cascade retry scheduling respects scheduled retry time:
+
+- Gap: `CheckInsService.processCascadeAttempts` could send the next pending attempt immediately after a timeout or provider-send failure because `sendNextPendingAttempt` selected pending attempts using a far-future timestamp. This violated the BRD retry-staggering requirement for queued/scheduled retries.
+- Fix: renamed the path to `sendNextDuePendingAttempt` and made it select only attempts due at the current processing time. If a future pending attempt exists, the check-in remains open instead of being marked `NEEDS_ATTENTION`.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/check-ins/check-ins.service.spec.ts`
+  - Failed before fix because a future retry scheduled at `2026-04-27T06:15:00.000Z` was sent at `2026-04-27T06:00:00.000Z`.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/check-ins/check-ins.service.spec.ts`
+  - Passed: 1 file, 11 tests.
+
+Slice 2 completed - WhatsApp outbound requires Twilio Content Templates:
+
+- Gap: the configured Twilio WhatsApp provider sent raw `Body` text through the Twilio Messages API, while the BRD requires approved Utility-category WhatsApp templates with quick-reply buttons.
+- Fix:
+  - `WhatsappProvider` now requires a `contentSidByTemplateKey` mapping and sends `ContentSid` plus `ContentVariables` instead of raw `Body`.
+  - Missing Content SID mappings fail clearly before any Twilio request.
+  - Added backend env placeholder `TWILIO_WHATSAPP_CONTENT_SIDS` for language-specific template mappings such as `consent_request:en` and `checkin_daily:en`.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/channels/configured-channel-providers.spec.ts`
+  - Failed before fix because the request body contained `Body` instead of `ContentSid` / `ContentVariables`, and a missing mapping fell through to a Twilio request.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/channels/configured-channel-providers.spec.ts src/shared/config/app-config.service.spec.ts src/modules/channels/channel-providers.factory.spec.ts`
+  - Passed: 3 files, 15 tests.
+
+Slice 3 completed - voice caller-ID selection requires approved compliance:
+
+- Gap: the voice caller-ID pool modeled compliance state, but `PrismaVoiceCallerIdRepository` selected sticky and new caller IDs using only `ACTIVE` status. An operationally active but not compliance-approved caller ID could be used for outbound Twilio calls.
+- Fix: sticky caller-ID reuse and new caller-ID pool selection now require `complianceStatus: 'APPROVED'` in addition to `VoiceCallerIdStatus.ACTIVE`.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/check-ins/prisma-voice-caller-id.repository.spec.ts`
+  - Failed before fix because sticky reuse and pool selection queries did not include `complianceStatus: 'APPROVED'`.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/check-ins/prisma-voice-caller-id.repository.spec.ts src/modules/check-ins/check-ins.service.spec.ts`
+  - Passed: 2 files, 15 tests.
+
+Slice 4 completed - escalation siren sound and sender voice fallback:
+
+- Gap: escalation siren behavior was only a baseline. The backend and Android channel used the default notification sound, and the sender fallback voice path was not coded when push delivery reached zero devices.
+- Fixes:
+  - Backend escalation push payload now uses bundled sound `escalation-siren.wav`.
+  - Mobile Android emergency channel now references `escalation-siren.wav`.
+  - Added `apps/mobile/assets/sounds/escalation-siren.wav` and configured `expo-notifications` to bundle it.
+  - `EscalationsService.notifySender` now places a Twilio/voice-provider fallback call to the sender when escalation push is not delivered or push sending fails.
+  - `PrismaEscalationsRepository.findReceiverOwner` now returns the owner's encrypted phone so the fallback path can decrypt only at send time.
+- Remaining explicit platform setup:
+  - iOS Critical Alerts entitlement/authorization and Android DND-bypass onboarding/settings still require native/platform entitlement work and should not be claimed as granted behavior.
+- Red verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/notifications/notifications.service.spec.ts src/modules/escalations/escalations.service.spec.ts`
+  - Failed before fix because backend push still used `default` sound and no fallback voice call was made.
+  - `npx.cmd vitest run apps/mobile/src/services/pushNotifications.spec.ts`
+  - Failed before fix because the Android emergency channel still used `default` sound.
+- Green verification:
+  - `npm.cmd --prefix apps/backend test -- src/modules/notifications/notifications.service.spec.ts src/modules/escalations/escalations.service.spec.ts src/modules/escalations/prisma-escalations.repository.spec.ts`
+  - Passed: 3 files, 17 tests.
+  - `npx.cmd vitest run apps/mobile/src/services/pushNotifications.spec.ts`
+  - Passed: 1 file, 1 test.
+
+Full verification after slices 1-4:
+
+- `npm.cmd --prefix apps/backend test`
+  - Passed: 44 files, 217 tests.
+- `npm.cmd --prefix apps/backend run type-check`
+  - Passed.
+- `npm.cmd --prefix apps/backend run build`
+  - Passed.
+- `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+- `npx.cmd vitest run apps/mobile/src`
+  - Passed: 10 files, 26 tests.
+- `$env:DATABASE_URL='postgresql://user:password@localhost:5432/nearby'; npm.cmd --prefix apps/backend run prisma:validate`
+  - Passed.
+- Nest `AppModule` fake-provider bootstrap with RevenueCat webhook auth configured:
+  - Passed: `app-context-ok`.
+
+Android Studio / Expo Go QA update - 2026-05-18:
+
+- Environment:
+  - Android Studio launched from `C:\Program Files\Android\Android Studio\bin\studio64.exe`.
+  - Emulator `Pixel_7` booted as `emulator-5554`.
+  - Backend dev server running with local `.env`.
+  - Mobile app running through Expo Go / Metro at `exp://192.168.1.211:8081`.
+- Verified in emulator:
+  - Login form loaded and accepted user sign-in.
+  - Authenticated dashboard loaded with empty receiver state.
+  - Drawer navigation opened and routed to Dashboard, Add receiver, Admin Operations, and Abuse Reports.
+  - Admin Operations loaded backend health/status data for the signed-in super-admin account.
+  - Abuse Reports loaded backend review state and empty pending queue.
+  - Add Receiver form rendered receiver details, country/phone, relationship, channel, language, timezone, check-in window, note, and consent-send controls. Consent send was not submitted during QA to avoid sending real channel traffic.
+  - Billing opened and showed App Store / Google Play subscription architecture with monthly, annual, and restore controls disabled when local RevenueCat SDK keys are absent.
+- Issues found and closed during QA:
+  - Expo Go crashed after sign-in because the push notification module used a dynamic runtime require that Metro did not include in the bundle. Fixed by using an async `import('expo-notifications')` and skipping Android push registration under Expo Go, where SDK 53+ does not support remote push notifications. Real development/store builds still load the RevenueCat/push native path.
+  - Billing initially showed `Internal server error` because the connected Supabase test database had schema drift: the checked-in RevenueCat migration columns were missing from `subscriptions`. `prisma migrate deploy` could not run because the existing schema was not migration-baselined (`P3005`), so the checked-in RevenueCat billing DDL was applied idempotently to the test database. Billing then returned cleanly, leaving only the expected local `RevenueCat public API key is not configured for this platform` message.
+- Verification after QA fix:
+  - `npx.cmd vitest run apps/mobile/src/services/pushNotifications.spec.ts`
+  - Passed: 1 file, 1 test.
+  - `npm.cmd --prefix apps/mobile run type-check`
+  - Passed.
+  - `npx.cmd vitest run apps/mobile/src`
+  - Passed: 10 files, 26 tests.
+
 ## First Command In A New Session
 
 Read this file first:

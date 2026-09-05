@@ -36,6 +36,8 @@ export interface SendUserPushResult {
   sentAt?: Date;
 }
 
+const ESCALATION_SIREN_SOUND = 'escalation-siren.wav';
+
 @Injectable()
 export class NotificationsService {
   constructor(
@@ -105,7 +107,7 @@ export class NotificationsService {
         notificationType: 'escalation_siren',
         deepLink: input.data.deepLink ?? '/(main)',
       },
-      sound: 'default',
+      sound: ESCALATION_SIREN_SOUND,
       priority: 'high',
       channelId: 'emergency-alerts',
       interruptionLevel: 'timeSensitive',

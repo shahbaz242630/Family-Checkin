@@ -20,6 +20,7 @@ export function createChannelProviders(config: AppConfigService): ChannelProvide
       accountSid: config.twilioAccountSid,
       authToken: config.twilioAuthToken,
       fromNumber: config.twilioWhatsappFromNumber,
+      contentSidByTemplateKey: config.twilioWhatsappContentSids,
     }),
     new SmsProvider({
       accountSid: config.twilioAccountSid,

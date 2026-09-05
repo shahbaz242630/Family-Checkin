@@ -14,6 +14,7 @@ vi.mock('expo-constants', () => ({
   default: {
     expoConfig: { extra: { eas: { projectId: 'project-1' } } },
     easConfig: undefined,
+    appOwnership: 'standalone',
     sessionId: 'device-1',
   },
 }));
@@ -21,6 +22,9 @@ vi.mock('expo-constants', () => ({
 vi.mock('expo-notifications', () => ({
   AndroidImportance: {
     MAX: 'max',
+  },
+  AndroidNotificationVisibility: {
+    PUBLIC: 1,
   },
   getPermissionsAsync,
   requestPermissionsAsync,
@@ -39,19 +43,6 @@ describe('push notification registration', () => {
     getExpoPushTokenAsync.mockResolvedValue({ data: 'ExpoPushToken[abc123]' });
     setNotificationChannelAsync.mockResolvedValue(null);
     registerDeviceToken.mockResolvedValue({ id: 'device-token-1' });
-    vi.stubGlobal('require', (moduleName: string) => {
-      if (moduleName !== 'expo-notifications') {
-        throw new Error(`Unexpected module: ${moduleName}`);
-      }
-
-      return {
-        AndroidImportance: { MAX: 'max' },
-        getPermissionsAsync,
-        requestPermissionsAsync,
-        getExpoPushTokenAsync,
-        setNotificationChannelAsync,
-      };
-    });
   });
 
   afterEach(() => {
@@ -68,7 +59,7 @@ describe('push notification registration', () => {
     expect(setNotificationChannelAsync).toHaveBeenCalledWith('emergency-alerts', {
       name: 'Emergency alerts',
       importance: 'max',
-      sound: 'default',
+      sound: 'escalation-siren.wav',
       vibrationPattern: [0, 500, 250, 500, 250, 500],
       bypassDnd: false,
       enableVibrate: true,

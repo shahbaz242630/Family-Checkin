@@ -209,7 +209,7 @@ describe('NotificationsService', () => {
             notificationType: 'escalation_siren',
             deepLink: '/(main)',
           },
-          sound: 'default',
+          sound: 'escalation-siren.wav',
           priority: 'high',
           channelId: 'emergency-alerts',
           interruptionLevel: 'timeSensitive',
