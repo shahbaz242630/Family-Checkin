@@ -9,6 +9,7 @@ import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
+import { ABUSE_REVIEW_PAUSE_REASON } from './abuse-review-pause';
 import type { ReceiversRepository } from './receivers.repository';
 import { RECEIVERS_REPOSITORY } from './receivers.tokens';
 
@@ -215,8 +216,10 @@ export class ReceiverReplyService {
 
     await this.receiversRepository.pauseForAbuseReview({
       receiverId: input.receiverId,
-      pausedReason: 'abuse_report_pending_review',
+      pausedReason: ABUSE_REVIEW_PAUSE_REASON,
     });
+    // CB-008: cancel in-flight attempts here (CheckInsService.cancelOpenCheckInsForReceiver) so a receiver paused
+    // for review receives nothing further from a cascade that is already running today.
 
     await this.auditService.append({
       entityType: 'receiver',

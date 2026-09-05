@@ -83,6 +83,12 @@ export class AdminAbuseService {
       return null;
     }
 
+    // ACTION_TAKEN keeps the receiver paused; only a safe verdict lifts the abuse-review pause (CB-007).
+    const receiverResumed =
+      reviewStatus === AbuseReportStatus.REVIEWED_SAFE
+        ? (await this.repository.clearAbuseReviewPause({ receiverId: report.receiverId })).resumed
+        : false;
+
     await this.auditService.append({
       entityType: 'abuse_report',
       entityId: report.id,
@@ -92,6 +98,7 @@ export class AdminAbuseService {
       metadata: {
         receiverId: report.receiverId,
         reviewStatus: report.reviewStatus,
+        receiverResumed,
       },
     });
 

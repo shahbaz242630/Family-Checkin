@@ -19,4 +19,9 @@ export interface AdminAbuseReportsRepository {
     reviewStatus: Extract<AbuseReportStatus, 'REVIEWED_SAFE' | 'REVIEWED_ACTION_TAKEN'>;
     reviewedAt: Date;
   }): Promise<AdminAbuseReportRecord | null>;
+  /**
+   * Lifts the abuse-review pause on a receiver once no PENDING report remains for it. Only a pause carrying the
+   * abuse-review reason is cleared, so a sender's own pause survives. `resumed` is false when nothing changed.
+   */
+  clearAbuseReviewPause(input: { receiverId: string }): Promise<{ resumed: boolean }>;
 }

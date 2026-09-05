@@ -6,6 +6,7 @@ import { AdminAbuseService } from './admin-abuse.service';
 
 class FakeAdminAbuseReportsRepository implements AdminAbuseReportsRepository {
   public calls: unknown[] = [];
+  public clearPauseResult = { resumed: true };
 
   async findPending(input: { limit: number }) {
     this.calls.push({ method: 'findPending', input });
@@ -40,6 +41,11 @@ class FakeAdminAbuseReportsRepository implements AdminAbuseReportsRepository {
       reviewerAdminId: input.reviewerAdminId,
       reviewedAt: input.reviewedAt,
     });
+  }
+
+  async clearAbuseReviewPause(input: { receiverId: string }) {
+    this.calls.push({ method: 'clearAbuseReviewPause', input });
+    return this.clearPauseResult;
   }
 }
 
@@ -131,6 +137,10 @@ describe('AdminAbuseService', () => {
           reviewedAt: new Date('2026-04-30T08:00:00.000Z'),
         },
       },
+      {
+        method: 'clearAbuseReviewPause',
+        input: { receiverId: 'receiver-1' },
+      },
     ]);
     expect(audit.calls).toEqual([
       {
@@ -142,6 +152,7 @@ describe('AdminAbuseService', () => {
         metadata: {
           receiverId: 'receiver-1',
           reviewStatus: AbuseReportStatus.REVIEWED_SAFE,
+          receiverResumed: true,
         },
       },
     ]);
@@ -173,10 +184,60 @@ describe('AdminAbuseService', () => {
         metadata: {
           receiverId: 'receiver-1',
           reviewStatus: AbuseReportStatus.REVIEWED_ACTION_TAKEN,
+          receiverResumed: false,
         },
       },
     ]);
     expect(response?.abuseReport.reviewStatus).toBe(AbuseReportStatus.REVIEWED_ACTION_TAKEN);
+  });
+
+  it('keeps the receiver paused when the review outcome is action taken', async () => {
+    const repository = new FakeAdminAbuseReportsRepository();
+    const service = new AdminAbuseService(
+      repository,
+      new FakeAuditService() as unknown as AuditService,
+      () => new Date('2026-04-30T08:00:00.000Z'),
+    );
+
+    await service.markActionTaken('abuse-report-1', { adminId: 'admin-1' });
+
+    expect(repository.calls).not.toContainEqual(expect.objectContaining({ method: 'clearAbuseReviewPause' }));
+  });
+
+  it('records that a safe review did not resume a receiver another pending report still pauses', async () => {
+    const repository = new FakeAdminAbuseReportsRepository();
+    repository.clearPauseResult = { resumed: false };
+    const audit = new FakeAuditService();
+    const service = new AdminAbuseService(
+      repository,
+      audit as unknown as AuditService,
+      () => new Date('2026-04-30T08:00:00.000Z'),
+    );
+
+    const response = await service.markSafe('abuse-report-1', { adminId: 'admin-1' });
+
+    expect(response?.abuseReport.reviewStatus).toBe(AbuseReportStatus.REVIEWED_SAFE);
+    expect(audit.calls).toEqual([
+      expect.objectContaining({
+        action: 'reviewed_safe',
+        metadata: {
+          receiverId: 'receiver-1',
+          reviewStatus: AbuseReportStatus.REVIEWED_SAFE,
+          receiverResumed: false,
+        },
+      }),
+    ]);
+  });
+
+  it('does not touch the pause when there is no pending report to review', async () => {
+    const repository = new FakeAdminAbuseReportsRepository();
+    const audit = new FakeAuditService();
+    const service = new AdminAbuseService(repository, audit as unknown as AuditService);
+
+    await expect(service.markSafe('missing-report', { adminId: 'admin-1' })).resolves.toBeNull();
+
+    expect(repository.calls).not.toContainEqual(expect.objectContaining({ method: 'clearAbuseReviewPause' }));
+    expect(audit.calls).toEqual([]);
   });
 });
 

@@ -34,33 +34,27 @@ const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 
 class InMemoryReceiversRepository implements ReceiversRepository {
   public records: ReceiverRecord[] = [];
-  public consentUpdate:
-    | {
-        receiverId: string;
-        consentStatus: ConsentStatus;
-        consentTranscript: string;
-        consentGrantedAt?: Date;
-        consentRevokedAt?: Date;
-      }
-    | null = null;
-  public abuseReport:
-    | {
-        receiverId: string;
-        reporterPhoneHash: string;
-        reportContent?: string;
-        reportedAt: Date;
-      }
-    | null = null;
+  public consentUpdate: {
+    receiverId: string;
+    consentStatus: ConsentStatus;
+    consentTranscript: string;
+    consentGrantedAt?: Date;
+    consentRevokedAt?: Date;
+  } | null = null;
+  public abuseReport: {
+    receiverId: string;
+    reporterPhoneHash: string;
+    reportContent?: string;
+    reportedAt: Date;
+  } | null = null;
   public pausedReceiver: { receiverId: string; pausedReason: string } | null = null;
-  public optOutCooldown:
-    | {
-        receiverId: string;
-        optOutAt: Date;
-        cooldownUntil: Date;
-        optOutChannel: Channel;
-        optOutKeyword?: string;
-      }
-    | null = null;
+  public optOutCooldown: {
+    receiverId: string;
+    optOutAt: Date;
+    cooldownUntil: Date;
+    optOutChannel: Channel;
+    optOutKeyword?: string;
+  } | null = null;
 
   async create(input: CreateReceiverRecordInput): Promise<ReceiverRecord> {
     const record = {
@@ -86,7 +80,9 @@ class InMemoryReceiversRepository implements ReceiversRepository {
   }
 
   async updateForUserById(input: UpdateReceiverRecordInput): Promise<ReceiverRecord | null> {
-    const record = this.records.find((receiver) => receiver.id === input.receiverId && receiver.userId === input.userId);
+    const record = this.records.find(
+      (receiver) => receiver.id === input.receiverId && receiver.userId === input.userId,
+    );
     return record
       ? {
           ...record,
@@ -131,8 +127,14 @@ class InMemoryReceiversRepository implements ReceiversRepository {
       : null;
   }
 
-  async deleteForUserById(input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverRecord | null> {
-    const record = this.records.find((receiver) => receiver.id === input.receiverId && receiver.userId === input.userId);
+  async deleteForUserById(input: {
+    userId: string;
+    receiverId: string;
+    deletedAt: Date;
+  }): Promise<ReceiverRecord | null> {
+    const record = this.records.find(
+      (receiver) => receiver.id === input.receiverId && receiver.userId === input.userId,
+    );
     return record
       ? {
           ...record,
@@ -251,15 +253,13 @@ class InMemoryBackupContactsRepository implements BackupContactsRepository {
 class InMemoryCheckInsRepository implements CheckInsRepository {
   public openCheckIn: CheckInRecord | null = null;
   public actionableCheckIn: CheckInRecord | null = null;
-  public responseUpdate:
-    | {
-        checkInId: string;
-        status: CheckInStatus;
-        respondedAt: Date;
-        responseDetectedAs: 'ok' | 'help';
-        responseTranscript: string;
-      }
-    | null = null;
+  public responseUpdate: {
+    checkInId: string;
+    status: CheckInStatus;
+    respondedAt: Date;
+    responseDetectedAs: 'ok' | 'help';
+    responseTranscript: string;
+  } | null = null;
   public backupResolution: ResolveCheckInByBackupContactInput | null = null;
   public respondedAttempt: { checkInId: string; completedAt: Date } | null = null;
   public skippedAttempts: { checkInId: string; completedAt: Date; failureReason: string } | null = null;
@@ -389,7 +389,11 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     };
   }
 
-  async skipPendingAttemptsForCheckIn(input: { checkInId: string; completedAt: Date; failureReason: string }): Promise<number> {
+  async skipPendingAttemptsForCheckIn(input: {
+    checkInId: string;
+    completedAt: Date;
+    failureReason: string;
+  }): Promise<number> {
     this.skippedAttempts = input;
     return 1;
   }
@@ -971,3 +975,41 @@ function backupContactFixture(crypto: CryptoService): BackupContactRecord {
     createdAt: new Date('2026-04-26T10:00:00.000Z'),
   };
 }
+
+describe('ReceiverReplyService abuse-review pause (CB-007)', () => {
+  it('pauses a reported receiver with the reason the admin safe review lifts', async () => {
+    // Imported here so this block stays append-only while the setup above is reworked in parallel.
+    const { ABUSE_REVIEW_PAUSE_REASON } = await import('./abuse-review-pause');
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    repository.records.push({
+      ...receiverFixture(crypto),
+      consentStatus: ConsentStatus.GRANTED,
+      consentGrantedAt: new Date('2026-04-26T10:00:00.000Z'),
+    });
+    const service = new ReceiverReplyService(
+      repository,
+      new InMemoryCheckInsRepository(),
+      crypto,
+      audit as unknown as AuditService,
+      undefined,
+      undefined,
+      () => new Date('2026-04-26T11:00:00.000Z'),
+    );
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.WHATSAPP,
+      body: ' report ',
+      providerMessageId: 'SM-report-1',
+    });
+
+    expect(result.action).toBe('abuse_reported');
+    expect(repository.pausedReceiver).toEqual({
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      pausedReason: ABUSE_REVIEW_PAUSE_REASON,
+    });
+    expect(repository.pausedReceiver?.pausedReason).toBe('abuse_report_pending_review');
+  });
+});
