@@ -4,8 +4,16 @@
 // with a notice when Docker is unavailable; CI remains the hard gate.
 //   node scripts/gitleaks-local.mjs
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 
 const IMAGE = 'zricethezav/gitleaks:v8.24.3';
+
+// In a linked worktree `.git` is a file pointing at the main repository's
+// gitdir, which the container cannot see; CI runs the full scan regardless.
+if (!fs.statSync('.git', { throwIfNoEntry: false })?.isDirectory()) {
+  console.log('gitleaks-local: linked worktree detected; skipping local secrets scan (CI still runs it).');
+  process.exit(0);
+}
 
 const docker = spawnSync('docker', ['info'], { encoding: 'utf8' });
 if (docker.error || docker.status !== 0) {
