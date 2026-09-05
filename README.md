@@ -201,6 +201,8 @@ Before and after auth-sensitive work, inspect diffs carefully.
 
 ## Current Next Work
 
+Work is driven by `docs/COMPLETION_BACKLOG.md` (consolidated audit of 2026-09-05; raw reports in `docs/audits/2026-09-05/`). Finish Phase 0 and Phase 1 there before any new feature.
+
 1. Configure RevenueCat, App Store Connect, and Google Play subscription products for monthly and annual access, then test purchases in development/TestFlight/Play builds.
 2. Add Twilio credentials after the account is approved, then run WhatsApp, SMS, and voice sandbox/live smoke tests.
 3. Configure production Expo/EAS push credentials before production device push testing.
