@@ -133,6 +133,18 @@ export class ProviderWebhooksController {
   ): Promise<ProviderWebhookResponse> {
     this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/messaging', body);
 
+    // Twilio can deliver the same MessageSid more than once (retries, fallback URL); the first delivery wins (CB-015).
+    const event = await this.providerWebhookEventsRepository.createEventIfAbsent({
+      provider: 'twilio',
+      eventType: 'messaging_inbound',
+      providerEventId: body.MessageSid,
+      providerMessageId: body.MessageSid,
+      payload: this.toInboundMessagingEventPayload(body),
+    });
+    if (!event.created) {
+      return { ok: true, processed: 0 };
+    }
+
     const reply = this.extractTwilioMessagingReply(body, ipAddress, userAgent);
     if (!reply) {
       return { ok: true, processed: 0 };
@@ -294,6 +306,23 @@ export class ProviderWebhooksController {
     }
 
     return reply;
+  }
+
+  // provider_webhook_events is an operational log: phone numbers and message text stay out of it. The reply
+  // service audits the outcome with the same PII-free shape.
+  private toInboundMessagingEventPayload(body: TwilioMessagingWebhookBody): Record<string, string | undefined> {
+    const replyBody = body.ButtonPayload ?? body.ButtonText ?? body.Body;
+    let channel: string | undefined;
+    if (body.From !== undefined) {
+      channel = body.From.startsWith('whatsapp:') ? 'whatsapp' : 'sms';
+    }
+
+    return {
+      MessageSid: body.MessageSid,
+      channel,
+      bodyLength: replyBody === undefined ? undefined : String(replyBody.length),
+      hasButtonPayload: String(body.ButtonPayload !== undefined),
+    };
   }
 
   private extractTwilioVoiceReply(

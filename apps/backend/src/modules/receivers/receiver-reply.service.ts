@@ -1,6 +1,7 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ActorType, CheckInStatus, ConsentStatus } from '@prisma/client';
 import type { Channel } from '@prisma/client';
+import type { AuditMetadata } from '../audit/audit.repository';
 import { AuditService } from '../audit/audit.service';
 import type { BackupContactsRepository } from '../backup-contacts/backup-contacts.repository';
 import { BACKUP_CONTACTS_REPOSITORY } from '../backup-contacts/backup-contacts.tokens';
@@ -24,6 +25,7 @@ export interface HandleInboundReceiverReplyInput {
 }
 
 export interface HandleInboundReceiverReplyResult {
+  /** Empty when the reply could not be attributed to a receiver or backup contact (unknown or invalid sender). */
   receiverId: string;
   action: string;
   consentStatus?: ConsentStatus;
@@ -31,6 +33,13 @@ export interface HandleInboundReceiverReplyResult {
   checkInStatus?: CheckInStatus;
   backupContactId?: string;
 }
+
+/**
+ * audit_logs.entity_id is a UUID column, so replies that cannot be attributed to any receiver or backup contact
+ * are grouped under entityType 'inbound_reply' with this nil-UUID entity id.
+ */
+const UNATTRIBUTED_INBOUND_REPLY_ENTITY_ID = '00000000-0000-0000-0000-000000000000';
+const SENDER_HASH_PREFIX_LENGTH = 12;
 
 @Injectable()
 export class ReceiverReplyService {
@@ -52,7 +61,12 @@ export class ReceiverReplyService {
 
   async handleInboundReply(input: HandleInboundReceiverReplyInput): Promise<HandleInboundReceiverReplyResult> {
     const receivedAt = this.now();
-    const phoneHash = this.cryptoService.hashForLookup(normalizePhone(input.fromPhone));
+    const normalizedPhone = this.tryNormalizePhone(input.fromPhone);
+    if (!normalizedPhone) {
+      return this.handleInvalidSender(input);
+    }
+
+    const phoneHash = this.cryptoService.hashForLookup(normalizedPhone);
     const receiver = await this.receiversRepository.findActiveByPhoneHash(phoneHash);
 
     if (!receiver) {
@@ -86,6 +100,13 @@ export class ReceiverReplyService {
         input,
         receivedAt,
       });
+      if (!checkInResponse) {
+        return {
+          receiverId: receiver.id,
+          action: 'no_open_check_in',
+          consentStatus: receiver.consentStatus,
+        };
+      }
 
       return {
         receiverId: receiver.id,
@@ -98,7 +119,25 @@ export class ReceiverReplyService {
 
     const transition = this.toConsentTransition(normalizedReply);
     if (!transition) {
-      throw new Error('Unsupported receiver reply');
+      // Free text such as "Thanks, I'm fine" must return 200 to the provider, not 500 (CB-015).
+      await this.auditUnactionedReply(input, {
+        entityType: 'receiver',
+        entityId: receiver.id,
+        action: 'receiver.reply_unrecognised',
+        metadata: {
+          channel: input.channel,
+          normalizedReply,
+          providerMessageId: input.providerMessageId,
+          bodyLength: input.body.length,
+          consentStatus: receiver.consentStatus,
+        },
+      });
+
+      return {
+        receiverId: receiver.id,
+        action: 'unrecognised_reply',
+        consentStatus: receiver.consentStatus,
+      };
     }
 
     const updatedReceiver = await this.receiversRepository.updateConsentResponse({
@@ -146,6 +185,42 @@ export class ReceiverReplyService {
       action: transition.action,
       consentStatus: updatedReceiver.consentStatus,
     };
+  }
+
+  private tryNormalizePhone(fromPhone: string): string | null {
+    try {
+      return normalizePhone(fromPhone);
+    } catch {
+      // Short codes and alphanumeric sender ids are not E.164 and can never map to a receiver.
+      return null;
+    }
+  }
+
+  private async handleInvalidSender(input: HandleInboundReceiverReplyInput): Promise<HandleInboundReceiverReplyResult> {
+    await this.auditUnactionedReply(input, {
+      entityType: 'inbound_reply',
+      entityId: UNATTRIBUTED_INBOUND_REPLY_ENTITY_ID,
+      action: 'inbound_reply.invalid_sender',
+      metadata: {
+        channel: input.channel,
+        providerMessageId: input.providerMessageId,
+        bodyLength: input.body.length,
+      },
+    });
+
+    return { receiverId: '', action: 'invalid_sender' };
+  }
+
+  private async auditUnactionedReply(
+    input: HandleInboundReceiverReplyInput,
+    entry: { entityType: string; entityId: string; action: string; metadata: AuditMetadata },
+  ): Promise<void> {
+    await this.auditService.append({
+      ...entry,
+      actorType: ActorType.SYSTEM,
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
+    });
   }
 
   private normalizeReceiverReply(body: string): 'YES' | 'NO' | 'STOP' | 'REPORT' | 'UNKNOWN' {
@@ -242,10 +317,22 @@ export class ReceiverReplyService {
     normalizedReply: 'YES' | 'NO';
     input: HandleInboundReceiverReplyInput;
     receivedAt: Date;
-  }): Promise<{ action: 'check_in_responded_ok' | 'check_in_responded_help'; checkIn: CheckInRecord }> {
+  }): Promise<{ action: 'check_in_responded_ok' | 'check_in_responded_help'; checkIn: CheckInRecord } | null> {
     const openCheckIn = await this.checkInsRepository.findLatestOpenForReceiver(input.receiverId);
     if (!openCheckIn) {
-      throw new Error('No open check-in found for receiver reply');
+      // A late or repeated YES/HELP after the check-in closed: nothing to update, but keep the trail (CB-015).
+      await this.auditUnactionedReply(input.input, {
+        entityType: 'receiver',
+        entityId: input.receiverId,
+        action: 'receiver.check_in_reply_ignored',
+        metadata: {
+          channel: input.input.channel,
+          normalizedReply: input.normalizedReply,
+          providerMessageId: input.input.providerMessageId,
+          reason: 'no_open_check_in',
+        },
+      });
+      return null;
     }
 
     const responseDetectedAs = input.normalizedReply === 'YES' ? 'ok' : 'help';
@@ -309,17 +396,63 @@ export class ReceiverReplyService {
   }): Promise<HandleInboundReceiverReplyResult> {
     const backupContact = await this.backupContactsRepository?.findActiveByPhoneHash(input.phoneHash);
     if (!backupContact) {
-      throw new Error('Receiver or backup contact not found for inbound reply');
+      await this.auditUnactionedReply(input.input, {
+        entityType: 'inbound_reply',
+        entityId: UNATTRIBUTED_INBOUND_REPLY_ENTITY_ID,
+        action: 'inbound_reply.unknown_sender',
+        metadata: {
+          channel: input.input.channel,
+          providerMessageId: input.input.providerMessageId,
+          senderHashPrefix: input.phoneHash.slice(0, SENDER_HASH_PREFIX_LENGTH),
+          bodyLength: input.input.body.length,
+        },
+      });
+
+      return { receiverId: '', action: 'unknown_sender' };
     }
 
     const normalizedReply = this.normalizeBackupContactReply(input.input.body);
     if (normalizedReply !== 'DONE') {
-      throw new Error('Unsupported backup contact reply');
+      await this.auditUnactionedReply(input.input, {
+        entityType: 'backup_contact',
+        entityId: backupContact.id,
+        action: 'backup_contact.reply_unrecognised',
+        metadata: {
+          receiverId: backupContact.receiverId,
+          channel: input.input.channel,
+          normalizedReply,
+          providerMessageId: input.input.providerMessageId,
+          bodyLength: input.input.body.length,
+        },
+      });
+
+      return {
+        receiverId: backupContact.receiverId,
+        backupContactId: backupContact.id,
+        action: 'unrecognised_reply',
+      };
     }
 
     const checkIn = await this.checkInsRepository.findLatestActionableForReceiver(backupContact.receiverId);
     if (!checkIn) {
-      throw new Error('No actionable check-in found for backup contact reply');
+      await this.auditUnactionedReply(input.input, {
+        entityType: 'backup_contact',
+        entityId: backupContact.id,
+        action: 'backup_contact.reply_ignored',
+        metadata: {
+          receiverId: backupContact.receiverId,
+          channel: input.input.channel,
+          normalizedReply,
+          providerMessageId: input.input.providerMessageId,
+          reason: 'no_actionable_check_in',
+        },
+      });
+
+      return {
+        receiverId: backupContact.receiverId,
+        backupContactId: backupContact.id,
+        action: 'no_actionable_check_in',
+      };
     }
 
     const resolvedCheckIn = await this.checkInsRepository.markResolvedByBackupContact({

@@ -893,7 +893,7 @@ describe('ReceiverReplyService', () => {
     expect(JSON.stringify(audit.events)).not.toContain('message body');
   });
 
-  it('rejects unsupported backup contact replies without resolving check-ins', async () => {
+  it('ignores unsupported backup contact replies without resolving check-ins', async () => {
     const crypto = new CryptoService(masterKey);
     const receivers = new InMemoryReceiversRepository();
     const backupContacts = new InMemoryBackupContactsRepository();
@@ -911,16 +911,36 @@ describe('ReceiverReplyService', () => {
       () => new Date('2026-04-27T06:30:00.000Z'),
     );
 
-    await expect(
-      service.handleInboundReply({
-        fromPhone: '+971509999999',
-        channel: Channel.SMS,
-        body: 'hello',
-      }),
-    ).rejects.toThrow('Unsupported backup contact reply');
+    const result = await service.handleInboundReply({
+      fromPhone: '+971509999999',
+      channel: Channel.SMS,
+      body: 'hello',
+    });
 
+    expect(result).toEqual({
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      backupContactId: 'backup-contact-1',
+      action: 'unrecognised_reply',
+    });
     expect(checkIns.backupResolution).toBeNull();
-    expect(audit.events).toEqual([]);
+    expect(audit.events).toEqual([
+      {
+        entityType: 'backup_contact',
+        entityId: 'backup-contact-1',
+        action: 'backup_contact.reply_unrecognised',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+          channel: Channel.SMS,
+          normalizedReply: 'UNKNOWN',
+          providerMessageId: undefined,
+          bodyLength: 5,
+        },
+        ipAddress: undefined,
+        userAgent: undefined,
+      },
+    ]);
+    expect(JSON.stringify(audit.events)).not.toContain('hello');
   });
 });
 
@@ -1011,5 +1031,279 @@ describe('ReceiverReplyService abuse-review pause (CB-007)', () => {
       pausedReason: ABUSE_REVIEW_PAUSE_REASON,
     });
     expect(repository.pausedReceiver?.pausedReason).toBe('abuse_report_pending_review');
+  });
+});
+
+describe('ReceiverReplyService never fails inbound replies (CB-015)', () => {
+  const receiverId = '1aef91f9-64c9-4548-baa5-d70b52386efb';
+  const unattributedEntityId = '00000000-0000-0000-0000-000000000000';
+
+  // The real AuditService rejects metadata keys that look like PII (anything containing "contact", "phone", ...),
+  // which the in-memory fake above skips. Every row written here must pass that check or the webhook 500s again.
+  async function realAuditService() {
+    const { AuditService: RealAuditService } = await import('../audit/audit.service');
+    const events: AppendAuditLogInput[] = [];
+    const service = new RealAuditService({
+      append: async (input: AppendAuditLogInput) => {
+        events.push(input);
+        return { id: 'audit-1', createdAt: new Date('2026-04-27T06:30:00.000Z'), ...input };
+      },
+    });
+    return { service, events };
+  }
+
+  it('audits free text from a known receiver as unrecognised instead of throwing', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    const audit = await realAuditService();
+    repository.records.push({ ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED });
+    const service = new ReceiverReplyService(
+      repository,
+      checkIns,
+      crypto,
+      audit.service,
+      undefined,
+      undefined,
+      () => new Date('2026-04-27T06:30:00.000Z'),
+    );
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.SMS,
+      body: "Thanks, I'm fine",
+      providerMessageId: 'SM-free-text',
+    });
+
+    expect(result).toEqual({
+      receiverId,
+      action: 'unrecognised_reply',
+      consentStatus: ConsentStatus.GRANTED,
+    });
+    expect(repository.consentUpdate).toBeNull();
+    expect(checkIns.responseUpdate).toBeNull();
+    expect(audit.events).toEqual([
+      {
+        entityType: 'receiver',
+        entityId: receiverId,
+        action: 'receiver.reply_unrecognised',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          channel: Channel.SMS,
+          normalizedReply: 'UNKNOWN',
+          providerMessageId: 'SM-free-text',
+          bodyLength: 16,
+          consentStatus: ConsentStatus.GRANTED,
+        },
+        ipAddress: undefined,
+        userAgent: undefined,
+      },
+    ]);
+    expect(JSON.stringify(audit.events)).not.toContain('fine');
+    expect(JSON.stringify(audit.events)).not.toContain('971501234567');
+  });
+
+  it('audits a YES with no open check-in as ignored instead of throwing', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    const audit = await realAuditService();
+    repository.records.push({ ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED });
+    const service = new ReceiverReplyService(
+      repository,
+      checkIns,
+      crypto,
+      audit.service,
+      undefined,
+      undefined,
+      () => new Date('2026-04-27T06:30:00.000Z'),
+    );
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.WHATSAPP,
+      body: 'YES',
+      providerMessageId: 'SM-late-yes',
+    });
+
+    expect(result).toEqual({
+      receiverId,
+      action: 'no_open_check_in',
+      consentStatus: ConsentStatus.GRANTED,
+    });
+    expect(repository.consentUpdate).toBeNull();
+    expect(checkIns.responseUpdate).toBeNull();
+    expect(audit.events).toEqual([
+      expect.objectContaining({
+        entityType: 'receiver',
+        entityId: receiverId,
+        action: 'receiver.check_in_reply_ignored',
+        metadata: {
+          channel: Channel.WHATSAPP,
+          normalizedReply: 'YES',
+          providerMessageId: 'SM-late-yes',
+          reason: 'no_open_check_in',
+        },
+      }),
+    ]);
+  });
+
+  it('audits an unknown sender with a hash prefix only', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const backupContacts = new InMemoryBackupContactsRepository();
+    const audit = await realAuditService();
+    const service = new ReceiverReplyService(
+      repository,
+      new InMemoryCheckInsRepository(),
+      crypto,
+      audit.service,
+      undefined,
+      backupContacts,
+      () => new Date('2026-04-27T06:30:00.000Z'),
+    );
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971508888888',
+      channel: Channel.SMS,
+      body: 'OK',
+      providerMessageId: 'SM-stranger',
+      ipAddress: '203.0.113.30',
+      userAgent: 'TwilioProxy/1.1',
+    });
+
+    expect(result).toEqual({ receiverId: '', action: 'unknown_sender' });
+    expect(audit.events).toEqual([
+      {
+        entityType: 'inbound_reply',
+        entityId: unattributedEntityId,
+        action: 'inbound_reply.unknown_sender',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          channel: Channel.SMS,
+          providerMessageId: 'SM-stranger',
+          senderHashPrefix: crypto.hashForLookup('+971508888888').slice(0, 12),
+          bodyLength: 2,
+        },
+        ipAddress: '203.0.113.30',
+        userAgent: 'TwilioProxy/1.1',
+      },
+    ]);
+    expect(JSON.stringify(audit.events)).not.toContain('971508888888');
+    expect(JSON.stringify(audit.events)).not.toContain(crypto.hashForLookup('+971508888888'));
+  });
+
+  it('audits a short-code sender as invalid instead of throwing from phone normalisation', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const audit = await realAuditService();
+    repository.records.push(receiverFixture(crypto));
+    const service = new ReceiverReplyService(
+      repository,
+      new InMemoryCheckInsRepository(),
+      crypto,
+      audit.service,
+      undefined,
+      undefined,
+      () => new Date('2026-04-27T06:30:00.000Z'),
+    );
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+12345',
+      channel: Channel.SMS,
+      body: 'Your verification code is 000000',
+      providerMessageId: 'SM-short-code',
+    });
+
+    expect(result).toEqual({ receiverId: '', action: 'invalid_sender' });
+    expect(repository.consentUpdate).toBeNull();
+    expect(audit.events).toEqual([
+      {
+        entityType: 'inbound_reply',
+        entityId: unattributedEntityId,
+        action: 'inbound_reply.invalid_sender',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          channel: Channel.SMS,
+          providerMessageId: 'SM-short-code',
+          bodyLength: 32,
+        },
+        ipAddress: undefined,
+        userAgent: undefined,
+      },
+    ]);
+    expect(JSON.stringify(audit.events)).not.toContain('12345');
+    expect(JSON.stringify(audit.events)).not.toContain('verification');
+  });
+
+  it('audits a backup contact DONE with nothing to resolve as ignored instead of throwing', async () => {
+    const crypto = new CryptoService(masterKey);
+    const backupContacts = new InMemoryBackupContactsRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    const audit = await realAuditService();
+    backupContacts.records.push(backupContactFixture(crypto));
+    const service = new ReceiverReplyService(
+      new InMemoryReceiversRepository(),
+      checkIns,
+      crypto,
+      audit.service,
+      undefined,
+      backupContacts,
+      () => new Date('2026-04-27T06:30:00.000Z'),
+    );
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971509999999',
+      channel: Channel.SMS,
+      body: 'DONE',
+      providerMessageId: 'SM-late-done',
+    });
+
+    expect(result).toEqual({
+      receiverId,
+      backupContactId: 'backup-contact-1',
+      action: 'no_actionable_check_in',
+    });
+    expect(checkIns.backupResolution).toBeNull();
+    expect(audit.events).toEqual([
+      expect.objectContaining({
+        entityType: 'backup_contact',
+        entityId: 'backup-contact-1',
+        action: 'backup_contact.reply_ignored',
+        metadata: {
+          receiverId,
+          channel: Channel.SMS,
+          normalizedReply: 'DONE',
+          providerMessageId: 'SM-late-done',
+          reason: 'no_actionable_check_in',
+        },
+      }),
+    ]);
+  });
+
+  it('passes the real audit PII check for unrecognised backup contact text', async () => {
+    const crypto = new CryptoService(masterKey);
+    const backupContacts = new InMemoryBackupContactsRepository();
+    const audit = await realAuditService();
+    backupContacts.records.push(backupContactFixture(crypto));
+    const service = new ReceiverReplyService(
+      new InMemoryReceiversRepository(),
+      new InMemoryCheckInsRepository(),
+      crypto,
+      audit.service,
+      undefined,
+      backupContacts,
+      () => new Date('2026-04-27T06:30:00.000Z'),
+    );
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971509999999',
+      channel: Channel.WHATSAPP,
+      body: 'On my way',
+    });
+
+    expect(result.action).toBe('unrecognised_reply');
+    expect(audit.events).toHaveLength(1);
+    expect(audit.events[0]?.action).toBe('backup_contact.reply_unrecognised');
   });
 });
