@@ -9,6 +9,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const config = app.get(AppConfigService);
   applyHttpHardening(app, config);
+  // SIGTERM/SIGINT run every OnModuleDestroy hook (PrismaService disconnects) before the process exits (CB-048).
+  app.enableShutdownHooks();
   await app.listen(config.port);
 }
 

@@ -32,6 +32,7 @@ const configuredModeRoutes = [
   'GET /admin/abuse-reports/:abuseReportId',
   'GET /auth/admin/me',
   'GET /billing/status',
+  'GET /health',
   'GET /operations/check-ins/:checkInId',
   'GET /operations/check-ins/summary',
   'GET /receivers',
