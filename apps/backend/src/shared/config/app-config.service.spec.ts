@@ -153,4 +153,12 @@ describe('AppConfigService', () => {
     );
     expect(() => new AppConfigService(validEnv({ SUPABASE_JWT_SECRET: '' }))).toThrow('Invalid backend environment');
   });
+
+  it('exposes a trimmed EXPO_ACCESS_TOKEN and treats a blank one as unset (CB-023)', () => {
+    expect(new AppConfigService(validEnv({ EXPO_ACCESS_TOKEN: '  expo-secret  ' })).expoAccessToken).toBe(
+      'expo-secret',
+    );
+    expect(new AppConfigService(validEnv({ EXPO_ACCESS_TOKEN: '   ' })).expoAccessToken).toBeUndefined();
+    expect(new AppConfigService(validEnv()).expoAccessToken).toBeUndefined();
+  });
 });
