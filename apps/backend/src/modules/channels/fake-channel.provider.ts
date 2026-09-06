@@ -7,6 +7,7 @@ import type {
   VoiceCallOptions,
   VoiceScript,
 } from './channel-provider';
+import type { FakeOutboundSink } from './fake-outbound-recorder';
 import { MessageCatalogService } from './message-catalog.service';
 
 export interface FakeChannelProviderOptions {
@@ -14,6 +15,12 @@ export interface FakeChannelProviderOptions {
   now?: () => Date;
   /** Defaults to the in-code catalog so fake sends fail on a missing variable exactly like a real send. */
   catalog?: MessageCatalogService;
+  /**
+   * Receives every fake send and call as it happens. The running fake-mode backend wires the shared
+   * `FakeOutboundRecorder` here so the terminal and `GET /receiver-replies/fake/outbound` show what a receiver
+   * would have read (CB-067); specs that only need `sentMessages` leave it unset.
+   */
+  recorder?: FakeOutboundSink;
 }
 
 export interface SentFakeMessage {
@@ -40,6 +47,7 @@ export class FakeChannelProvider implements ChannelProvider {
   public readonly sentMessages: SentFakeMessage[] = [];
   public readonly renderedMessages: RenderedFakeMessage[] = [];
   public readonly voiceCalls: FakeVoiceCall[] = [];
+  public readonly recorder?: FakeOutboundSink;
 
   private readonly availableNumbers?: Set<string>;
   private readonly now: () => Date;
@@ -52,27 +60,56 @@ export class FakeChannelProvider implements ChannelProvider {
     this.availableNumbers = options.availableNumbers ? new Set(options.availableNumbers) : undefined;
     this.now = options.now ?? (() => new Date());
     this.catalog = options.catalog ?? new MessageCatalogService();
+    this.recorder = options.recorder;
   }
 
   async sendMessage(to: string, message: TemplatedMessage): Promise<ChannelSendResult> {
     const rendered = await this.catalog.render({ ...message, channel: this.channel });
+    const acceptedAt = this.now();
+    const providerMessageId = `fake-${this.channel}-message-${this.sentMessages.length + 1}`;
+
     this.sentMessages.push({ to, message });
     this.renderedMessages.push({ to, templateKey: message.templateKey, ...rendered });
+    this.recorder?.record({
+      kind: 'message',
+      at: acceptedAt.toISOString(),
+      channel: this.channel,
+      to,
+      providerMessageId,
+      templateKey: message.templateKey,
+      language: rendered.language,
+      fallback: rendered.fallback,
+      body: rendered.body,
+    });
 
     return {
-      providerMessageId: `fake-${this.channel}-message-${this.sentMessages.length}`,
-      acceptedAt: this.now(),
+      providerMessageId,
+      acceptedAt,
       providerStatus: 'accepted',
       rendering: { language: rendered.language, fallback: rendered.fallback },
     };
   }
 
   async makeVoiceCall(to: string, script: VoiceScript, options?: VoiceCallOptions): Promise<ChannelCallResult> {
+    const acceptedAt = this.now();
+    const providerCallId = `fake-${this.channel}-call-${this.voiceCalls.length + 1}`;
+
     this.voiceCalls.push({ to, script, options });
+    this.recorder?.record({
+      kind: 'voice_call',
+      at: acceptedAt.toISOString(),
+      channel: this.channel,
+      to,
+      providerCallId,
+      scriptKey: script.scriptKey,
+      language: script.language,
+      variables: script.variables,
+      fromNumber: options?.fromNumber,
+    });
 
     return {
-      providerCallId: `fake-${this.channel}-call-${this.voiceCalls.length}`,
-      acceptedAt: this.now(),
+      providerCallId,
+      acceptedAt,
       providerStatus: 'accepted',
     };
   }

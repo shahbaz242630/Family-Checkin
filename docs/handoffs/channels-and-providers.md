@@ -1,7 +1,7 @@
 # Channels and providers — feature handoff
 
 Status: Built · Last verified: 2026-09-06 (acceptance run)
-BRD: FR-CHN-01, FR-CHN-02, FR-CHN-03, FR-CHN-03a, FR-CHN-03b, FR-CHN-03c-1, FR-LNG-02, BRD-6.6, BRD-6.11, BRD-7 · Open backlog: CB-010 (remaining slices), CB-016, CB-019, CB-020, CB-021, CB-022, CB-046, CB-047, CB-067
+BRD: FR-CHN-01, FR-CHN-02, FR-CHN-03, FR-CHN-03a, FR-CHN-03b, FR-CHN-03c-1, FR-LNG-02, BRD-6.6, BRD-6.11, BRD-7 · Open backlog: CB-010 (remaining slices), CB-016, CB-019, CB-020, CB-021, CB-022, CB-046, CB-047
 Per area: fake-mode send, English catalog rendering, fake-route gating, signed voice-status webhook — 2026-09-06 (acceptance run); Twilio request shapes, WhatsApp Content SIDs, TwiML Gather, `channel_templates` override — 2026-09-06 (specs). No live Twilio or Meta credentials exist; nothing has been sent to a real phone.
 
 ## What it does
@@ -11,18 +11,18 @@ Per area: fake-mode send, English catalog rendering, fake-route gating, signed v
 - `MessageCatalogService` turns a template key + language + variables into the text a person reads: an active `channel_templates` row wins, then in-code English copy, then English with `fallback: true`; a missing or blank required variable throws.
 - `ChannelRouterService` dispatches by channel and resolves a reachable plan for a phone number (`PRIMARY_AVAILABLE` / `FALLBACK_SELECTED` / `MANUAL_REQUIRED`); the tech profile decides the cascade shape upstream in `CheckInsService`.
 - Signed Twilio webhooks bring inbound replies (SMS/WhatsApp text and quick-reply buttons, voice DTMF/speech) and call outcomes (status, AMD) back into `ReceiverReplyService` and `CheckInsService`.
-- In fake mode only, `POST /receiver-replies/fake` drives the real reply pipeline with no provider involved.
+- In fake mode only, `POST /receiver-replies/fake` drives the real reply pipeline with no provider involved, and `GET /receiver-replies/fake/outbound` lists what the fake providers sent; every fake send also prints a `[fake-provider]` line in the terminal.
 
 ## Where it lives
 
 | Layer   | Paths                                                                                                                                                                                                                                                                                            |
 | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Backend | `apps/backend/src/modules/channels/` (`channel-provider.ts`, `channel-providers.factory.ts`, `channel-router.service.ts`, `fake-channel.provider.ts`, `sms.provider.ts`, `whatsapp.provider.ts`, `voice.provider.ts`, `twilio-http-client.ts`, `twilio-rendering.ts`, `message-catalog.service.ts`, `message-catalog.templates.ts`, `channel-template.repository.ts`, `prisma-channel-template.repository.ts`) |
+| Backend | `apps/backend/src/modules/channels/` (`channel-provider.ts`, `channel-providers.factory.ts`, `channel-router.service.ts`, `fake-channel.provider.ts`, `fake-outbound-recorder.ts`, `sms.provider.ts`, `whatsapp.provider.ts`, `voice.provider.ts`, `twilio-http-client.ts`, `twilio-rendering.ts`, `message-catalog.service.ts`, `message-catalog.templates.ts`, `channel-template.repository.ts`, `prisma-channel-template.repository.ts`) |
 | Backend | `apps/backend/src/modules/provider-webhooks/` (controller, module, `provider-webhook-events.repository.ts`, `prisma-provider-webhook-events.repository.ts`); `apps/backend/src/modules/receivers/receiver-replies.controller.ts` + `receiver-replies.module.ts`; `apps/backend/src/shared/config/app-config.service.ts`; `apps/backend/src/shared/auth/bearer-secret.ts` |
 | Callers | `check-ins.service.ts` (`checkInMessageVariables`, `buildCascadeAttempts`, `voiceCallOptions`), `receiver-consent.service.ts`, `receivers.service.ts` (`lifecycleMessageVariables`), `escalations.service.ts` (`backupAlertContext`), `account/step-up.service.ts`                                  |
 | Mobile  | none — this feature has no mobile surface                                                                                                                                                                                                                                                         |
 | Data    | `channel_templates` (`schema.prisma:463`, 0 rows: no seed migration yet), `provider_webhook_events` (`schema.prisma:337`), `voice_caller_id_pool` (`schema.prisma:213`, never written — CB-022)                                                                                                    |
-| Tests   | `channel-providers.factory.spec.ts`, `configured-channel-providers.spec.ts`, `fake-channel.provider.spec.ts`, `channel-router.service.spec.ts`, `message-catalog.service.spec.ts`, `prisma-channel-template.repository.spec.ts`, `provider-webhooks.controller.spec.ts`, `prisma-provider-webhook-events.repository.spec.ts`, `receiver-replies.controller.spec.ts`, `app.module.spec.ts`, `app-config.service.spec.ts` |
+| Tests   | `channel-providers.factory.spec.ts`, `configured-channel-providers.spec.ts`, `fake-channel.provider.spec.ts`, `fake-outbound-recorder.spec.ts`, `channel-router.service.spec.ts`, `message-catalog.service.spec.ts`, `prisma-channel-template.repository.spec.ts`, `provider-webhooks.controller.spec.ts`, `prisma-provider-webhook-events.repository.spec.ts`, `receiver-replies.controller.spec.ts`, `app.module.spec.ts`, `app-config.service.spec.ts` |
 
 Env var names per mode (names only; all are read in `app-config.service.ts`, validated with zod at boot):
 
@@ -42,6 +42,7 @@ Every `TWILIO_*` var is `optional()` in the schema, so a `configured` boot with 
 - `POST /provider-webhooks/whatsapp` and `POST /provider-webhooks/sms` — header `x-nearby-webhook-secret` = `CHANNEL_WEBHOOK_SECRET`, timing-safe. Meta-shaped and generic/Twilio-style bodies respectively; neither is wired to a live provider (CB-019, CB-021).
 - All webhook routes are `@SkipThrottle()` and answer `{ ok: true, processed: number }` only — never phones, bodies or payloads.
 - `POST /receiver-replies/fake` — registered **only** when `channelProviderModeFromEnv() === 'fake'` (`ReceiverRepliesModule.register`); 404 in configured mode. Header `Authorization: Bearer <OPERATIONS_CRON_SECRET>` via `assertBearerSecret`, else 401. Body `{ fromPhone, channel, body, providerMessageId? }`. Returns `{ ok: true, receiverId, action, consentStatus?, checkInId?, checkInStatus?, backupContactId? }`.
+- `GET /receiver-replies/fake/outbound?limit=N` — same registration rule and the same cron-secret bearer. Returns `{ ok: true, count, sends[] }`, newest first; `limit` is 1–200 (default 50, 400 otherwise). A record is `kind: "message"` (`to`, `providerMessageId`, `templateKey`, `language`, `fallback`, rendered `body`) or `kind: "voice_call"` (`to`, `providerCallId`, `scriptKey`, `language`, `variables`, `fromNumber?`). Backed by `FakeOutboundRecorder` (200-record ring buffer, one per process), which also prints each record through the Nest logger as `[fake-provider] SMS message to ***3401 (checkin_daily, en) fake-SMS-message-1: "…"`. Configured providers never write to it.
 
 Outbound Twilio shapes (asserted by `configured-channel-providers.spec.ts`): SMS `POST .../Accounts/{Sid}/Messages.json` with `To`/`From`/`Body` (body rendered by the catalog). WhatsApp the same URL with `whatsapp:`-prefixed `To`/`From`, `ContentSid` and `ContentVariables` (JSON of the variables) — the SID comes from `TWILIO_WHATSAPP_CONTENT_SIDS` keyed `templateKey:language` then `templateKey`, and a miss throws before any HTTP call. Voice `POST .../Accounts/{Sid}/Calls.json` with inline `Twiml`, `MachineDetection=Enable`, `AsyncAmd=true`, `AsyncAmdStatusCallback`, `AsyncAmdStatusCallbackMethod=POST`, `StatusCallback`, `StatusCallbackEvent='initiated ringing answered completed'`, `StatusCallbackMethod=POST`. The TwiML is two identical `<Gather input="dtmf" numDigits="1" timeout="10" method="POST" action=".../provider-webhooks/twilio/voice">` blocks each wrapping `<Play>${VOICE_AUDIO_BASE_URL}/{en|ar|es|hi|ur}/{scriptKey}.wav</Play>`, then `<Hangup/>`.
 
@@ -65,7 +66,7 @@ Voice uses `scriptKey`, not the catalog: `checkin_daily_voice`, `consent_request
 
 - Set `CHANNEL_PROVIDER_MODE=fake` and `OPERATIONS_CRON_SECRET` in `apps/backend/.env` per `docs/EMULATOR_RUNBOOK.md` §3, then start the backend. No `TWILIO_*` value is needed.
 - Drive an inbound reply: `POST /receiver-replies/fake` with `Authorization: Bearer <OPERATIONS_CRON_SECRET>` and `{"fromPhone":"+44...","channel":"SMS","body":"YES"}`. Without the bearer it is 401; with `CHANNEL_PROVIDER_MODE=configured` the route is 404.
-- Drive an outbound send: `POST /operations/check-ins/run` (cron-secret bearer). The `check_in.sent` audit row carries `renderedLanguage` and `renderFallback`; the rendered body itself is only in the fake provider's in-memory `renderedMessages` (CB-067 / acceptance D1), so reproduce it with `MessageCatalogService` or read `message-catalog.service.spec.ts`.
+- Drive an outbound send: `POST /operations/check-ins/run` (cron-secret bearer). The `check_in.sent` audit row carries `renderedLanguage` and `renderFallback`; the rendered body prints in the backend terminal as a `[fake-provider]` line and is returned by `GET /receiver-replies/fake/outbound` (cron-secret bearer).
 - Exercise a Twilio route locally by setting `TWILIO_AUTH_TOKEN` and `PUBLIC_API_BASE_URL` to test values and computing the HMAC-SHA1 signature the same way `computeTwilioSignature` does; an unsigned request is 401.
 - To see a `channel_templates` override, insert an active row for `(templateKey, language, channel)` — it wins over the in-code copy on the next send.
 
@@ -73,7 +74,8 @@ Voice uses `scriptKey`, not the catalog: `checkin_daily_voice`, `consent_request
 
 - Business logic talks to `ChannelRouterService` / `ChannelProvider` only. No module outside `modules/channels/` may import a Twilio symbol or construct a provider.
 - `createChannelProviders` is the single switch on `config.channelProviderMode`. Both branches must return one provider per `Channel`, or `ChannelRouterService.providerFor` throws at send time.
-- The fake reply controller must stay registered from `channelProviderModeFromEnv()` at module-build time (Nest cannot remove a controller after boot) and must keep the cron-secret bearer. Both halves are CB-001; `app.module.spec.ts` asserts the route is absent in configured mode.
+- The fake reply controller must stay registered from `channelProviderModeFromEnv()` at module-build time (Nest cannot remove a controller after boot) and must keep the cron-secret bearer on both routes. Both halves are CB-001; `app.module.spec.ts` asserts both routes are absent in configured mode and that the providers, the recorder and the controller share one `FakeOutboundRecorder` instance.
+- Only `FakeChannelProvider` may write to `FakeOutboundRecorder`. It holds phone numbers and message bodies in memory by design; a configured provider writing to it would copy real PII into a listable buffer.
 - Webhook secret and Twilio signature comparisons stay timing-safe and fail closed on a missing header, missing token or missing `PUBLIC_API_BASE_URL`. The signed URL must be exactly `${PUBLIC_API_BASE_URL}${path}`, so changing a route path or the base URL breaks every signature.
 - Twilio inbound is stored **after** successful processing, keyed `(provider, eventType, providerEventId)`, so a transient failure leaves nothing behind and Twilio's retry is processed rather than mistaken for a replay (CB-015).
 - `provider_webhook_events.payload` for inbound messaging stays PII-free — `MessageSid`, `channel`, `bodyLength`, `hasButtonPayload`. Never the phone or the body.
@@ -93,7 +95,6 @@ Voice uses `scriptKey`, not the catalog: `checkin_daily_voice`, `consent_request
 - CB-022 — `/twilio/voice` answers JSON where Twilio expects `text/xml` (Twilio 12100); digit `9`/"stop" unmapped; no hosted audio at `VOICE_AUDIO_BASE_URL`; only 5 language folders in `languagePath`; `voice_caller_id_pool` has no writer; dead `VOICE_PROVIDER_*` config.
 - CB-046 — no timeout on the Twilio fetch, so a stalled socket can hang an attempt.
 - CB-047 — no logging anywhere; Twilio error codes never reach `attempt.failureReason`.
-- CB-067 — the fake provider keeps rendered bodies in memory only, so a running fake-mode backend cannot show what a receiver would have received (acceptance D1).
 
 ## History
 

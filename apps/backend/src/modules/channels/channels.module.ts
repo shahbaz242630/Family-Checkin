@@ -4,6 +4,7 @@ import { PrismaService } from '../../shared/prisma/prisma.service';
 import { CHANNEL_PROVIDERS, CHANNEL_TEMPLATE_REPOSITORY } from './channels.tokens';
 import { createChannelProviders } from './channel-providers.factory';
 import { ChannelRouterService } from './channel-router.service';
+import { FakeOutboundRecorder } from './fake-outbound-recorder';
 import { MessageCatalogService } from './message-catalog.service';
 import { PrismaChannelTemplateRepository } from './prisma-channel-template.repository';
 
@@ -15,13 +16,16 @@ import { PrismaChannelTemplateRepository } from './prisma-channel-template.repos
       useClass: PrismaChannelTemplateRepository,
     },
     MessageCatalogService,
+    // One recorder per process. Fake providers write to it; in configured mode nothing does and it stays empty.
+    FakeOutboundRecorder,
     {
       provide: CHANNEL_PROVIDERS,
-      useFactory: (config: AppConfigService, catalog: MessageCatalogService) => createChannelProviders(config, catalog),
-      inject: [AppConfigService, MessageCatalogService],
+      useFactory: (config: AppConfigService, catalog: MessageCatalogService, recorder: FakeOutboundRecorder) =>
+        createChannelProviders(config, catalog, recorder),
+      inject: [AppConfigService, MessageCatalogService, FakeOutboundRecorder],
     },
     ChannelRouterService,
   ],
-  exports: [ChannelRouterService, MessageCatalogService],
+  exports: [ChannelRouterService, MessageCatalogService, FakeOutboundRecorder],
 })
 export class ChannelsModule {}

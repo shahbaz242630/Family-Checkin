@@ -6,6 +6,7 @@ export * from './channels.module';
 export * from './channels.tokens';
 export * from './configured-provider-errors';
 export * from './fake-channel.provider';
+export * from './fake-outbound-recorder';
 export * from './message-catalog.service';
 export * from './message-catalog.templates';
 export * from './prisma-channel-template.repository';

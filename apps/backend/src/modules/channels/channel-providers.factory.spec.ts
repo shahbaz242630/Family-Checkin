@@ -4,6 +4,7 @@ import { AppConfigService } from '../../shared/config/app-config.service';
 import { ChannelRouterService } from './channel-router.service';
 import { createChannelProviders } from './channel-providers.factory';
 import { FakeChannelProvider } from './fake-channel.provider';
+import { FakeOutboundRecorder } from './fake-outbound-recorder';
 import { SmsProvider } from './sms.provider';
 import { VoiceProvider } from './voice.provider';
 import { WhatsappProvider } from './whatsapp.provider';
@@ -39,6 +40,34 @@ describe('createChannelProviders', () => {
       providerStatus: 'accepted',
       rendering: { language: 'en', fallback: false },
     });
+  });
+
+  it('hands the shared fake outbound recorder to every fake provider so one route can list all sends', async () => {
+    const recorder = new FakeOutboundRecorder({ log: () => undefined });
+    const providers = createChannelProviders(
+      new AppConfigService({ ...baseEnv, CHANNEL_PROVIDER_MODE: 'fake' }),
+      undefined,
+      recorder,
+    );
+
+    expect(providers.every((provider) => (provider as FakeChannelProvider).recorder === recorder)).toBe(true);
+
+    const router = new ChannelRouterService(providers);
+    await router.sendMessage(Channel.SMS, '+971501234567', {
+      templateKey: 'consent_request',
+      language: 'en',
+      variables: { receiverName: 'Fatima', senderDisplayName: 'Ahmed' },
+    });
+    await router.makeVoiceCall(Channel.VOICE, '+971501234567', {
+      scriptKey: 'checkin_daily_voice',
+      language: 'en',
+      variables: { receiverDisplayName: 'Fatima' },
+    });
+
+    expect(recorder.recent().map((record) => [record.kind, record.channel])).toEqual([
+      ['voice_call', Channel.VOICE],
+      ['message', Channel.SMS],
+    ]);
   });
 
   it('returns configured adapter classes when provider mode is configured', () => {

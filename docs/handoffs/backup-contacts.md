@@ -48,7 +48,7 @@ Set up per `docs/EMULATOR_RUNBOOK.md`, then:
    Expect `check_in_responded_help` / `RESPONDED_HELP` on the response, the check-in row moving to `ESCALATED`, and two `escalation_events` (SMS and WHATSAPP) with `backupAlertedAt` set.
 4. Fake `DONE` from the **backup contact's** number with the same command shape. Expect `201 {"action":"check_in_resolved_by_backup","checkInStatus":"RESOLVED"}` and `resolvedAt` set.
 
-`$h` is the cron-secret header block from the runbook. The fake provider keeps rendered bodies in memory only (acceptance defect D1), so the alert copy is checked from the catalog or specs, not over HTTP. The 2026-09-06 acceptance run recorded the rendered English body as:
+`$h` is the cron-secret header block from the runbook. The alert copy prints in the backend terminal as a `[fake-provider]` line and is returned by `GET /receiver-replies/fake/outbound` (CB-067). The 2026-09-06 acceptance run recorded the rendered English body as:
 
 > Hi Ahmed, this is Nearby. Margaret asked for help during a check-in from their family member. We reached them by SMS. Please contact them now. Where to find them: Flat 2, key under the mat Reply DONE once you have reached them.
 
