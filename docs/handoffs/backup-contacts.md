@@ -78,4 +78,4 @@ Set up per `docs/EMULATOR_RUNBOOK.md`, then:
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §7 CRUD foundation (lines 1258–1334), §8 update/delete (1335–1400), §9 partial smoke (1401–1467), §28 DONE reply handling (2195–2233), §0a sprint 1 (793–804).
 - Acceptance: `docs/audits/2026-09-06/sprint1-acceptance.md` scenario S5 (HELP → backup alert → DONE, PASS).
-- PRs: #18 (CB-002 audit PII guard, which is what made HELP → backup work at all in production wiring; CB-003 real DI-graph boot spec), #19 (CB-010 English slice — backup bodies now render from `MessageCatalogService`), #20 (CB-006 guarded status writes, CB-008 cancellation).
+- PRs: #18 (CB-002 audit PII guard, which is what made HELP → backup work at all in production wiring; CB-003 real DI-graph boot spec), #19 (CB-010 English slice — backup bodies now render from `MessageCatalogService`), #20 (CB-006 guarded status writes, CB-008 cancellation), #27 (CB-018 the DONE wording is kept encrypted on `check_ins.resolutionNote`; CB-012 quiet `backup_contact_done` push to the sender).
