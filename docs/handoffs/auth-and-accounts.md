@@ -45,7 +45,7 @@ BRD: §5.1 FR-AUTH-01..04 · Open backlog: CB-025, CB-028, CB-029, CB-033, CB-04
 
 ## How to exercise it locally (fake mode)
 
-- Follow `docs/EMULATOR_RUNBOOK.md` §2–§4. Backend needs `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` (validated at boot, currently unused — CB-025), plus `SUPABASE_JWT_SECRET` only when the project signs with the legacy HS256 secret (see Token verification); mobile needs `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_BACKEND_URL`.
+- Follow `docs/EMULATOR_RUNBOOK.md` §2–§4. Backend needs `SUPABASE_URL` and `SUPABASE_ANON_KEY` (`SUPABASE_SERVICE_ROLE_KEY` is optional and never read — CB-025, #36; founder decision 2026-09-06: the backend never uses the service-role key or the Supabase admin API, security is RLS plus the backend's own database connection), plus `SUPABASE_JWT_SECRET` only when the project signs with the legacy HS256 secret (see Token verification); mobile needs `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_BACKEND_URL`.
 - With the backend on `SUPABASE_URL` and no secret, the first authenticated request logs nothing but fetches the JWKS once; every later request is verified in memory. A token from a different Supabase project (wrong `iss`) or an expired one is 401; stop the network and restart the backend to see the 503 on a cold JWKS cache.
 - Sign in through Expo Go with a real Supabase test user. The dashboard loading receivers is the proof that `getSession()` returned a token and the backend accepted it; a blank dashboard with 401s means session persistence broke.
 - Negative check: `POST http://localhost:3000/auth/sync-user` with no `Authorization` header must return 401.
@@ -94,8 +94,8 @@ Further invariants the code now relies on:
 
 ## Known gaps
 
-- CB-025 — `SUPABASE_SERVICE_ROLE_KEY` is required at boot but never used.
-- The controllers outside the CB-024 change (`receivers`, `backup-contacts`, `billing`, `notifications`, `account`) still call `usersService.upsertFromSupabaseIdentity`, which is now the read-or-insert path under its old name; rename the calls to `findOrCreateFromSupabaseIdentity` when those files are next touched and delete the alias.
+- CB-044 (auth-user deletion) must not reach for the Supabase admin API with the service-role key (founder decision 2026-09-06, see CB-025); it needs a route that works through the user's own session.
+- The controllers outside the CB-024 change (`receivers`, `backup-contacts`, `billing`, `notifications`, `account`) still call `usersService.upsertFromSupabaseIdentity` (rename tracked as CB-084), which is now the read-or-insert path under its old name; rename the calls to `findOrCreateFromSupabaseIdentity` when those files are next touched and delete the alias.
 - A revoked Supabase session stays valid until its access token expires (Supabase's default is one hour): local verification cannot see server-side sign-outs. A per-request revocation check would reintroduce the network hop; accept it or shorten the project's JWT expiry.
 - CB-028 — the custom OAuth `state` expectation rejects Google/Apple callbacks with "Invalid authentication state"; GoTrue does not echo a client `state` on the PKCE `?code=` redirect.
 - CB-029 — deep links are processed twice (root layout and the callback screen); no "check your email" state after signup; reset-password warm start fails.

@@ -30,7 +30,7 @@ Nearby is a cross-border family check-in service. The sender (the paying custome
 | Layer     | Technology                                                                                                                  |
 | --------- | --------------------------------------------------------------------------------------------------------------------------- |
 | Mobile    | Expo SDK 54, React Native 0.81, Expo Router 6, TypeScript strict                                                            |
-| Auth      | Supabase Auth, email and password (social login is broken, CB-028)                                                          |
+| Auth      | Supabase Auth, email and password (social login is broken, CB-028); tokens verified locally against the project JWKS (CB-024) |
 | Backend   | NestJS 11 on Node 22, Prisma 7.8 with `@prisma/adapter-pg`, zod-validated env, helmet and throttling                        |
 | Database  | Supabase Postgres, RLS on every table, application-layer AES-256-GCM for PII                                                |
 | Channels  | Vendor-neutral `ChannelProvider`; Twilio adapters for SMS, WhatsApp and voice; fake providers locally                       |
@@ -86,20 +86,21 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 | Mobile app shell and screens                                                 | Built; Phase 3 polish open                    | `docs/handoffs/mobile-app.md`                    |
 | CI, security gates, tests                                                    | Built                                         | `docs/SECURITY.md`                               |
 
-## Current state (2026-09-06)
+## Current state (2026-09-06, late evening)
 
-- Sprint 1 (PRs #17 to #21) and sprint 2 (PRs #25 to #31, the rest of Phase 1) are merged. Phase 1 is complete except CB-078 (needs approval to touch a protected auth file). `master` CI is green at `4a58dfc`.
-- Backend: 54 spec files, 490 tests pass (609 across all projects); the compiled build boots. Acceptance reports: `docs/audits/2026-09-06/sprint1-acceptance.md`, `emulator-acceptance.md` (sprint 1 on the device) and `sprint2-acceptance.md` (sprint 2 on the device: regression 12/12, 12 new checks, findings CB-079 to CB-082).
-- Mobile: type-check and the vitest project (14 files / 86 tests) pass. The most important open device finding is CB-080: responses occasionally reach the app with an empty body, so a verify or delete can succeed on the server while the app shows a parse error.
-- Hosted Supabase database: schema applied by hand (no `_prisma_migrations`); partition RLS fix applied 2026-09-05. All migrations through 202609060202 were applied there on 2026-09-06 (the founder ran the management-API script; verified: new columns, `varchar(8)` languages, 144 template rows, `provider_webhook_event_keys` with RLS on). Future migrations go the same way until `_prisma_migrations` is baselined: `POST /v1/projects/<ref>/database/query` with the founder's `SUPABASE_ACCESS_TOKEN`, run by the founder.
-- Nothing is hosted. The scheduler workflow is disabled. No Twilio, RevenueCat, FCM or EAS credentials exist.
-- 11 Dependabot PRs are open, deferred until after emulator testing.
+- Sprint 1 (PRs #17 to #21), sprint 2 (#25 to #31) and sprint 3 wave 1 (#34, #35, #36) are merged. Phase 1 is complete except CB-078 (needs approval to touch a protected auth file). Phase 2 is complete in code (CB-019 to CB-026); CB-022's audio recordings wait on decision 3 and CB-083 (template-creation script) is new. Of the hardening set, CB-045 and CB-048 are done; CB-042 and CB-047 are wave 2. `master` CI is green at `d9e2350`.
+- Backend: 80 spec files, 803 tests across all projects; the compiled build boots in fake and configured mode. Acceptance: `docs/audits/2026-09-06/sprint3-acceptance.md` (11 sprint-3 checks plus the escalation loop on the device and the API, all pass, no new findings).
+- Mobile: the vitest project passes (14 files / 100 tests). CB-080 is fixed and re-checked on the device. CB-082 (Expo Go push chunk warning) is still visible in Metro and stays a Phase 3 item.
+- Hosted Supabase database: migrations through 202609060202 are applied; `202609060301_receiver_consent_resend_count` and `202609060302_expo_push_tickets` (PR #34) are PENDING there. The founder applies them with the management-API script (pattern in `docs/handoffs/data-security-and-privacy.md`).
+- Auth: access tokens are verified locally; the hosted project publishes an ES256 JWKS key, so `SUPABASE_JWT_SECRET` is not needed. The service-role key is optional and never read (founder decision 2026-09-06).
+- Nothing is hosted. The scheduler workflow is disabled. No Twilio, RevenueCat, FCM or EAS credentials exist; `docs/providers/twilio.md` and `docs/providers/whatsapp.md` say exactly what to configure when they do.
+- 11 Dependabot PRs are open, deferred.
 
 ## Next session opener
 
-1. On `master`: `git status --short --branch`, then `npm run verify`.
-2. Sprint 3 = Phase 2 provider readiness (CB-019 to CB-026) plus the launch-blocking hardening items CB-042 (body validation), CB-045 (cron lock), CB-047 (logging), CB-048 (health), plus CB-080 (empty response bodies on the device) and the two small sprint-2 follow-ups CB-079 and CB-081 (needs the founder's decision). Run it as 3 parallel worktree agents (not 5: the machine ran out of memory once), disjoint file ownership per agent, rebase before push, background CI watchers. Next free backlog id: CB-083.
-3. Re-run `docs/EMULATOR_RUNBOOK.md` after sprint 3 (ask the founder before starting the emulator or Docker; they render video on this machine).
+1. On `master`: `git status --short --branch`, `npm ci` (the lockfile gained `jose` in #35), then `npm run verify`.
+2. Sprint 3 wave 2 = CB-042 (zod body validation, one schema per body, shared with mobile; fold in CB-084, the `upsertFromSupabaseIdentity` alias removal) and CB-047 (logging; also write `TwilioRequestError.failureReason` into `attempt.failureReason` at the two `PROVIDER_SEND_FAILED` sites in `check-ins.service.ts`), plus CB-085 (push-receipts cron route). Two worktree agents with disjoint ownership (controllers, pipe and shared-types vs services' catch blocks, logger and middleware), a reviewer agent per PR before merge, then `docs/EMULATOR_RUNBOOK.md` again (ask before starting Docker or the emulator). Next free backlog id: CB-086.
+3. Founder items that do not block wave 2: apply the two pending migrations to the hosted database; decision 3 (voice languages); create the WhatsApp templates once Twilio credentials exist (or build CB-083 first).
 4. Then sprint 4 = Phase 3 mobile completion; then Dependabot triage (11 PRs), the one-off Prettier formatting commit and the `format:check` CI gate.
 
 ## Gotchas
@@ -115,6 +116,11 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 - Metro. Start with `--clear` after pulling new code; `CI=1` mode served a stale screen module once. Two "Remove" buttons exist on the receiver detail (backup row and receiver).
 - Hooks. Pre-commit formats staged files with Prettier and scans them for secrets; pre-push runs gitleaks via Docker, lint and type-check.
 - Timestamps read through node `pg` from `timestamp(3)` columns appear shifted by the local UTC offset; the database stores UTC.
+
+- Tooling under auto mode. The classifier blocks `git filter-branch`, history rewrites bundled with a force-push, `gh pr merge --delete-branch` and some `sed -i` edits of `.gitleaks.toml`; plain `gh pr merge --squash` (delete-on-merge is on at GitHub), `git push --force-with-lease` on a feature branch after a rebase, and the Edit tool all work. Never put backticks inside a double-quoted shell string: bash executes them.
+- CI gitleaks scans every commit of a PR, so a renamed fixture still fails on the commit that introduced the old name; the value-exact allowlist in `.gitleaks.toml` is the documented fix. GitGuardian (not a required check) flags a bearer fixture next to a UUID; dismiss it in its dashboard.
+- After a rebase that changes `package-lock.json`, run `npm ci` in that worktree before `npm run verify`.
+- Git Bash rewrites `/sdcard/...` in `adb shell` arguments; prefix with `MSYS_NO_PATHCONV=1`. Expo Go may be missing after an AVD reset (Expo CLI installs it) and can hang on first launch: force-stop and reopen `exp://<host>:8081`. The throwaway database needs a seeded subscription before the receiver form submits (runbook §2).
 
 ## Where the history lives
 

@@ -24,6 +24,12 @@ npm.cmd --prefix apps/backend run db:check-invariants # must pass
 
 Reset between runs with `docker rm -f nearby-dev-pg` and repeat.
 
+Paid-access gate: submitting the receiver form needs an `ACTIVE` subscription for the test account, which the throwaway database does not have. After the first sign-in (the `users` row exists then):
+
+```powershell
+docker exec nearby-dev-pg psql -U ci -d ci -c "INSERT INTO subscriptions (\"userId\", tier, status, \"paymentProvider\", \"externalSubscriptionId\", \"currentPeriodStart\", \"currentPeriodEnd\", \"updatedAt\") SELECT id, 'TIER_1', 'ACTIVE', 'revenuecat', 'local-emulator-sub', now(), now() + interval '30 days', now() FROM users;"
+```
+
 ## 3. Backend in fake-provider mode
 
 Set these for the session. Prefer the shell environment over editing `apps/backend/.env` (dotenv does not override shell values, and the file currently carries no `DATABASE_URL` or KMS key); keep the real `SUPABASE_URL` and `SUPABASE_ANON_KEY` from the file. The service-role key is required by the schema but unused, so a placeholder is fine:
@@ -62,7 +68,7 @@ Start the emulator from Android Studio (or `emulator -avd <name>`), then:
 npm.cmd --prefix apps/mobile run android
 ```
 
-Metro logs go to the terminal; the handoff's older runs used `expo-android*.log` files at the repo root (gitignored). Start Metro with `--clear` after pulling new code: in `CI=1` mode it served a stale module once on 2026-09-06 (the app showed old behaviour until the cache was cleared). Do not judge bundle freshness by fetching `entry.bundle` yourself: without the device's `transform.routerRoot` option that bundle contains no screens. For an unattended run, `CI=1 npx expo start --android --port 8081 --clear` avoids the interactive prompts (reloads are then manual: force-stop Expo Go and reopen `exp://<host>:8081`). To drive the UI from a script, `adb shell uiautomator dump` gives every element's text and bounds; see `docs/audits/2026-09-06/emulator-acceptance.md` for the method that worked.
+Metro logs go to the terminal; the handoff's older runs used `expo-android*.log` files at the repo root (gitignored). Start Metro with `--clear` after pulling new code: in `CI=1` mode it served a stale module once on 2026-09-06 (the app showed old behaviour until the cache was cleared). Do not judge bundle freshness by fetching `entry.bundle` yourself: without the device's `transform.routerRoot` option that bundle contains no screens. For an unattended run, `CI=1 npx expo start --android --port 8081 --clear` avoids the interactive prompts (reloads are then manual: force-stop Expo Go and reopen `exp://<host>:8081`). To drive the UI from a script, `adb shell uiautomator dump` gives every element's text and bounds; see `docs/audits/2026-09-06/emulator-acceptance.md` for the method that worked. Under Git Bash, prefix any `adb` command that names `/sdcard/...` with `MSYS_NO_PATHCONV=1`, otherwise the path is rewritten to a Windows path and the dump lands elsewhere. Expo Go may be missing after an AVD reset (Expo CLI installs it) and can show "Expo Go isn't responding" on its first launch while Metro has already bundled: force-stop it and reopen `exp://<host>:8081`.
 
 ## 5. Driving the flows
 
@@ -97,8 +103,43 @@ Scenario list (each maps to a sprint-1 item; expected outcome in brackets):
 
 Known-open mobile items to NOT chase (backlog Phase 3): social login (CB-028), push registration and tap handling (CB-030/031), dashboard error state (CB-032), placeholder settings screens (CB-034), siren asset (CB-038).
 
+### Sprint 3 checks (PRs #34, #35, #36)
+
+Setup differences: nothing new is required. `SUPABASE_SERVICE_ROLE_KEY` may stay unset or a placeholder (CB-025). Access tokens are verified locally against the project's published JWKS (CB-024): the first authenticated request after boot fetches `<SUPABASE_URL>/auth/v1/.well-known/jwks.json` once, so the backend needs internet even in fake mode. For the signed voice check start the backend with `TWILIO_AUTH_TOKEN=local-test-token` and `PUBLIC_API_BASE_URL=http://localhost:3000`; for the billing check add `REVENUECAT_WEBHOOK_AUTH_TOKEN=local-revenuecat-token`. `curl.exe` ships with Windows and is used below for status codes.
+
+```powershell
+$h = @{ Authorization = 'Bearer cron-secret'; 'Content-Type' = 'application/json' }
+# S3-1 health (CB-048): 200 {"status":"ok"}; with the Postgres container stopped: 503 {"status":"degraded"}
+curl.exe -s -i http://localhost:3000/health
+# S3-2 removed inbound routes (CB-019, CB-021): both 404
+curl.exe -s -o NUL -w "%{http_code}`n" -X POST http://localhost:3000/provider-webhooks/sms
+curl.exe -s -o NUL -w "%{http_code}`n" -X POST http://localhost:3000/provider-webhooks/whatsapp
+# S3-3 signed voice Gather action (CB-022): Digits=9 is STOP. Expect 200, Content-Type text/xml, <Say> + <Hangup/>,
+#      the receiver REVOKED in the app and a receiver_checkins_ended send in the outbound list.
+# The signature covers the URL Twilio would call, i.e. the backend's PUBLIC_API_BASE_URL (10.0.2.2 in this runbook); the request itself goes to localhost.
+$signedUrl = 'http://10.0.2.2:3000/provider-webhooks/twilio/voice?lang=ar'
+$url = 'http://localhost:3000/provider-webhooks/twilio/voice?lang=ar'
+$sig = node -e "const c=require('crypto');const [u,t,...kv]=process.argv.slice(1);const p=Object.fromEntries(kv.map(s=>{const i=s.indexOf('=');return [s.slice(0,i),s.slice(i+1)]}));console.log(c.createHmac('sha1',t).update(u+Object.keys(p).sort().map(k=>k+p[k]).join('')).digest('base64'))" $signedUrl local-test-token Digits=9 To=+971500000001 From=+15550003333 CallSid=CA-local-1
+curl.exe -s -i -X POST $url -H "X-Twilio-Signature: $sig" --data-urlencode "Digits=9" --data-urlencode "To=+971500000001" --data-urlencode "From=+15550003333" --data-urlencode "CallSid=CA-local-1"
+# S3-4 RevenueCat webhook (CB-026): wrong token 401, right token with an empty body 400
+curl.exe -s -o NUL -w "%{http_code}`n" -X POST http://localhost:3000/billing/revenuecat/webhook -H "Authorization: Bearer wrong-token" -H "Content-Type: application/json" -d "{}"
+curl.exe -s -o NUL -w "%{http_code}`n" -X POST http://localhost:3000/billing/revenuecat/webhook -H "Authorization: Bearer local-revenuecat-token" -H "Content-Type: application/json" -d "{}"
+# S3-5 overlapping ticks (CB-045): best effort in fake mode (a tick takes milliseconds); a {"locked":true} reply is a bonus, never an error
+$j = Start-Job { Invoke-RestMethod -Method Post -Uri http://localhost:3000/operations/check-ins/run -Headers @{ Authorization = 'Bearer cron-secret' } }
+Invoke-RestMethod -Method Post -Uri http://localhost:3000/operations/check-ins/run -Headers $h; Receive-Job $j -Wait
+```
+
+Device and API checks (the bearer for `/device-tokens` is the app user's Supabase access token: `POST <SUPABASE_URL>/auth/v1/token?grant_type=password` with the anon key as `apikey` and the test account's email and password):
+
+- S3-6 (CB-080): open a receiver's detail ten times in a row (back, reopen), remove a backup contact, remove the receiver through step-up. No "JSON Parse error" anywhere; if a reply is ever cut off the app shows a plain sentence and a GET is retried once.
+- S3-7 (CB-081): right after adding a receiver, "Resend invitation" is disabled and reads "Resend available <local time 24 h later>"; `GET /receivers/:id` carries `consentResendAllowedAt`. To exercise the open window without waiting: `docker exec nearby-dev-pg psql -U ci -d ci -c "UPDATE receivers SET \"consentRequestedAt\" = now() - interval '25 hours'"`, reload the detail (button enabled), tap it (a second consent request appears in the outbound list), then the button is disabled again with a date seven days out; a second resend through the API answers 429 with `nextAllowedAt`.
+- S3-8 (CB-079): add a receiver with language Arabic, reply `YES` then `STOP` through the fake route. The `receiver_checkins_ended` body in the outbound list is Arabic, names the sender (the test account's Supabase `full_name`) or uses the Arabic neutral phrase, and contains no Latin "your family member".
+- S3-9 (CB-023): `POST /device-tokens` with `{"token":"ExpoPushToken[abc]","platform":"windows"}` → 400; with `{"token":"not-an-expo-token","platform":"android"}` → 400. Push registration in Expo Go is still skipped (CB-031); receipts cannot be exercised on the emulator.
+- S3-10 (CB-024): every authenticated screen keeps working after sign-in; sign out and back in still works (a fresh token). Nothing else is observable on the device; the zero-write read path is covered by specs.
+- S3-11 (CB-020, CB-021, CB-025): boot once with `CHANNEL_PROVIDER_MODE=configured` and no `TWILIO_*` values: the backend starts, `/health` is 200, the fake routes are 404 (existing sprint-1 check S1).
+
 ## 6. Recording results
 
-Runs: `docs/audits/2026-09-06/emulator-acceptance.md` (sprint 1: 12/12, CB-070 fixed, findings CB-071–078) and `docs/audits/2026-09-06/sprint2-acceptance.md` (sprint 2: regression 12/12 plus 12 new checks, findings CB-079–082). On the detail screen there are two "Remove" buttons (backup contact row and receiver); scripted taps must pick by position.
+Runs: `docs/audits/2026-09-06/emulator-acceptance.md` (sprint 1: 12/12, CB-070 fixed, findings CB-071–078) and `docs/audits/2026-09-06/sprint2-acceptance.md` (sprint 2: regression 12/12 plus 12 new checks, findings CB-079–082) and `docs/audits/2026-09-06/sprint3-acceptance.md` (sprint 3 wave 1: 11 checks plus the escalation loop, no new findings). On the detail screen there are two "Remove" buttons (backup contact row and receiver); scripted taps must pick by position.
 
 Write `docs/audits/<date>/emulator-acceptance.md` with pass/fail per scenario and the backend log lines that prove each outcome; open backlog items for anything that fails, with the next free `CB-` id.
