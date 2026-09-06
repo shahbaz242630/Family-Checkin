@@ -1,12 +1,11 @@
 import { ActorType, Channel, CheckInStatus, EscalationResult } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import type { AppendAuditLogInput } from '../audit/audit.repository';
-import type { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { FakeChannelProvider } from '../channels/fake-channel.provider';
 import type { ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceScript } from '../channels/channel-provider';
 import type { NotificationsService } from '../notifications/notifications.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
+import { createRealAuditService } from '../../shared/testing/real-audit';
 import type {
   CreateEscalationEventInput,
   EscalationBackupContactRecord,
@@ -51,19 +50,6 @@ class InMemoryEscalationsRepository implements EscalationsRepository {
 
   async markCheckInTerminal(input: { checkInId: string; status: CheckInStatus }): Promise<void> {
     this.terminalStatuses.push(input);
-  }
-}
-
-class InMemoryAuditService {
-  public events: AppendAuditLogInput[] = [];
-
-  async append(input: AppendAuditLogInput) {
-    this.events.push(input);
-    return {
-      id: `audit-${this.events.length}`,
-      createdAt: new Date('2026-04-29T10:00:00.000Z'),
-      ...input,
-    };
   }
 }
 
@@ -146,7 +132,7 @@ describe('EscalationsService', () => {
   it('alerts active backup contacts in priority order and marks a help check-in escalated', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryEscalationsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const sms = new FakeChannelProvider(Channel.SMS, {
       now: () => new Date('2026-04-29T10:00:00.000Z'),
     });
@@ -171,7 +157,7 @@ describe('EscalationsService', () => {
       repository,
       crypto,
       new ChannelRouterService([sms, whatsapp]),
-      audit as unknown as AuditService,
+      auditService,
       () => new Date('2026-04-29T10:00:00.000Z'),
     );
 
@@ -261,7 +247,7 @@ describe('EscalationsService', () => {
   it('alerts each backup contact over both SMS and WhatsApp', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryEscalationsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService } = createRealAuditService();
     const sms = new FakeChannelProvider(Channel.SMS, {
       now: () => new Date('2026-04-29T10:00:00.000Z'),
     });
@@ -280,7 +266,7 @@ describe('EscalationsService', () => {
       repository,
       crypto,
       new ChannelRouterService([sms, whatsapp]),
-      audit as unknown as AuditService,
+      auditService,
       () => new Date('2026-04-29T10:00:00.000Z'),
     );
 
@@ -317,7 +303,7 @@ describe('EscalationsService', () => {
   it('notifies the sender by mobile push when a receiver help response escalates', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryEscalationsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const notifications = new InMemoryNotificationsService();
     const sms = new FakeChannelProvider(Channel.SMS, {
       now: () => new Date('2026-04-29T10:00:00.000Z'),
@@ -334,7 +320,7 @@ describe('EscalationsService', () => {
       repository,
       crypto,
       new ChannelRouterService([sms]),
-      audit as unknown as AuditService,
+      auditService,
       notifications as unknown as NotificationsService,
       () => new Date('2026-04-29T10:00:00.000Z'),
     );
@@ -379,7 +365,7 @@ describe('EscalationsService', () => {
   it('places a fallback voice call to the sender when escalation push is not delivered', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryEscalationsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const notifications = new InMemoryNotificationsService({
       attempted: 0,
       sent: 0,
@@ -393,7 +379,7 @@ describe('EscalationsService', () => {
       repository,
       crypto,
       new ChannelRouterService([voice]),
-      audit as unknown as AuditService,
+      auditService,
       notifications as unknown as NotificationsService,
       () => new Date('2026-04-29T10:00:00.000Z'),
     );
@@ -437,13 +423,13 @@ describe('EscalationsService', () => {
   it('audits and leaves the check-in as responded help when there are no active backup contacts', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryEscalationsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const sms = new FakeChannelProvider(Channel.SMS);
     const service = new EscalationsService(
       repository,
       crypto,
       new ChannelRouterService([sms]),
-      audit as unknown as AuditService,
+      auditService,
       () => new Date('2026-04-29T10:00:00.000Z'),
     );
 
@@ -479,7 +465,7 @@ describe('EscalationsService', () => {
   it('records provider failures and continues to the next backup contact', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryEscalationsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const sms = new FailingFirstSmsProvider();
     const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
       now: () => new Date('2026-04-29T10:00:00.000Z'),
@@ -502,7 +488,7 @@ describe('EscalationsService', () => {
       repository,
       crypto,
       new ChannelRouterService([sms, whatsapp]),
-      audit as unknown as AuditService,
+      auditService,
       () => new Date('2026-04-29T10:00:00.000Z'),
     );
 
@@ -546,7 +532,7 @@ describe('EscalationsService', () => {
   it('alerts backup contacts for missed check-ins with missed-check-in template and PII-safe audit', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryEscalationsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const sms = new FakeChannelProvider(Channel.SMS, {
       now: () => new Date('2026-04-29T10:45:00.000Z'),
     });
@@ -565,7 +551,7 @@ describe('EscalationsService', () => {
       repository,
       crypto,
       new ChannelRouterService([sms, whatsapp]),
-      audit as unknown as AuditService,
+      auditService,
       () => new Date('2026-04-29T10:45:00.000Z'),
     );
 
@@ -621,13 +607,13 @@ describe('EscalationsService', () => {
   it('marks missed check-ins skipped when there are no active backup contacts', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryEscalationsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const sms = new FakeChannelProvider(Channel.SMS);
     const service = new EscalationsService(
       repository,
       crypto,
       new ChannelRouterService([sms]),
-      audit as unknown as AuditService,
+      auditService,
       () => new Date('2026-04-29T10:45:00.000Z'),
     );
 
@@ -676,7 +662,7 @@ describe('EscalationsService', () => {
   it('marks missed check-ins failed when every backup contact alert fails', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryEscalationsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const sms = new AlwaysFailingSmsProvider();
     repository.backupContacts = [
       backupContactFixture(crypto, {
@@ -696,7 +682,7 @@ describe('EscalationsService', () => {
       repository,
       crypto,
       new ChannelRouterService([sms]),
-      audit as unknown as AuditService,
+      auditService,
       () => new Date('2026-04-29T10:45:00.000Z'),
     );
 

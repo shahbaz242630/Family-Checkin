@@ -5,13 +5,21 @@ import {
   CheckInAttemptStatus,
   CheckInStatus,
   ConsentStatus,
+  EscalationResult,
   RelationshipType,
   TechProfile,
 } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import type { AppendAuditLogInput } from '../audit/audit.repository';
-import type { AuditService } from '../audit/audit.service';
 import type { BackupContactRecord, BackupContactsRepository } from '../backup-contacts/backup-contacts.repository';
+import { ChannelRouterService } from '../channels/channel-router.service';
+import { FakeChannelProvider } from '../channels/fake-channel.provider';
+import type {
+  CreateEscalationEventInput,
+  EscalationBackupContactRecord,
+  EscalationEventRecord,
+  EscalationsRepository,
+} from '../escalations/escalations.repository';
+import { EscalationsService } from '../escalations/escalations.service';
 import type {
   CheckInRecord,
   CheckInsRepository,
@@ -22,6 +30,7 @@ import type {
   FindOverdueSentCheckInsInput,
 } from '../check-ins/check-ins.repository';
 import { CryptoService } from '../../shared/crypto/crypto.service';
+import { createRealAuditService } from '../../shared/testing/real-audit';
 import type {
   CreateReceiverRecordInput,
   ReceiverRecord,
@@ -467,16 +476,33 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
   }
 }
 
-class InMemoryAuditService {
-  public events: AppendAuditLogInput[] = [];
+class InMemoryEscalationsRepository implements EscalationsRepository {
+  public backupContacts: EscalationBackupContactRecord[] = [];
+  public createdEvents: CreateEscalationEventInput[] = [];
+  public escalatedCheckIns: string[] = [];
+  public terminalStatuses: { checkInId: string; status: CheckInStatus }[] = [];
 
-  async append(input: AppendAuditLogInput) {
-    this.events.push(input);
-    return {
-      id: 'audit-1',
-      createdAt: new Date('2026-04-26T10:00:00.000Z'),
-      ...input,
-    };
+  constructor(private readonly owner: { userId: string; phoneEncrypted: string }) {}
+
+  async findReceiverOwner(): Promise<{ userId: string; phoneEncrypted: string } | null> {
+    return this.owner;
+  }
+
+  async findActiveBackupContactsForReceiver(input: { receiverId: string }): Promise<EscalationBackupContactRecord[]> {
+    return this.backupContacts.filter((contact) => contact.receiverId === input.receiverId);
+  }
+
+  async createEvent(input: CreateEscalationEventInput): Promise<EscalationEventRecord> {
+    this.createdEvents.push(input);
+    return { id: `escalation-event-${this.createdEvents.length}`, ...input };
+  }
+
+  async markCheckInEscalated(input: { checkInId: string }): Promise<void> {
+    this.escalatedCheckIns.push(input.checkInId);
+  }
+
+  async markCheckInTerminal(input: { checkInId: string; status: CheckInStatus }): Promise<void> {
+    this.terminalStatuses.push(input);
   }
 }
 
@@ -499,13 +525,13 @@ describe('ReceiverReplyService', () => {
   it('grants consent when a pending receiver replies YES', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     repository.records.push(receiverFixture(crypto));
     const service = new ReceiverReplyService(
       repository,
       new InMemoryCheckInsRepository(),
       crypto,
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
@@ -557,13 +583,13 @@ describe('ReceiverReplyService', () => {
   it('declines consent when a pending receiver replies NO', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     repository.records.push(receiverFixture(crypto));
     const service = new ReceiverReplyService(
       repository,
       new InMemoryCheckInsRepository(),
       crypto,
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
@@ -599,7 +625,7 @@ describe('ReceiverReplyService', () => {
   it('revokes consent immediately when a receiver replies STOP', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     repository.records.push({
       ...receiverFixture(crypto),
       consentStatus: ConsentStatus.GRANTED,
@@ -609,7 +635,7 @@ describe('ReceiverReplyService', () => {
       repository,
       new InMemoryCheckInsRepository(),
       crypto,
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
@@ -647,7 +673,7 @@ describe('ReceiverReplyService', () => {
   it('creates an abuse report and pauses the receiver when a receiver replies REPORT', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     repository.records.push({
       ...receiverFixture(crypto),
       consentStatus: ConsentStatus.GRANTED,
@@ -657,7 +683,7 @@ describe('ReceiverReplyService', () => {
       repository,
       new InMemoryCheckInsRepository(),
       crypto,
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
@@ -708,7 +734,7 @@ describe('ReceiverReplyService', () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
     const checkIns = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     repository.records.push({
       ...receiverFixture(crypto),
       consentStatus: ConsentStatus.GRANTED,
@@ -719,7 +745,7 @@ describe('ReceiverReplyService', () => {
       repository,
       checkIns,
       crypto,
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       undefined,
       () => new Date('2026-04-27T05:45:00.000Z'),
@@ -775,7 +801,7 @@ describe('ReceiverReplyService', () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
     const checkIns = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const escalations = new InMemoryEscalationsService();
     repository.records.push({
       ...receiverFixture(crypto),
@@ -787,7 +813,7 @@ describe('ReceiverReplyService', () => {
       repository,
       checkIns,
       crypto,
-      audit as unknown as AuditService,
+      auditService,
       escalations,
       undefined,
       () => new Date('2026-04-27T05:45:00.000Z'),
@@ -835,7 +861,7 @@ describe('ReceiverReplyService', () => {
     const receivers = new InMemoryReceiversRepository();
     const backupContacts = new InMemoryBackupContactsRepository();
     const checkIns = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     backupContacts.records.push(backupContactFixture(crypto));
     checkIns.actionableCheckIn = {
       ...checkInFixture(CheckInStatus.ESCALATED),
@@ -846,7 +872,7 @@ describe('ReceiverReplyService', () => {
       receivers,
       checkIns,
       crypto,
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       backupContacts,
       () => new Date('2026-04-27T06:30:00.000Z'),
@@ -893,19 +919,144 @@ describe('ReceiverReplyService', () => {
     expect(JSON.stringify(audit.events)).not.toContain('message body');
   });
 
+  it('runs HELP -> backup contact alert -> backup DONE through the real EscalationsService and audit guard', async () => {
+    const now = () => new Date('2026-04-27T05:45:00.000Z');
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    const backupContacts = new InMemoryBackupContactsRepository();
+    const escalationsRepository = new InMemoryEscalationsRepository({
+      userId: 'sender-1',
+      phoneEncrypted: crypto.encrypt('+971508888888'),
+    });
+    const { auditService, audit } = createRealAuditService(now);
+    const sms = new FakeChannelProvider(Channel.SMS, { now });
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, { now });
+    const backupContact = backupContactFixture(crypto);
+    repository.records.push({
+      ...receiverFixture(crypto),
+      consentStatus: ConsentStatus.GRANTED,
+      consentGrantedAt: new Date('2026-04-26T10:00:00.000Z'),
+    });
+    backupContacts.records.push(backupContact);
+    escalationsRepository.backupContacts.push({
+      id: backupContact.id,
+      receiverId: backupContact.receiverId,
+      nameEncrypted: backupContact.nameEncrypted,
+      phoneEncrypted: backupContact.phoneEncrypted,
+      priorityOrder: backupContact.priorityOrder,
+      createdAt: backupContact.createdAt,
+    });
+    checkIns.openCheckIn = checkInFixture(CheckInStatus.SENT);
+    const escalations = new EscalationsService(
+      escalationsRepository,
+      crypto,
+      new ChannelRouterService([sms, whatsapp]),
+      auditService,
+      now,
+    );
+    const service = new ReceiverReplyService(
+      repository,
+      checkIns,
+      crypto,
+      auditService,
+      escalations,
+      backupContacts,
+      now,
+    );
+
+    const helpResult = await service.handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.SMS,
+      body: 'HELP',
+      providerMessageId: 'provider-message-help',
+    });
+
+    expect(helpResult).toEqual({
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      action: 'check_in_responded_help',
+      consentStatus: ConsentStatus.GRANTED,
+      checkInId: 'check-in-1',
+      checkInStatus: CheckInStatus.RESPONDED_HELP,
+    });
+    expect(escalationsRepository.escalatedCheckIns).toEqual(['check-in-1']);
+    expect(sms.sentMessages.map((sent) => sent.to)).toEqual(['+971509999999']);
+    expect(whatsapp.sentMessages.map((sent) => sent.to)).toEqual(['+971509999999']);
+    expect(
+      escalationsRepository.createdEvents.map((event) => ({
+        attemptNumber: event.attemptNumber,
+        channel: event.channel,
+        result: event.result,
+      })),
+    ).toEqual([
+      { attemptNumber: 1, channel: Channel.SMS, result: EscalationResult.SUCCESS },
+      { attemptNumber: 1, channel: Channel.WHATSAPP, result: EscalationResult.SUCCESS },
+    ]);
+    expect(audit.events.map((event) => event.action)).toEqual([
+      'check_in.responded_help',
+      'escalation.backup_contact_alerted',
+      'escalation.backup_contact_alerted',
+      'check_in.escalated',
+    ]);
+    expect(audit.events[1]).toMatchObject({
+      entityType: 'escalation_event',
+      entityId: 'escalation-event-1',
+      action: 'escalation.backup_contact_alerted',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'check-in-1',
+        backupContactId: 'backup-contact-1',
+        channel: Channel.SMS,
+        attemptNumber: 1,
+      },
+    });
+
+    // The backup contact now replies DONE from their own number.
+    checkIns.actionableCheckIn = {
+      ...checkInFixture(CheckInStatus.ESCALATED),
+      respondedAt: now(),
+      responseDetectedAs: 'help',
+    };
+    const doneResult = await service.handleInboundReply({
+      fromPhone: '+971509999999',
+      channel: Channel.SMS,
+      body: 'DONE',
+      providerMessageId: 'provider-message-done',
+    });
+
+    expect(doneResult).toEqual({
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      backupContactId: 'backup-contact-1',
+      action: 'check_in_resolved_by_backup',
+      checkInId: 'check-in-1',
+      checkInStatus: CheckInStatus.RESOLVED,
+    });
+    expect(checkIns.backupResolution).toEqual({ checkInId: 'check-in-1', resolvedAt: now() });
+    expect(audit.events.at(-1)).toMatchObject({
+      entityType: 'check_in',
+      entityId: 'check-in-1',
+      action: 'check_in.resolved_by_backup',
+      metadata: { backupContactId: 'backup-contact-1', normalizedReply: 'DONE' },
+    });
+    expect(JSON.stringify(audit.events)).not.toContain('+971509999999');
+    expect(JSON.stringify(audit.events)).not.toContain('+971501234567');
+    expect(JSON.stringify(audit.events)).not.toContain('Backup Contact');
+  });
+
   it('ignores unsupported backup contact replies without resolving check-ins', async () => {
     const crypto = new CryptoService(masterKey);
     const receivers = new InMemoryReceiversRepository();
     const backupContacts = new InMemoryBackupContactsRepository();
     const checkIns = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     backupContacts.records.push(backupContactFixture(crypto));
     checkIns.actionableCheckIn = checkInFixture(CheckInStatus.ESCALATED);
     const service = new ReceiverReplyService(
       receivers,
       checkIns,
       crypto,
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       backupContacts,
       () => new Date('2026-04-27T06:30:00.000Z'),
@@ -1002,7 +1153,7 @@ describe('ReceiverReplyService abuse-review pause (CB-007)', () => {
     const { ABUSE_REVIEW_PAUSE_REASON } = await import('./abuse-review-pause');
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService } = createRealAuditService();
     repository.records.push({
       ...receiverFixture(crypto),
       consentStatus: ConsentStatus.GRANTED,
@@ -1012,7 +1163,7 @@ describe('ReceiverReplyService abuse-review pause (CB-007)', () => {
       repository,
       new InMemoryCheckInsRepository(),
       crypto,
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       undefined,
       () => new Date('2026-04-26T11:00:00.000Z'),
@@ -1038,25 +1189,18 @@ describe('ReceiverReplyService never fails inbound replies (CB-015)', () => {
   const receiverId = '1aef91f9-64c9-4548-baa5-d70b52386efb';
   const unattributedEntityId = '00000000-0000-0000-0000-000000000000';
 
-  // The real AuditService rejects metadata keys that look like PII (anything containing "contact", "phone", ...),
-  // which the in-memory fake above skips. Every row written here must pass that check or the webhook 500s again.
-  async function realAuditService() {
-    const { AuditService: RealAuditService } = await import('../audit/audit.service');
-    const events: AppendAuditLogInput[] = [];
-    const service = new RealAuditService({
-      append: async (input: AppendAuditLogInput) => {
-        events.push(input);
-        return { id: 'audit-1', createdAt: new Date('2026-04-27T06:30:00.000Z'), ...input };
-      },
-    });
-    return { service, events };
+  // The real AuditService rejects metadata keys that look like PII (anything containing "contact", "phone", ...).
+  // Every row written here must pass that check or the webhook 500s again.
+  function realAuditService() {
+    const { auditService, audit } = createRealAuditService(() => new Date('2026-04-27T06:30:00.000Z'));
+    return { service: auditService, events: audit.events };
   }
 
   it('audits free text from a known receiver as unrecognised instead of throwing', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
     const checkIns = new InMemoryCheckInsRepository();
-    const audit = await realAuditService();
+    const audit = realAuditService();
     repository.records.push({ ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED });
     const service = new ReceiverReplyService(
       repository,
@@ -1107,7 +1251,7 @@ describe('ReceiverReplyService never fails inbound replies (CB-015)', () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
     const checkIns = new InMemoryCheckInsRepository();
-    const audit = await realAuditService();
+    const audit = realAuditService();
     repository.records.push({ ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED });
     const service = new ReceiverReplyService(
       repository,
@@ -1152,7 +1296,7 @@ describe('ReceiverReplyService never fails inbound replies (CB-015)', () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
     const backupContacts = new InMemoryBackupContactsRepository();
-    const audit = await realAuditService();
+    const audit = realAuditService();
     const service = new ReceiverReplyService(
       repository,
       new InMemoryCheckInsRepository(),
@@ -1196,7 +1340,7 @@ describe('ReceiverReplyService never fails inbound replies (CB-015)', () => {
   it('audits a short-code sender as invalid instead of throwing from phone normalisation', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
-    const audit = await realAuditService();
+    const audit = realAuditService();
     repository.records.push(receiverFixture(crypto));
     const service = new ReceiverReplyService(
       repository,
@@ -1240,7 +1384,7 @@ describe('ReceiverReplyService never fails inbound replies (CB-015)', () => {
     const crypto = new CryptoService(masterKey);
     const backupContacts = new InMemoryBackupContactsRepository();
     const checkIns = new InMemoryCheckInsRepository();
-    const audit = await realAuditService();
+    const audit = realAuditService();
     backupContacts.records.push(backupContactFixture(crypto));
     const service = new ReceiverReplyService(
       new InMemoryReceiversRepository(),
@@ -1284,7 +1428,7 @@ describe('ReceiverReplyService never fails inbound replies (CB-015)', () => {
   it('passes the real audit PII check for unrecognised backup contact text', async () => {
     const crypto = new CryptoService(masterKey);
     const backupContacts = new InMemoryBackupContactsRepository();
-    const audit = await realAuditService();
+    const audit = realAuditService();
     backupContacts.records.push(backupContactFixture(crypto));
     const service = new ReceiverReplyService(
       new InMemoryReceiversRepository(),
