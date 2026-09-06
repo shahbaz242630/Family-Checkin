@@ -73,7 +73,11 @@ describe('StepUpService', () => {
       {
         sendMessage: async (channel, to, message) => {
           sent.push({ channel, to, code: message.variables.code ?? '' });
-          return { providerMessageId: 'sms-1', acceptedAt: new Date('2026-05-01T10:00:00.000Z'), providerStatus: 'accepted' };
+          return {
+            providerMessageId: 'sms-1',
+            acceptedAt: new Date('2026-05-01T10:00:00.000Z'),
+            providerStatus: 'accepted',
+          };
         },
       } as Pick<ChannelRouterService, 'sendMessage'>,
       () => new Date('2026-05-01T10:00:00.000Z'),
@@ -123,15 +127,27 @@ describe('StepUpService', () => {
       language: 'en',
     });
 
-    await expect(service.verifyStepUp({ userId: 'user-1', challengeId: requested.challengeId, code: '000000' })).rejects.toThrow(
-      'Invalid verification code',
-    );
-    const verified = await service.verifyStepUp({ userId: 'user-1', challengeId: requested.challengeId, code: '123456' });
     await expect(
-      service.consumeStepUpToken({ userId: 'user-1', action: SensitiveAction.EXPORT_DATA, stepUpToken: verified.stepUpToken }),
+      service.verifyStepUp({ userId: 'user-1', challengeId: requested.challengeId, code: '000000' }),
+    ).rejects.toThrow('Invalid verification code');
+    const verified = await service.verifyStepUp({
+      userId: 'user-1',
+      challengeId: requested.challengeId,
+      code: '123456',
+    });
+    await expect(
+      service.consumeStepUpToken({
+        userId: 'user-1',
+        action: SensitiveAction.EXPORT_DATA,
+        stepUpToken: verified.stepUpToken,
+      }),
     ).resolves.toBeUndefined();
     await expect(
-      service.consumeStepUpToken({ userId: 'user-1', action: SensitiveAction.EXPORT_DATA, stepUpToken: verified.stepUpToken }),
+      service.consumeStepUpToken({
+        userId: 'user-1',
+        action: SensitiveAction.EXPORT_DATA,
+        stepUpToken: verified.stepUpToken,
+      }),
     ).rejects.toThrow('Step-up verification is required');
   });
 });

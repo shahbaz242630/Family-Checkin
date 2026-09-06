@@ -1,5 +1,12 @@
 import type { Channel } from '@prisma/client';
-import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceCallOptions, VoiceScript } from './channel-provider';
+import type {
+  ChannelCallResult,
+  ChannelProvider,
+  ChannelSendResult,
+  TemplatedMessage,
+  VoiceCallOptions,
+  VoiceScript,
+} from './channel-provider';
 
 export interface FakeChannelProviderOptions {
   availableNumbers?: string[];

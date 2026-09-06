@@ -1,5 +1,11 @@
 import { Channel } from '@prisma/client';
-import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceScript } from './channel-provider';
+import type {
+  ChannelCallResult,
+  ChannelProvider,
+  ChannelSendResult,
+  TemplatedMessage,
+  VoiceScript,
+} from './channel-provider';
 import { ChannelProviderConfigurationError } from './configured-provider-errors';
 import { FetchTwilioHttpClient, type TwilioHttpClient } from './twilio-http-client';
 import { renderTwilioMessage } from './twilio-rendering';

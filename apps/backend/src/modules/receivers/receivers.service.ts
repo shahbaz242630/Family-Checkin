@@ -126,7 +126,10 @@ export class ReceiversService {
     private readonly auditService: AuditService,
     @Optional()
     @Inject(CHECK_INS_REPOSITORY)
-    checkInsOrEscalationsOrNow?: Pick<CheckInsRepository, 'createPending' | 'createAttempts'> | Pick<EscalationsService, 'escalateSenderRequestedBackup'> | (() => Date),
+    checkInsOrEscalationsOrNow?:
+      | Pick<CheckInsRepository, 'createPending' | 'createAttempts'>
+      | Pick<EscalationsService, 'escalateSenderRequestedBackup'>
+      | (() => Date),
     @Optional()
     @Inject(EscalationsService)
     escalationsOrNow?: Pick<EscalationsService, 'escalateSenderRequestedBackup'> | (() => Date),
@@ -442,7 +445,9 @@ export class ReceiversService {
         receiverId: context.receiverId,
         scheduledAt: retryAt,
       });
-      await this.checkInsRepository.createAttempts(this.buildRetryCascadeAttempts(context.receiver, retryCheckIn.id, retryAt));
+      await this.checkInsRepository.createAttempts(
+        this.buildRetryCascadeAttempts(context.receiver, retryCheckIn.id, retryAt),
+      );
     }
 
     await this.auditService.append({
@@ -733,7 +738,11 @@ export class ReceiversService {
     };
   }
 
-  private async resolveChannelPlan(input: { phone: string; primaryChannel: Channel; fallbackChannels: Channel[] }): Promise<{
+  private async resolveChannelPlan(input: {
+    phone: string;
+    primaryChannel: Channel;
+    fallbackChannels: Channel[];
+  }): Promise<{
     primaryChannel: Channel;
     fallbackChannels: Channel[];
     detectionStatus: string;
@@ -761,7 +770,9 @@ export class ReceiversService {
     receiverId: string;
     checkInId: string;
     previousStatus: CheckInStatus;
-    receiver: ReceiverRecord & { latestCheckIn?: NonNullable<Awaited<ReturnType<ReceiversRepository['findManyForUser']>>[number]['latestCheckIn']> };
+    receiver: ReceiverRecord & {
+      latestCheckIn?: NonNullable<Awaited<ReturnType<ReceiversRepository['findManyForUser']>>[number]['latestCheckIn']>;
+    };
   } | null> {
     const userId = input.userId.trim();
     const receiverId = input.receiverId.trim();
@@ -789,7 +800,11 @@ export class ReceiversService {
     return `*******${phone.slice(-4)}`;
   }
 
-  private toSummary(receiver: ReceiverRecord & { latestCheckIn?: NonNullable<Awaited<ReturnType<ReceiversRepository['findManyForUser']>>[number]['latestCheckIn']> }): ReceiverSummary {
+  private toSummary(
+    receiver: ReceiverRecord & {
+      latestCheckIn?: NonNullable<Awaited<ReturnType<ReceiversRepository['findManyForUser']>>[number]['latestCheckIn']>;
+    },
+  ): ReceiverSummary {
     const phone = this.cryptoService.decrypt(receiver.phoneEncrypted);
 
     return {
@@ -827,7 +842,11 @@ export class ReceiversService {
     };
   }
 
-  private toDetail(receiver: ReceiverRecord & { latestCheckIn?: NonNullable<Awaited<ReturnType<ReceiversRepository['findManyForUser']>>[number]['latestCheckIn']> }): ReceiverDetail {
+  private toDetail(
+    receiver: ReceiverRecord & {
+      latestCheckIn?: NonNullable<Awaited<ReturnType<ReceiversRepository['findManyForUser']>>[number]['latestCheckIn']>;
+    },
+  ): ReceiverDetail {
     return {
       ...this.toSummary(receiver),
       backupContacts: [],

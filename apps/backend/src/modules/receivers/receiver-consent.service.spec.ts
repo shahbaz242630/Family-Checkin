@@ -5,13 +5,19 @@ import { ChannelRouterService } from '../channels/channel-router.service';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
-import type { CreateReceiverRecordInput, ReceiverRecord, ReceiversRepository, UpdateReceiverRecordInput } from './receivers.repository';
+import type {
+  CreateReceiverRecordInput,
+  ReceiverRecord,
+  ReceiversRepository,
+  UpdateReceiverRecordInput,
+} from './receivers.repository';
 import { ReceiverConsentService } from './receiver-consent.service';
 
 const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 
 class InMemoryReceiversRepository implements ReceiversRepository {
-  public markedConsentRequest: { receiverId: string; consentRequestedAt: Date; consentTranscript: string } | null = null;
+  public markedConsentRequest: { receiverId: string; consentRequestedAt: Date; consentTranscript: string } | null =
+    null;
 
   async create(input: CreateReceiverRecordInput): Promise<ReceiverRecord> {
     return this.record(input);
@@ -46,7 +52,11 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     return null;
   }
 
-  async deleteForUserById(_input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverRecord | null> {
+  async deleteForUserById(_input: {
+    userId: string;
+    receiverId: string;
+    deletedAt: Date;
+  }): Promise<ReceiverRecord | null> {
     return null;
   }
 

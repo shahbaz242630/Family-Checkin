@@ -82,7 +82,9 @@ export class CheckInsService {
         scheduledAt: now,
       });
       result.created += 1;
-      const attempts = await this.checkInsRepository.createAttempts(this.buildCascadeAttempts(receiver, checkIn.id, now));
+      const attempts = await this.checkInsRepository.createAttempts(
+        this.buildCascadeAttempts(receiver, checkIn.id, now),
+      );
 
       await this.auditService.append({
         entityType: 'check_in',
@@ -273,11 +275,16 @@ export class CheckInsService {
     const to = this.cryptoService.decrypt(receiver.phoneEncrypted);
 
     if (receiver.primaryChannel === Channel.VOICE) {
-      const result = await this.channelRouter.makeVoiceCall(Channel.VOICE, to, {
-        scriptKey: 'checkin_daily_voice',
-        language: receiver.language,
-        variables: {},
-      }, await this.voiceCallOptions(receiver.id, receiver.countryCode));
+      const result = await this.channelRouter.makeVoiceCall(
+        Channel.VOICE,
+        to,
+        {
+          scriptKey: 'checkin_daily_voice',
+          language: receiver.language,
+          variables: {},
+        },
+        await this.voiceCallOptions(receiver.id, receiver.countryCode),
+      );
 
       return {
         providerId: result.providerCallId,
@@ -311,10 +318,9 @@ export class CheckInsService {
       }));
     }
 
-    const channels =
-      [receiver.primaryChannel, ...(receiver.fallbackChannels ?? [])].filter(
-        (channel, index, all) => all.indexOf(channel) === index,
-      );
+    const channels = [receiver.primaryChannel, ...(receiver.fallbackChannels ?? [])].filter(
+      (channel, index, all) => all.indexOf(channel) === index,
+    );
     const offsets = channels.map((channel, index) => {
       if (index === 0) {
         return 0;
@@ -331,15 +337,23 @@ export class CheckInsService {
     }));
   }
 
-  private async sendAttempt(attempt: Awaited<ReturnType<CheckInsRepository['findDuePendingAttempts']>>[number], now: Date): Promise<void> {
+  private async sendAttempt(
+    attempt: Awaited<ReturnType<CheckInsRepository['findDuePendingAttempts']>>[number],
+    now: Date,
+  ): Promise<void> {
     const to = this.cryptoService.decrypt(attempt.checkIn.receiverPhoneEncrypted);
     const result =
       attempt.channel === Channel.VOICE
-        ? await this.channelRouter.makeVoiceCall(Channel.VOICE, to, {
-            scriptKey: 'checkin_daily_voice',
-            language: attempt.checkIn.receiverLanguage,
-            variables: {},
-          }, await this.voiceCallOptions(attempt.checkIn.receiverId, attempt.checkIn.receiverCountryCode))
+        ? await this.channelRouter.makeVoiceCall(
+            Channel.VOICE,
+            to,
+            {
+              scriptKey: 'checkin_daily_voice',
+              language: attempt.checkIn.receiverLanguage,
+              variables: {},
+            },
+            await this.voiceCallOptions(attempt.checkIn.receiverId, attempt.checkIn.receiverCountryCode),
+          )
         : await this.channelRouter.sendMessage(attempt.channel, to, {
             templateKey: 'checkin_daily',
             language: attempt.checkIn.receiverLanguage,

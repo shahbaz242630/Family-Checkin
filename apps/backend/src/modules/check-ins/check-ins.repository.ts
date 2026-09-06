@@ -136,7 +136,9 @@ export interface CheckInsRepository {
   findTimedOutSentAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]>;
   markAttemptSent(input: MarkCheckInAttemptSentInput): Promise<CheckInAttemptRecord>;
   markAttemptFailed(input: MarkCheckInAttemptFailedInput): Promise<CheckInAttemptRecord>;
-  markSentAttemptProviderFailure(input: MarkSentCheckInAttemptProviderFailureInput): Promise<CheckInAttemptRecord | null>;
+  markSentAttemptProviderFailure(
+    input: MarkSentCheckInAttemptProviderFailureInput,
+  ): Promise<CheckInAttemptRecord | null>;
   markAttemptTimedOut(input: MarkCheckInAttemptTimedOutInput): Promise<CheckInAttemptRecord>;
   markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }): Promise<CheckInAttemptRecord | null>;
   skipPendingAttemptsForCheckIn(input: SkipPendingCheckInAttemptsInput): Promise<number>;

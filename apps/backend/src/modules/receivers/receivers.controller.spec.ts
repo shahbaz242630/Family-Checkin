@@ -83,7 +83,13 @@ class FakeReceiversService {
     };
   }
 
-  async pauseForSender(input: { userId: string; receiverId: string; pausedUntil?: Date; ipAddress?: string; userAgent?: string }) {
+  async pauseForSender(input: {
+    userId: string;
+    receiverId: string;
+    pausedUntil?: Date;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
     this.detailInput = input;
     return {
       id: input.receiverId,
