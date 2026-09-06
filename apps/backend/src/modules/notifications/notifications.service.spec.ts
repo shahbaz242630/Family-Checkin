@@ -217,6 +217,77 @@ describe('NotificationsService', () => {
       ],
     ]);
   });
+
+  it('sends quiet updates with the default sound and none of the siren delivery fields (CB-012)', async () => {
+    const repository = new InMemoryPushNotificationsRepository();
+    repository.tokens = [tokenFixture('sender-1', 'ExpoPushToken[good]')];
+    const sentPayloads: unknown[][] = [];
+    const service = new NotificationsService(
+      repository,
+      new InMemoryAuditService() as unknown as AuditService,
+      async (messages) => {
+        sentPayloads.push(messages);
+        return [{ ok: true, id: 'expo-ticket-good' }];
+      },
+      () => new Date('2026-05-07T10:00:00.000Z'),
+    );
+
+    const result = await service.sendQuietUpdateToUser({
+      userId: 'sender-1',
+      title: 'Consent received',
+      body: 'Your receiver agreed to Nearby check-ins.',
+      data: {
+        receiverId: 'receiver-1',
+        reason: 'consent_granted',
+        deepLink: '/(main)/receivers/receiver-1',
+      },
+    });
+
+    expect(result).toEqual({ attempted: 1, sent: 1, failed: 0, sentAt: new Date('2026-05-07T10:00:00.000Z') });
+    expect(sentPayloads).toEqual([
+      [
+        {
+          to: 'ExpoPushToken[good]',
+          title: 'Consent received',
+          body: 'Your receiver agreed to Nearby check-ins.',
+          data: {
+            receiverId: 'receiver-1',
+            reason: 'consent_granted',
+            deepLink: '/(main)/receivers/receiver-1',
+            notificationType: 'quiet_update',
+          },
+          sound: 'default',
+        },
+      ],
+    ]);
+    const message = sentPayloads[0]?.[0] as Record<string, unknown>;
+    expect(message).not.toHaveProperty('channelId');
+    expect(message).not.toHaveProperty('interruptionLevel');
+    expect(message).not.toHaveProperty('priority');
+  });
+
+  it('falls back to the home tab deep link for a quiet update without one', async () => {
+    const repository = new InMemoryPushNotificationsRepository();
+    repository.tokens = [tokenFixture('sender-1', 'ExpoPushToken[good]')];
+    const sentPayloads: unknown[][] = [];
+    const service = new NotificationsService(
+      repository,
+      new InMemoryAuditService() as unknown as AuditService,
+      async (messages) => {
+        sentPayloads.push(messages);
+        return [{ ok: true, id: 'expo-ticket-good' }];
+      },
+    );
+
+    await service.sendQuietUpdateToUser({
+      userId: 'sender-1',
+      title: 'Check-ins stopped',
+      body: 'Your receiver replied STOP.',
+      data: { receiverId: 'receiver-1', reason: 'receiver_opted_out' },
+    });
+
+    expect((sentPayloads[0]?.[0] as { data: Record<string, string> }).data.deepLink).toBe('/(main)');
+  });
 });
 
 function tokenFixture(userId: string, token: string): PushDeviceTokenRecord {

@@ -1,10 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { AbuseReportStatus } from '@prisma/client';
+import { AbuseReportStatus, CheckInStatus } from '@prisma/client';
 import type { Channel, CheckIn, Receiver } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { ABUSE_REVIEW_PAUSE_UNTIL } from './abuse-review-pause';
 import type {
   CreateReceiverRecordInput,
+  OptOutCooldownRecord,
   ReceiverRecord,
   ReceiversRepository,
   ReceiverWithLatestCheckInRecord,
@@ -13,17 +14,38 @@ import type {
 
 type ReceiverWithCheckIns = Receiver & { checkIns: CheckIn[] };
 
+/**
+ * Statuses in which a check-in still accepts the receiver's YES/HELP; mirrors
+ * `PrismaCheckInsRepository.findLatestOpenForReceiver`, which the reply pipeline consults next (CB-014).
+ */
+const REPLY_OPEN_CHECK_IN_STATUSES: CheckIn['status'][] = [
+  CheckInStatus.PENDING,
+  CheckInStatus.SENT,
+  CheckInStatus.NEEDS_ATTENTION,
+];
+
 interface ReceiversPrismaClient {
   receiver: {
     create(args: { data: CreateReceiverRecordInput }): Promise<Receiver>;
-    findMany(args: {
-      where: { userId: string; deletedAt: null };
-      include: { checkIns: { orderBy: { scheduledAt: 'desc' }; take: 1 } };
-      orderBy: { createdAt: 'desc' };
-    }): Promise<ReceiverWithCheckIns[]>;
+    findMany(
+      args:
+        | {
+            where: { userId: string; deletedAt: null };
+            include: { checkIns: { orderBy: { scheduledAt: 'desc' }; take: 1 } };
+            orderBy: { createdAt: 'desc' };
+          }
+        | {
+            where: { phoneHash: string; deletedAt: null };
+            include: {
+              checkIns: { where: { status: { in: CheckIn['status'][] } }; orderBy: { scheduledAt: 'desc' }; take: 1 };
+            };
+            orderBy: { createdAt: 'desc' };
+          }
+        | { where: { phoneHash: string; deletedAt: null }; orderBy: { createdAt: 'desc' } },
+    ): Promise<Receiver[] | ReceiverWithCheckIns[]>;
     findFirst(
       args:
-        | { where: { phoneHash: string; deletedAt: null } }
+        | { where: { id: string; deletedAt: null } }
         | {
             where: { id: string; userId: string; deletedAt: null };
             include: { checkIns: { orderBy: { scheduledAt: 'desc' }; take: 1 } };
@@ -62,22 +84,27 @@ interface ReceiversPrismaClient {
     }): Promise<{ count: number }>;
   };
   checkIn?: {
-    updateMany(args: {
-      where: {
-        id: string;
-        receiverId: string;
-        status: { in: CheckIn['status'][] };
-        receiver: {
-          userId: string;
-          deletedAt: null;
-        };
-      };
-      data: {
-        status: CheckIn['status'];
-        resolvedAt: Date;
-        resolutionByUserId: string;
-      };
-    }): Promise<{ count: number }>;
+    updateMany(
+      args:
+        | {
+            where: {
+              id: string;
+              receiverId: string;
+              status: { in: CheckIn['status'][] };
+              receiver: {
+                userId: string;
+                deletedAt: null;
+              };
+            };
+            data: {
+              status: CheckIn['status'];
+              resolvedAt: Date;
+              resolutionByUserId: string;
+              resolutionNote?: string;
+            };
+          }
+        | { where: { id: string }; data: { resolutionNote: string } },
+    ): Promise<{ count: number }>;
   };
   abuseReport: {
     create(args: {
@@ -90,6 +117,10 @@ interface ReceiversPrismaClient {
     }): Promise<{ id: string; receiverId: string; reviewStatus: AbuseReportStatus; reportedAt: Date }>;
   };
   optOutCooldown: {
+    findFirst(args: {
+      where: { receiver: { phoneHash: string } };
+      orderBy: { cooldownUntil: 'desc' };
+    }): Promise<{ receiverId: string; optOutAt: Date; cooldownUntil: Date } | null>;
     upsert(args: {
       where: { receiverId: string };
       create: {
@@ -282,6 +313,7 @@ export class PrismaReceiversRepository implements ReceiversRepository {
     checkInId: string;
     resolvedAt: Date;
     resolutionByUserId: string;
+    resolutionNote?: string;
   }): Promise<ReceiverWithLatestCheckInRecord | null> {
     const result = await this.prisma.checkIn?.updateMany({
       where: {
@@ -297,21 +329,84 @@ export class PrismaReceiversRepository implements ReceiversRepository {
         status: 'RESOLVED',
         resolvedAt: input.resolvedAt,
         resolutionByUserId: input.resolutionByUserId,
+        ...(input.resolutionNote !== undefined ? { resolutionNote: input.resolutionNote } : {}),
       },
     });
 
     return result && result.count > 0 ? await this.findForUserById(input) : null;
   }
 
+  async setCheckInResolutionNote(input: { checkInId: string; resolutionNote: string }): Promise<void> {
+    await this.prisma.checkIn?.updateMany({
+      where: { id: input.checkInId },
+      data: { resolutionNote: input.resolutionNote },
+    });
+  }
+
   async findActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord | null> {
-    const receiver = await this.prisma.receiver.findFirst({
+    const receivers = (await this.prisma.receiver.findMany({
       where: {
         phoneHash,
+        deletedAt: null,
+      },
+      include: {
+        checkIns: {
+          where: { status: { in: REPLY_OPEN_CHECK_IN_STATUSES } },
+          orderBy: { scheduledAt: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    })) as ReceiverWithCheckIns[];
+
+    // The row that is actually waiting on this phone wins; with nothing open, the newest row does (CB-014).
+    let chosen: ReceiverWithCheckIns | undefined;
+    for (const receiver of receivers) {
+      const open = receiver.checkIns[0];
+      const chosenOpen = chosen?.checkIns[0];
+      if (open && (!chosenOpen || open.scheduledAt > chosenOpen.scheduledAt)) {
+        chosen = receiver;
+      }
+    }
+    const resolved = chosen ?? receivers[0];
+
+    return resolved ? this.toReceiverRecord(resolved) : null;
+  }
+
+  async findManyActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord[]> {
+    const receivers = (await this.prisma.receiver.findMany({
+      where: {
+        phoneHash,
+        deletedAt: null,
+      },
+      orderBy: { createdAt: 'desc' },
+    })) as Receiver[];
+
+    return receivers.map((receiver) => this.toReceiverRecord(receiver));
+  }
+
+  async findActiveById(receiverId: string): Promise<ReceiverRecord | null> {
+    const receiver = await this.prisma.receiver.findFirst({
+      where: {
+        id: receiverId,
         deletedAt: null,
       },
     });
 
     return receiver ? this.toReceiverRecord(receiver as Receiver) : null;
+  }
+
+  async findOptOutCooldownByPhoneHash(phoneHash: string): Promise<OptOutCooldownRecord | null> {
+    // Deleted rows are deliberately included: a receiver who said STOP and was then removed by the sender must
+    // still be off-limits until the cooldown lapses (FR-SAF-07).
+    const cooldown = await this.prisma.optOutCooldown.findFirst({
+      where: { receiver: { phoneHash } },
+      orderBy: { cooldownUntil: 'desc' },
+    });
+
+    return cooldown
+      ? { receiverId: cooldown.receiverId, optOutAt: cooldown.optOutAt, cooldownUntil: cooldown.cooldownUntil }
+      : null;
   }
 
   async markConsentRequested(input: {
@@ -433,6 +528,7 @@ export class PrismaReceiversRepository implements ReceiversRepository {
       respondedAt: checkIn.respondedAt ?? undefined,
       responseDetectedAs: checkIn.responseDetectedAs ?? undefined,
       resolvedAt: checkIn.resolvedAt ?? undefined,
+      resolutionNote: checkIn.resolutionNote ?? undefined,
       resolutionByUserId: checkIn.resolutionByUserId ?? undefined,
     };
   }

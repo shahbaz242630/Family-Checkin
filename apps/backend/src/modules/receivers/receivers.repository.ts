@@ -1,4 +1,11 @@
-import type { AbuseReportStatus, Channel, CheckInStatus, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
+import type {
+  AbuseReportStatus,
+  Channel,
+  CheckInStatus,
+  ConsentStatus,
+  RelationshipType,
+  TechProfile,
+} from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 
 export interface CreateReceiverRecordInput {
@@ -58,11 +65,19 @@ export interface ReceiverLatestCheckInRecord {
   respondedAt?: Date;
   responseDetectedAs?: string;
   resolvedAt?: Date;
+  /** Encrypted; the sender's note or the backup contact's DONE text (CB-018). */
+  resolutionNote?: string;
   resolutionByUserId?: string;
 }
 
 export interface ReceiverWithLatestCheckInRecord extends ReceiverRecord {
   latestCheckIn?: ReceiverLatestCheckInRecord;
+}
+
+export interface OptOutCooldownRecord {
+  receiverId: string;
+  optOutAt: Date;
+  cooldownUntil: Date;
 }
 
 export interface ReceiversRepository {
@@ -77,15 +92,33 @@ export interface ReceiversRepository {
     pausedReason: string;
   }): Promise<ReceiverWithLatestCheckInRecord | null>;
   resumeForUserById(input: { userId: string; receiverId: string }): Promise<ReceiverWithLatestCheckInRecord | null>;
-  deleteForUserById(input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverWithLatestCheckInRecord | null>;
+  deleteForUserById(input: {
+    userId: string;
+    receiverId: string;
+    deletedAt: Date;
+  }): Promise<ReceiverWithLatestCheckInRecord | null>;
   resolveCheckInForUserById(input: {
     userId: string;
     receiverId: string;
     checkInId: string;
     resolvedAt: Date;
     resolutionByUserId: string;
+    /** Encrypted; omitted when the sender left no note (CB-018). */
+    resolutionNote?: string;
   }): Promise<ReceiverWithLatestCheckInRecord | null>;
+  /**
+   * The non-deleted row an inbound reply from this phone belongs to: the one with the most recent open
+   * check-in, else the most recently created (CB-014).
+   */
   findActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord | null>;
+  /** Every non-deleted row sharing the phone hash, newest first; consent replies fan out to all of them (CB-014). */
+  findManyActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord[]>;
+  /** Unscoped by sender; used to reach the owner after a backup contact's reply (CB-012). */
+  findActiveById(receiverId: string): Promise<ReceiverRecord | null>;
+  /** The latest cooldown for any row (deleted or not) that ever shared this phone hash (CB-009). */
+  findOptOutCooldownByPhoneHash(phoneHash: string): Promise<OptOutCooldownRecord | null>;
+  /** Overwrites `check_ins.resolutionNote` with an already-encrypted value (CB-018). */
+  setCheckInResolutionNote(input: { checkInId: string; resolutionNote: string }): Promise<void>;
   markConsentRequested(input: {
     receiverId: string;
     consentRequestedAt: Date;

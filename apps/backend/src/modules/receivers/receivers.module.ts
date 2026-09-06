@@ -7,6 +7,7 @@ import { BillingModule } from '../billing/billing.module';
 import { CheckInsModule } from '../check-ins/check-ins.module';
 import { ChannelsModule } from '../channels/channels.module';
 import { EscalationsModule } from '../escalations/escalations.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 import { UsersModule } from '../users/users.module';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
@@ -30,6 +31,8 @@ import { ReceiversService } from './receivers.service';
     BillingModule,
     // Provides StepUpService for the remove-receiver step-up (REMOVE_RECEIVER token consumption).
     AccountModule,
+    // Quiet sender pushes on consent answers, STOP and backup DONE (CB-012).
+    NotificationsModule,
   ],
   // The fake reply route lives in ReceiverRepliesModule so it can be left out entirely in configured mode.
   controllers: [ReceiversController],

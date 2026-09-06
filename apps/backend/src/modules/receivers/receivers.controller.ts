@@ -1,11 +1,13 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Delete,
   ForbiddenException,
   Get,
   Headers,
+  HttpException,
   Inject,
   NotFoundException,
   Optional,
@@ -25,6 +27,7 @@ import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templat
 import { UsersService } from '../users/users.service';
 import { ReceiverScheduleValidationError } from '../../shared/schedule/receiver-schedule';
 import { ReceiverConsentService } from './receiver-consent.service';
+import { ReceiverRequestError, RESOLUTION_NOTE_TOO_LONG_MESSAGE } from './receiver-policy';
 import { PERSONAL_NOTE_TOO_LONG_MESSAGE, ReceiversService } from './receivers.service';
 
 const PAID_ACCESS_REQUIRED_CODE = 'PAID_ACCESS_REQUIRED';
@@ -41,7 +44,11 @@ const RECEIVER_VALIDATION_MESSAGES = new Set([
   'Receiver schedule frequency is required',
   'Invalid phone number',
   PERSONAL_NOTE_TOO_LONG_MESSAGE,
+  RESOLUTION_NOTE_TOO_LONG_MESSAGE,
 ]);
+
+/** Whether the consent invitation actually left; `failed` tells the app to offer "Send again" (CB-009). */
+type ConsentRequestStatus = 'requested' | 'failed';
 
 interface CreateReceiverBody {
   name?: string;
@@ -76,6 +83,10 @@ interface UpdateReceiverBody {
 
 interface PauseReceiverBody {
   pausedUntil?: string;
+}
+
+interface ResolveCheckInBody {
+  note?: string;
 }
 
 @Controller('receivers')
@@ -259,23 +270,63 @@ export class ReceiversController {
     @Headers('user-agent') userAgent: string | undefined,
     @Param('receiverId') receiverId: string,
     @Param('checkInId') checkInId: string,
+    @Body() body: ResolveCheckInBody = {},
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
     const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
-    const receiver = await this.receiversService.resolveCheckInForSender({
-      userId: sender.id,
-      receiverId,
-      checkInId,
-      ipAddress: this.firstForwardedIp(forwardedFor),
-      userAgent,
-    });
+    const receiver = await this.mapReceiverValidationFailure(() =>
+      this.receiversService.resolveCheckInForSender({
+        userId: sender.id,
+        receiverId,
+        checkInId,
+        note: this.optionalText(body.note),
+        ipAddress: this.firstForwardedIp(forwardedFor),
+        userAgent,
+      }),
+    );
 
     if (!receiver) {
       throw new NotFoundException('Check-in not found');
     }
 
     return { receiver };
+  }
+
+  @Post(':receiverId/consent/resend')
+  async resendConsent(
+    @Headers('authorization') authorization: string | undefined,
+    @Headers('x-forwarded-for') forwardedFor: string | undefined,
+    @Headers('user-agent') userAgent: string | undefined,
+    @Param('receiverId') receiverId: string,
+  ) {
+    const accessToken = this.getBearerToken(authorization);
+    const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
+    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const result = await this.mapReceiverValidationFailure(() =>
+      this.receiverConsentService.resendConsent({
+        userId: sender.id,
+        receiverId,
+        senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME,
+        ipAddress: this.firstForwardedIp(forwardedFor),
+        userAgent,
+      }),
+    );
+
+    if (!result) {
+      throw new NotFoundException('Receiver not found');
+    }
+
+    const consentRequestStatus: ConsentRequestStatus = result.sent ? 'requested' : 'failed';
+
+    return {
+      receiver: {
+        id: result.receiver.id,
+        consentStatus: result.receiver.consentStatus,
+        consentRequestStatus,
+        consentRequestedAt: result.receiver.consentRequestedAt?.toISOString(),
+      },
+    };
   }
 
   @Patch(':receiverId/check-ins/:checkInId/alert-backup')
@@ -289,13 +340,15 @@ export class ReceiversController {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
     const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
-    const receiver = await this.receiversService.alertBackupForSender({
-      userId: sender.id,
-      receiverId,
-      checkInId,
-      ipAddress: this.firstForwardedIp(forwardedFor),
-      userAgent,
-    });
+    const receiver = await this.mapReceiverValidationFailure(() =>
+      this.receiversService.alertBackupForSender({
+        userId: sender.id,
+        receiverId,
+        checkInId,
+        ipAddress: this.firstForwardedIp(forwardedFor),
+        userAgent,
+      }),
+    );
 
     if (!receiver) {
       throw new NotFoundException('Check-in not found');
@@ -315,13 +368,15 @@ export class ReceiversController {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
     const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
-    const receiver = await this.receiversService.tryCheckInLaterForSender({
-      userId: sender.id,
-      receiverId,
-      checkInId,
-      ipAddress: this.firstForwardedIp(forwardedFor),
-      userAgent,
-    });
+    const receiver = await this.mapReceiverValidationFailure(() =>
+      this.receiversService.tryCheckInLaterForSender({
+        userId: sender.id,
+        receiverId,
+        checkInId,
+        ipAddress: this.firstForwardedIp(forwardedFor),
+        userAgent,
+      }),
+    );
 
     if (!receiver) {
       throw new NotFoundException('Check-in not found');
@@ -370,7 +425,7 @@ export class ReceiversController {
         userAgent,
       }),
     );
-    await this.receiverConsentService.requestConsent({
+    const requested = await this.receiverConsentService.requestConsent({
       receiver,
       actorUserId: sender.id,
       // The sender's own name is not stored yet (later CB-010 slice); the email must never reach a receiver.
@@ -378,6 +433,9 @@ export class ReceiversController {
       ipAddress: this.firstForwardedIp(forwardedFor),
       userAgent,
     });
+    // A provider failure leaves the receiver PENDING with no request recorded; the row exists, so the sender
+    // is told and can use the resend route rather than seeing a 500 for a receiver that was created (CB-009).
+    const consentRequestStatus: ConsentRequestStatus = requested?.consentRequestedAt ? 'requested' : 'failed';
 
     return {
       receiver: {
@@ -392,7 +450,7 @@ export class ReceiversController {
         fallbackChannels: receiver.fallbackChannels,
         scheduleFrequency: receiver.scheduleFrequency,
         scheduleTimeWindow: receiver.scheduleTimeWindow,
-        consentRequestStatus: 'requested',
+        consentRequestStatus,
       },
     };
   }
@@ -448,12 +506,24 @@ export class ReceiversController {
     return value;
   }
 
+  private optionalText(value: string | undefined): string | undefined {
+    return typeof value === 'string' ? value.trim() || undefined : undefined;
+  }
+
+  /**
+   * Turns the receivers services' typed failures into HTTP errors the app can act on: validation as 400, a
+   * `ReceiverRequestError` as its own 409 or 429 with `{ code, message, ...details }`.
+   */
   private async mapReceiverValidationFailure<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
     } catch (error) {
       if (error instanceof ReceiverScheduleValidationError) {
         throw new BadRequestException({ code: error.code, message: error.message });
+      }
+      if (error instanceof ReceiverRequestError) {
+        const body = { code: error.code, message: error.message, ...error.details };
+        throw error.httpStatus === 409 ? new ConflictException(body) : new HttpException(body, error.httpStatus);
       }
       if (error instanceof Error && RECEIVER_VALIDATION_MESSAGES.has(error.message)) {
         throw new BadRequestException(error.message);

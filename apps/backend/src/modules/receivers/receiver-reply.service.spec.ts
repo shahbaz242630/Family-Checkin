@@ -29,10 +29,12 @@ import type {
   MarkCheckInSentInput,
   ResolveCheckInByBackupContactInput,
 } from '../check-ins/check-ins.repository';
+import type { SendUserPushInput, SendUserPushResult } from '../notifications/notifications.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { createRealAuditService } from '../../shared/testing/real-audit';
 import type {
   CreateReceiverRecordInput,
+  OptOutCooldownRecord,
   ReceiverRecord,
   ReceiversRepository,
   UpdateReceiverRecordInput,
@@ -43,6 +45,8 @@ const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 
 class InMemoryReceiversRepository implements ReceiversRepository {
   public records: ReceiverRecord[] = [];
+  /** The row `findActiveByPhoneHash` hands back; defaults to the first record for the hash. */
+  public replyTarget: ReceiverRecord | null = null;
   public consentUpdate: {
     receiverId: string;
     consentStatus: ConsentStatus;
@@ -50,6 +54,7 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     consentGrantedAt?: Date;
     consentRevokedAt?: Date;
   } | null = null;
+  public consentUpdates: Array<{ receiverId: string; consentStatus: ConsentStatus }> = [];
   public abuseReport: {
     receiverId: string;
     reporterPhoneHash: string;
@@ -64,6 +69,9 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     optOutChannel: Channel;
     optOutKeyword?: string;
   } | null = null;
+  public optOutCooldowns: string[] = [];
+  public activeCooldown: OptOutCooldownRecord | null = null;
+  public resolutionNotes: Array<{ checkInId: string; resolutionNote: string }> = [];
 
   async create(input: CreateReceiverRecordInput): Promise<ReceiverRecord> {
     const record = {
@@ -77,7 +85,26 @@ class InMemoryReceiversRepository implements ReceiversRepository {
   }
 
   async findActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord | null> {
-    return this.records.find((receiver) => receiver.phoneHash === phoneHash) ?? null;
+    if (this.replyTarget?.phoneHash === phoneHash) {
+      return this.replyTarget;
+    }
+    return this.records.find((receiver) => receiver.phoneHash === phoneHash && !receiver.deletedAt) ?? null;
+  }
+
+  async findManyActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord[]> {
+    return this.records.filter((receiver) => receiver.phoneHash === phoneHash && !receiver.deletedAt);
+  }
+
+  async findActiveById(receiverId: string): Promise<ReceiverRecord | null> {
+    return this.records.find((receiver) => receiver.id === receiverId && !receiver.deletedAt) ?? null;
+  }
+
+  async findOptOutCooldownByPhoneHash(_phoneHash: string): Promise<OptOutCooldownRecord | null> {
+    return this.activeCooldown;
+  }
+
+  async setCheckInResolutionNote(input: { checkInId: string; resolutionNote: string }): Promise<void> {
+    this.resolutionNotes.push(input);
   }
 
   async findManyForUser(_userId: string): Promise<ReceiverRecord[]> {
@@ -176,6 +203,7 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     consentRevokedAt?: Date;
   }): Promise<ReceiverRecord> {
     this.consentUpdate = input;
+    this.consentUpdates.push({ receiverId: input.receiverId, consentStatus: input.consentStatus });
     const record = this.records.find((receiver) => receiver.id === input.receiverId);
     if (!record) {
       throw new Error('Receiver not found');
@@ -224,10 +252,30 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     optOutKeyword?: string;
   }): Promise<void> {
     this.optOutCooldown = input;
+    this.optOutCooldowns.push(input.receiverId);
   }
 
   async resolveCheckInForUserById(): Promise<null> {
     return null;
+  }
+}
+
+class InMemoryNotificationsService {
+  public pushes: SendUserPushInput[] = [];
+
+  constructor(
+    private readonly outcome: 'sent' | 'no_tokens' | 'throws' = 'sent',
+    private readonly now: () => Date = () => new Date('2026-04-26T11:00:00.000Z'),
+  ) {}
+
+  async sendQuietUpdateToUser(input: SendUserPushInput): Promise<SendUserPushResult> {
+    if (this.outcome === 'throws') {
+      throw new Error('Expo push request failed with 503');
+    }
+    this.pushes.push(input);
+    return this.outcome === 'sent'
+      ? { attempted: 1, sent: 1, failed: 0, sentAt: this.now() }
+      : { attempted: 0, sent: 0, failed: 0 };
   }
 }
 
@@ -413,6 +461,7 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
       respondedAt: this.actionableCheckIn?.respondedAt,
       responseDetectedAs: this.actionableCheckIn?.responseDetectedAs,
       resolvedAt: input.resolvedAt,
+      resolutionNote: this.actionableCheckIn?.resolutionNote,
       createdAt: this.actionableCheckIn?.createdAt ?? input.resolvedAt,
       updatedAt: input.resolvedAt,
     };
@@ -852,6 +901,7 @@ describe('ReceiverReplyService', () => {
           channel: Channel.WHATSAPP,
           normalizedReply: 'DONE',
           providerMessageId: 'backup-message-1',
+          resolutionTextStored: true,
         },
         ipAddress: undefined,
         userAgent: undefined,
@@ -1470,5 +1520,479 @@ describe('ReceiverReplyService cancels in-flight check-ins on STOP and REPORT (C
     });
 
     expect(checkInsService.cancelled).toEqual([]);
+  });
+});
+
+const RECEIVER_ID = '1aef91f9-64c9-4548-baa5-d70b52386efb';
+const SENDER_ID = '61a5639c-c902-4950-9924-1a4d6db1e02d';
+const RECEIVER_DEEP_LINK = `/(main)/receivers/${RECEIVER_ID}`;
+
+describe('ReceiverReplyService tells the sender quietly and confirms a STOP to the receiver (CB-012)', () => {
+  const now = () => new Date('2026-04-26T11:00:00.000Z');
+
+  function harness(options: {
+    receiver: ReceiverRecord;
+    notifications?: InMemoryNotificationsService;
+    providers?: FakeChannelProvider[];
+    checkIns?: InMemoryCheckInsRepository;
+    backupContacts?: InMemoryBackupContactsRepository;
+  }) {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const { auditService, audit } = createRealAuditService(now);
+    const notifications = options.notifications ?? new InMemoryNotificationsService('sent', now);
+    repository.records.push(options.receiver);
+    const service = new ReceiverReplyService(
+      repository,
+      options.checkIns ?? new InMemoryCheckInsRepository(),
+      crypto,
+      auditService,
+      undefined,
+      options.backupContacts,
+      now,
+      undefined,
+      notifications,
+      options.providers ? new ChannelRouterService(options.providers) : undefined,
+    );
+
+    return { crypto, repository, audit, notifications, service };
+  }
+
+  it('pushes a quiet "consent received" update to the sender when the receiver replies YES', async () => {
+    const crypto = new CryptoService(masterKey);
+    const { audit, notifications, service } = harness({ receiver: receiverFixture(crypto) });
+
+    await service.handleInboundReply({ fromPhone: '+971501234567', channel: Channel.WHATSAPP, body: 'YES' });
+
+    expect(notifications.pushes).toEqual([
+      {
+        userId: SENDER_ID,
+        title: 'Consent received',
+        body: expect.any(String),
+        data: { receiverId: RECEIVER_ID, reason: 'consent_granted', deepLink: RECEIVER_DEEP_LINK },
+      },
+    ]);
+    expect(audit.events.map((event) => event.action)).toEqual(['receiver.consent_granted', 'sender_push.sent']);
+    expect(audit.events[1]).toMatchObject({
+      entityType: 'receiver',
+      entityId: RECEIVER_ID,
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: RECEIVER_ID,
+        attempted: 1,
+        sent: 1,
+        failed: 0,
+        reason: 'consent_granted',
+        deepLink: RECEIVER_DEEP_LINK,
+      },
+    });
+    expect(JSON.stringify(notifications.pushes)).not.toContain('Fatima');
+    expect(JSON.stringify(notifications.pushes)).not.toContain('+971501234567');
+  });
+
+  it('pushes a quiet "consent declined" update when the receiver replies NO', async () => {
+    const crypto = new CryptoService(masterKey);
+    const { notifications, service } = harness({ receiver: receiverFixture(crypto) });
+
+    await service.handleInboundReply({ fromPhone: '+971501234567', channel: Channel.SMS, body: 'NO' });
+
+    expect(notifications.pushes).toEqual([
+      expect.objectContaining({
+        userId: SENDER_ID,
+        title: 'Consent declined',
+        data: { receiverId: RECEIVER_ID, reason: 'consent_declined', deepLink: RECEIVER_DEEP_LINK },
+      }),
+    ]);
+  });
+
+  it('confirms a STOP to the receiver on the channel it arrived on and pushes the sender quietly', async () => {
+    const crypto = new CryptoService(masterKey);
+    const sms = new FakeChannelProvider(Channel.SMS, { now });
+    const { audit, notifications, service } = harness({
+      receiver: { ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED },
+      providers: [sms],
+    });
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.SMS,
+      body: 'STOP',
+      providerMessageId: 'provider-message-stop',
+    });
+
+    expect(result).toEqual({
+      receiverId: RECEIVER_ID,
+      action: 'consent_revoked',
+      consentStatus: ConsentStatus.REVOKED,
+    });
+    expect(sms.sentMessages).toEqual([
+      {
+        to: '+971501234567',
+        message: {
+          templateKey: 'receiver_checkins_ended',
+          language: 'en',
+          variables: { receiverName: 'Fatima Parent', senderDisplayName: 'your family member' },
+        },
+      },
+    ]);
+    expect(sms.renderedMessages[0]?.body).toContain('ended your Nearby check-ins');
+    expect(notifications.pushes).toEqual([
+      expect.objectContaining({
+        userId: SENDER_ID,
+        title: 'Check-ins stopped',
+        data: { receiverId: RECEIVER_ID, reason: 'receiver_opted_out', deepLink: RECEIVER_DEEP_LINK },
+      }),
+    ]);
+    expect(audit.events.map((event) => event.action)).toEqual([
+      'receiver.consent_revoked',
+      'receiver.opt_out_confirmation_sent',
+      'sender_push.sent',
+    ]);
+    expect(audit.events[1]).toMatchObject({
+      entityType: 'receiver',
+      entityId: RECEIVER_ID,
+      metadata: {
+        channel: Channel.SMS,
+        templateKey: 'receiver_checkins_ended',
+        providerStatus: 'accepted',
+        renderedLanguage: 'en',
+        renderFallback: false,
+      },
+    });
+    expect(JSON.stringify(audit.events)).not.toContain('Fatima');
+  });
+
+  it('keeps the STOP effective and audits when the confirmation cannot be sent', async () => {
+    const crypto = new CryptoService(masterKey);
+    // Only WhatsApp is wired; the STOP arrives by SMS, so the router has no provider for the confirmation.
+    const { audit, repository, service } = harness({
+      receiver: { ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED },
+      providers: [new FakeChannelProvider(Channel.WHATSAPP, { now })],
+    });
+
+    const result = await service.handleInboundReply({ fromPhone: '+971501234567', channel: Channel.SMS, body: 'STOP' });
+
+    expect(result.action).toBe('consent_revoked');
+    expect(repository.consentUpdate?.consentStatus).toBe(ConsentStatus.REVOKED);
+    expect(repository.optOutCooldown?.receiverId).toBe(RECEIVER_ID);
+    expect(audit.events[1]).toMatchObject({
+      action: 'receiver.opt_out_confirmation_failed',
+      metadata: { channel: Channel.SMS, templateKey: 'receiver_checkins_ended', error: expect.any(String) },
+    });
+  });
+
+  it('audits an undelivered push when the sender has no device and never fails the reply', async () => {
+    const crypto = new CryptoService(masterKey);
+    const { audit, service } = harness({
+      receiver: receiverFixture(crypto),
+      notifications: new InMemoryNotificationsService('no_tokens', now),
+    });
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.WHATSAPP,
+      body: 'YES',
+    });
+
+    expect(result.action).toBe('consent_granted');
+    expect(audit.events[1]).toMatchObject({
+      action: 'sender_push.not_delivered',
+      metadata: { attempted: 0, sent: 0, reason: 'consent_granted' },
+    });
+  });
+
+  it('audits a failed push when the gateway throws and still answers the reply', async () => {
+    const crypto = new CryptoService(masterKey);
+    const { audit, service } = harness({
+      receiver: receiverFixture(crypto),
+      notifications: new InMemoryNotificationsService('throws', now),
+    });
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.WHATSAPP,
+      body: 'YES',
+    });
+
+    expect(result.action).toBe('consent_granted');
+    expect(audit.events[1]).toMatchObject({
+      action: 'sender_push.failed',
+      metadata: { reason: 'consent_granted', error: 'Expo push request failed with 503' },
+    });
+  });
+
+  it('pushes a quiet "backup contact reached them" update to the receiver’s sender on DONE', async () => {
+    const crypto = new CryptoService(masterKey);
+    const backupContacts = new InMemoryBackupContactsRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    backupContacts.records.push(backupContactFixture(crypto));
+    checkIns.actionableCheckIn = { ...checkInFixture(CheckInStatus.ESCALATED), responseDetectedAs: 'help' };
+    const { audit, notifications, service } = harness({
+      receiver: { ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED },
+      backupContacts,
+      checkIns,
+    });
+
+    const result = await service.handleInboundReply({ fromPhone: '+971509999999', channel: Channel.SMS, body: 'DONE' });
+
+    expect(result.action).toBe('check_in_resolved_by_backup');
+    expect(notifications.pushes).toEqual([
+      expect.objectContaining({
+        userId: SENDER_ID,
+        title: 'Backup contact reached them',
+        data: {
+          receiverId: RECEIVER_ID,
+          checkInId: 'check-in-1',
+          reason: 'backup_contact_done',
+          deepLink: RECEIVER_DEEP_LINK,
+        },
+      }),
+    ]);
+    expect(audit.events.at(-1)).toMatchObject({
+      entityType: 'check_in',
+      entityId: 'check-in-1',
+      action: 'sender_push.sent',
+      metadata: { receiverId: RECEIVER_ID, reason: 'backup_contact_done', sent: 1 },
+    });
+  });
+});
+
+describe('ReceiverReplyService ignores a YES inside the STOP cooldown (CB-009)', () => {
+  const now = () => new Date('2026-04-26T11:00:00.000Z');
+
+  function harness(cooldownUntil: Date) {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const notifications = new InMemoryNotificationsService('sent', now);
+    const { auditService, audit } = createRealAuditService(now);
+    repository.records.push({
+      ...receiverFixture(crypto),
+      consentStatus: ConsentStatus.REVOKED,
+      consentRevokedAt: new Date('2026-04-26T10:59:00.000Z'),
+    });
+    repository.activeCooldown = {
+      receiverId: RECEIVER_ID,
+      optOutAt: new Date('2026-04-26T10:59:00.000Z'),
+      cooldownUntil,
+    };
+    const service = new ReceiverReplyService(
+      repository,
+      new InMemoryCheckInsRepository(),
+      crypto,
+      auditService,
+      undefined,
+      undefined,
+      now,
+      undefined,
+      notifications,
+    );
+
+    return { repository, audit, notifications, service };
+  }
+
+  it('does not re-grant consent one minute after a STOP and audits the ignored YES', async () => {
+    const { repository, audit, notifications, service } = harness(new Date('2026-05-03T10:59:00.000Z'));
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.WHATSAPP,
+      body: 'YES',
+      providerMessageId: 'provider-message-late-yes',
+    });
+
+    expect(result).toEqual({
+      receiverId: RECEIVER_ID,
+      action: 'consent_ignored_cooldown',
+      consentStatus: ConsentStatus.REVOKED,
+    });
+    expect(repository.consentUpdate).toBeNull();
+    expect(notifications.pushes).toEqual([]);
+    expect(audit.events).toEqual([
+      {
+        entityType: 'receiver',
+        entityId: RECEIVER_ID,
+        action: 'receiver.consent_ignored_cooldown',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          channel: Channel.WHATSAPP,
+          normalizedReply: 'YES',
+          providerMessageId: 'provider-message-late-yes',
+          cooldownUntil: '2026-05-03T10:59:00.000Z',
+        },
+        ipAddress: undefined,
+        userAgent: undefined,
+      },
+    ]);
+  });
+
+  it('grants consent again once the cooldown has lapsed', async () => {
+    const { repository, service } = harness(new Date('2026-04-26T10:59:59.000Z'));
+
+    const result = await service.handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.WHATSAPP,
+      body: 'YES',
+    });
+
+    expect(result.action).toBe('consent_granted');
+    expect(repository.consentUpdate?.consentStatus).toBe(ConsentStatus.GRANTED);
+  });
+
+  it('still lets a NO or STOP through during the cooldown', async () => {
+    const { repository, service } = harness(new Date('2026-05-03T10:59:00.000Z'));
+
+    const result = await service.handleInboundReply({ fromPhone: '+971501234567', channel: Channel.SMS, body: 'STOP' });
+
+    expect(result.action).toBe('consent_revoked');
+    expect(repository.optOutCooldown?.cooldownUntil).toEqual(new Date('2026-05-03T11:00:00.000Z'));
+  });
+});
+
+describe('ReceiverReplyService resolves a phone shared by two receiver rows (CB-014)', () => {
+  const now = () => new Date('2026-04-27T05:45:00.000Z');
+  const SECOND_RECEIVER_ID = '2bef91f9-64c9-4548-baa5-d70b52386efc';
+
+  class InMemoryCheckInsService {
+    public cancelled: Array<{ receiverId: string; reason: string }> = [];
+
+    async cancelOpenCheckInsForReceiver(input: { receiverId: string; reason: string }) {
+      this.cancelled.push(input);
+      return { cancelled: 1, skippedAttempts: 1 };
+    }
+  }
+
+  function harness(rows: ReceiverRecord[], replyTarget: ReceiverRecord, checkIns = new InMemoryCheckInsRepository()) {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const notifications = new InMemoryNotificationsService('sent', now);
+    const checkInsService = new InMemoryCheckInsService();
+    const sms = new FakeChannelProvider(Channel.SMS, { now });
+    const { auditService, audit } = createRealAuditService(now);
+    repository.records.push(...rows);
+    repository.replyTarget = replyTarget;
+    const service = new ReceiverReplyService(
+      repository,
+      checkIns,
+      crypto,
+      auditService,
+      undefined,
+      undefined,
+      now,
+      checkInsService as unknown as CheckInsService,
+      notifications,
+      new ChannelRouterService([sms]),
+    );
+
+    return { repository, audit, notifications, checkInsService, sms, service };
+  }
+
+  it('answers the open check-in of the row the repository resolved and leaves the other row’s consent alone', async () => {
+    const crypto = new CryptoService(masterKey);
+    const granted = { ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED };
+    const pending = { ...receiverFixture(crypto), id: SECOND_RECEIVER_ID, userId: 'sender-b' };
+    const checkIns = new InMemoryCheckInsRepository();
+    checkIns.openCheckIn = checkInFixture(CheckInStatus.SENT);
+    const { repository, service } = harness([pending, granted], granted, checkIns);
+
+    const result = await service.handleInboundReply({ fromPhone: '+971501234567', channel: Channel.SMS, body: 'YES' });
+
+    expect(result).toMatchObject({ receiverId: RECEIVER_ID, action: 'check_in_responded_ok', checkInId: 'check-in-1' });
+    expect(repository.consentUpdates).toEqual([]);
+  });
+
+  it('fans a YES out to every row sharing the phone and tells each sender', async () => {
+    const crypto = new CryptoService(masterKey);
+    const first = receiverFixture(crypto);
+    const second = { ...receiverFixture(crypto), id: SECOND_RECEIVER_ID, userId: 'sender-b' };
+    const { repository, audit, notifications, service } = harness([first, second], second);
+
+    const result = await service.handleInboundReply({ fromPhone: '+971501234567', channel: Channel.SMS, body: 'YES' });
+
+    expect(result).toEqual({
+      receiverId: SECOND_RECEIVER_ID,
+      action: 'consent_granted',
+      consentStatus: ConsentStatus.GRANTED,
+    });
+    expect(repository.consentUpdates).toEqual([
+      { receiverId: SECOND_RECEIVER_ID, consentStatus: ConsentStatus.GRANTED },
+      { receiverId: RECEIVER_ID, consentStatus: ConsentStatus.GRANTED },
+    ]);
+    expect(
+      audit.events.filter((event) => event.action === 'receiver.consent_granted').map((event) => event.entityId),
+    ).toEqual([SECOND_RECEIVER_ID, RECEIVER_ID]);
+    expect(notifications.pushes.map((push) => push.userId).sort()).toEqual([SENDER_ID, 'sender-b']);
+    expect(notifications.pushes.find((push) => push.userId === 'sender-b')?.data.receiverId).toBe(SECOND_RECEIVER_ID);
+  });
+
+  it('fans a STOP out to every row, cancels each cascade, and confirms to the phone once', async () => {
+    const crypto = new CryptoService(masterKey);
+    const first = { ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED };
+    const second = { ...receiverFixture(crypto), id: SECOND_RECEIVER_ID, consentStatus: ConsentStatus.GRANTED };
+    const { repository, checkInsService, sms, notifications, service } = harness([first, second], first);
+
+    const result = await service.handleInboundReply({ fromPhone: '+971501234567', channel: Channel.SMS, body: 'STOP' });
+
+    expect(result.action).toBe('consent_revoked');
+    expect(repository.consentUpdates.map((update) => update.receiverId)).toEqual([RECEIVER_ID, SECOND_RECEIVER_ID]);
+    expect(repository.optOutCooldowns).toEqual([RECEIVER_ID, SECOND_RECEIVER_ID]);
+    expect(checkInsService.cancelled).toEqual([
+      { receiverId: RECEIVER_ID, reason: 'receiver_opted_out' },
+      { receiverId: SECOND_RECEIVER_ID, reason: 'receiver_opted_out' },
+    ]);
+    expect(sms.sentMessages).toHaveLength(1);
+    // Both rows belong to the same sender, who is told once.
+    expect(notifications.pushes).toHaveLength(1);
+  });
+});
+
+describe('ReceiverReplyService stores the backup contact’s DONE text on the check-in (CB-018)', () => {
+  const now = () => new Date('2026-04-27T06:30:00.000Z');
+
+  function harness(existingNote?: string) {
+    const crypto = new CryptoService(masterKey);
+    const receivers = new InMemoryReceiversRepository();
+    const backupContacts = new InMemoryBackupContactsRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService(now);
+    receivers.records.push({ ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED });
+    backupContacts.records.push(backupContactFixture(crypto));
+    checkIns.actionableCheckIn = {
+      ...checkInFixture(CheckInStatus.ESCALATED),
+      resolutionNote: existingNote ? crypto.encrypt(existingNote) : undefined,
+    };
+    const service = new ReceiverReplyService(receivers, checkIns, crypto, auditService, undefined, backupContacts, now);
+
+    return { crypto, receivers, audit, service };
+  }
+
+  it('encrypts the reply text, as typed, into an empty resolution note', async () => {
+    const { crypto, receivers, audit, service } = harness();
+
+    // Only the DONE / CHECKED / RESOLVED keywords close a check-in; the note keeps the contact's own wording.
+    await service.handleInboundReply({
+      fromPhone: '+971509999999',
+      channel: Channel.SMS,
+      body: '  Checked  ',
+    });
+
+    expect(receivers.resolutionNotes).toHaveLength(1);
+    expect(receivers.resolutionNotes[0]?.checkInId).toBe('check-in-1');
+    expect(crypto.decrypt(receivers.resolutionNotes[0]?.resolutionNote ?? '')).toBe('Backup contact reply: Checked');
+    expect(JSON.stringify(receivers.resolutionNotes)).not.toContain('Checked');
+    expect(JSON.stringify(audit.events)).not.toContain('Checked');
+    expect(audit.events.at(-1)).toMatchObject({
+      action: 'check_in.resolved_by_backup',
+      metadata: { resolutionTextStored: true },
+    });
+  });
+
+  it('appends the reply text after an existing note', async () => {
+    const { crypto, receivers, service } = harness('Sender called the neighbour.');
+
+    await service.handleInboundReply({ fromPhone: '+971509999999', channel: Channel.WHATSAPP, body: 'DONE' });
+
+    expect(crypto.decrypt(receivers.resolutionNotes[0]?.resolutionNote ?? '')).toBe(
+      'Sender called the neighbour.\nBackup contact reply: DONE',
+    );
   });
 });

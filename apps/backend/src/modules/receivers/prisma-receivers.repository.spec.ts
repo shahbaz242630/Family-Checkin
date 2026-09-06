@@ -7,6 +7,7 @@ import {
   TechProfile,
 } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
+import type { Mock } from 'vitest';
 import { ABUSE_REVIEW_PAUSE_REASON, ABUSE_REVIEW_PAUSE_UNTIL } from './abuse-review-pause';
 import { PrismaReceiversRepository } from './prisma-receivers.repository';
 
@@ -51,6 +52,7 @@ describe('PrismaReceiversRepository', () => {
         create: abuseReportCreate,
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: optOutCooldownUpsert,
       },
     });
@@ -114,6 +116,7 @@ describe('PrismaReceiversRepository', () => {
         create: abuseReportCreate,
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: optOutCooldownUpsert,
       },
     });
@@ -164,6 +167,7 @@ describe('PrismaReceiversRepository', () => {
         create: abuseReportCreate,
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: optOutCooldownUpsert,
       },
     });
@@ -205,6 +209,7 @@ describe('PrismaReceiversRepository', () => {
         create: abuseReportCreate,
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: optOutCooldownUpsert,
       },
     });
@@ -249,6 +254,7 @@ describe('PrismaReceiversRepository', () => {
         create: abuseReportCreate,
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: optOutCooldownUpsert,
       },
     });
@@ -293,6 +299,7 @@ describe('PrismaReceiversRepository', () => {
         create: abuseReportCreate,
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: optOutCooldownUpsert,
       },
     });
@@ -354,6 +361,7 @@ describe('PrismaReceiversRepository', () => {
         create: abuseReportCreate,
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: optOutCooldownUpsert,
       },
     });
@@ -425,6 +433,7 @@ describe('PrismaReceiversRepository', () => {
         create: abuseReportCreate,
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: optOutCooldownUpsert,
       },
     });
@@ -514,6 +523,7 @@ describe('PrismaReceiversRepository', () => {
         create: vi.fn(),
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: vi.fn(),
       },
     });
@@ -583,6 +593,7 @@ describe('PrismaReceiversRepository', () => {
         create: abuseReportCreate,
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: optOutCooldownUpsert,
       },
     });
@@ -640,6 +651,7 @@ describe('PrismaReceiversRepository', () => {
         create: vi.fn(),
       },
       optOutCooldown: {
+        findFirst: vi.fn(),
         upsert: vi.fn(),
       },
     });
@@ -661,5 +673,258 @@ describe('PrismaReceiversRepository', () => {
     // Eligibility only reads pausedUntil (check-ins.service.ts isEligible, prisma-check-ins.repository.ts
     // findReceiversDueForCheckIn), so the sentinel must sit in the future to keep the receiver off the schedule.
     expect(ABUSE_REVIEW_PAUSE_UNTIL.getTime()).toBeGreaterThan(Date.now());
+  });
+});
+
+function receiverRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'receiver-1',
+    userId: 'user-1',
+    nameEncrypted: 'encrypted-name',
+    phoneEncrypted: 'encrypted-phone',
+    phoneHash: 'phone-hash',
+    countryCode: 'AE',
+    relationshipType: RelationshipType.PARENT,
+    language: 'en',
+    timezone: 'Asia/Dubai',
+    techProfile: TechProfile.WHATSAPP,
+    primaryChannel: Channel.WHATSAPP,
+    fallbackChannels: [Channel.SMS],
+    scheduleFrequency: 'daily',
+    scheduleTimeWindow: { start: '09:00', end: '11:00' },
+    scheduleCustomCron: null,
+    personalNoteEncrypted: null,
+    consentStatus: ConsentStatus.GRANTED,
+    consentRequestedAt: null,
+    consentGrantedAt: null,
+    consentRevokedAt: null,
+    consentTranscript: null,
+    pausedUntil: null,
+    pausedReason: null,
+    deletedAt: null,
+    checkIns: [],
+    createdAt: new Date('2026-04-26T10:00:00.000Z'),
+    updatedAt: new Date('2026-04-30T10:00:00.000Z'),
+    ...overrides,
+  };
+}
+
+function openCheckIn(id: string, scheduledAt: string) {
+  return {
+    id,
+    receiverId: 'receiver-1',
+    scheduledAt: new Date(scheduledAt),
+    status: CheckInStatus.SENT,
+    channelUsed: Channel.SMS,
+    sentAt: new Date(scheduledAt),
+    respondedAt: null,
+    responseTranscript: null,
+    responseDetectedAs: null,
+    resolvedAt: null,
+    resolutionNote: null,
+    resolutionByUserId: null,
+    createdAt: new Date(scheduledAt),
+    updatedAt: new Date(scheduledAt),
+  };
+}
+
+function clientWith(overrides: {
+  findFirst?: Mock;
+  findMany?: Mock;
+  checkInUpdateMany?: Mock;
+  cooldownFindFirst?: Mock;
+}) {
+  return {
+    receiver: {
+      create: vi.fn(),
+      findFirst: overrides.findFirst ?? vi.fn(),
+      findMany: overrides.findMany ?? vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(),
+    },
+    checkIn: {
+      updateMany: overrides.checkInUpdateMany ?? vi.fn(),
+    },
+    abuseReport: {
+      create: vi.fn(),
+    },
+    optOutCooldown: {
+      findFirst: overrides.cooldownFindFirst ?? vi.fn(),
+      upsert: vi.fn(),
+    },
+  };
+}
+
+describe('PrismaReceiversRepository resolves a shared phone hash (CB-014)', () => {
+  const openStatuses = [CheckInStatus.PENDING, CheckInStatus.SENT, CheckInStatus.NEEDS_ATTENTION];
+
+  it('picks the row with the most recent open check-in even when another row is newer', async () => {
+    const findMany = vi.fn().mockResolvedValue([
+      receiverRow({ id: 'newer-no-check-in', userId: 'user-2', createdAt: new Date('2026-04-28T10:00:00.000Z') }),
+      receiverRow({ id: 'older-with-check-in', checkIns: [openCheckIn('check-in-1', '2026-04-30T06:00:00.000Z')] }),
+      receiverRow({
+        id: 'oldest-with-stale-check-in',
+        createdAt: new Date('2026-04-20T10:00:00.000Z'),
+        checkIns: [openCheckIn('check-in-0', '2026-04-29T06:00:00.000Z')],
+      }),
+    ]);
+    const repository = new PrismaReceiversRepository(clientWith({ findMany }));
+
+    const receiver = await repository.findActiveByPhoneHash('phone-hash');
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { phoneHash: 'phone-hash', deletedAt: null },
+      include: {
+        checkIns: {
+          where: { status: { in: openStatuses } },
+          orderBy: { scheduledAt: 'desc' },
+          take: 1,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(receiver?.id).toBe('older-with-check-in');
+    expect(receiver).not.toHaveProperty('checkIns');
+  });
+
+  it('falls back to the most recently created row when no row has an open check-in', async () => {
+    const findMany = vi
+      .fn()
+      .mockResolvedValue([
+        receiverRow({ id: 'newest', createdAt: new Date('2026-04-28T10:00:00.000Z') }),
+        receiverRow({ id: 'older' }),
+      ]);
+    const repository = new PrismaReceiversRepository(clientWith({ findMany }));
+
+    await expect(repository.findActiveByPhoneHash('phone-hash')).resolves.toMatchObject({ id: 'newest' });
+  });
+
+  it('returns null when no active row has the hash', async () => {
+    const repository = new PrismaReceiversRepository(clientWith({ findMany: vi.fn().mockResolvedValue([]) }));
+
+    await expect(repository.findActiveByPhoneHash('phone-hash')).resolves.toBeNull();
+  });
+
+  it('lists every active row for the hash, newest first', async () => {
+    const findMany = vi.fn().mockResolvedValue([receiverRow({ id: 'a' }), receiverRow({ id: 'b' })]);
+    const repository = new PrismaReceiversRepository(clientWith({ findMany }));
+
+    const receivers = await repository.findManyActiveByPhoneHash('phone-hash');
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: { phoneHash: 'phone-hash', deletedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(receivers.map((receiver) => receiver.id)).toEqual(['a', 'b']);
+  });
+
+  it('finds one active receiver by id without a sender scope', async () => {
+    const findFirst = vi.fn().mockResolvedValue(receiverRow());
+    const repository = new PrismaReceiversRepository(clientWith({ findFirst }));
+
+    await expect(repository.findActiveById('receiver-1')).resolves.toMatchObject({
+      id: 'receiver-1',
+      userId: 'user-1',
+    });
+    expect(findFirst).toHaveBeenCalledWith({ where: { id: 'receiver-1', deletedAt: null } });
+  });
+});
+
+describe('PrismaReceiversRepository reads the opt-out cooldown by phone hash (CB-009)', () => {
+  it('returns the latest cooldown across every row that ever had the phone, deleted rows included', async () => {
+    const cooldownFindFirst = vi.fn().mockResolvedValue({
+      id: 'cooldown-1',
+      receiverId: 'receiver-1',
+      optOutAt: new Date('2026-04-30T10:00:00.000Z'),
+      cooldownUntil: new Date('2026-05-07T10:00:00.000Z'),
+      optOutChannel: Channel.SMS,
+      optOutKeyword: 'STOP',
+    });
+    const repository = new PrismaReceiversRepository(clientWith({ cooldownFindFirst }));
+
+    const cooldown = await repository.findOptOutCooldownByPhoneHash('phone-hash');
+
+    expect(cooldownFindFirst).toHaveBeenCalledWith({
+      where: { receiver: { phoneHash: 'phone-hash' } },
+      orderBy: { cooldownUntil: 'desc' },
+    });
+    expect(cooldown).toEqual({
+      receiverId: 'receiver-1',
+      optOutAt: new Date('2026-04-30T10:00:00.000Z'),
+      cooldownUntil: new Date('2026-05-07T10:00:00.000Z'),
+    });
+  });
+
+  it('returns null when the phone never opted out', async () => {
+    const repository = new PrismaReceiversRepository(
+      clientWith({ cooldownFindFirst: vi.fn().mockResolvedValue(null) }),
+    );
+
+    await expect(repository.findOptOutCooldownByPhoneHash('phone-hash')).resolves.toBeNull();
+  });
+});
+
+describe('PrismaReceiversRepository stores the resolution note (CB-018)', () => {
+  it('writes the encrypted note with the sender resolution and reads it back on the latest check-in', async () => {
+    const checkInUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const findFirst = vi.fn().mockResolvedValue(
+      receiverRow({
+        checkIns: [
+          {
+            ...openCheckIn('check-in-1', '2026-04-30T06:00:00.000Z'),
+            status: CheckInStatus.RESOLVED,
+            resolutionNote: 'enc-note',
+          },
+        ],
+      }),
+    );
+    const repository = new PrismaReceiversRepository(clientWith({ findFirst, checkInUpdateMany }));
+
+    const receiver = await repository.resolveCheckInForUserById({
+      userId: 'user-1',
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      resolvedAt: new Date('2026-04-30T10:00:00.000Z'),
+      resolutionByUserId: 'user-1',
+      resolutionNote: 'enc-note',
+    });
+
+    expect(checkInUpdateMany.mock.calls[0]?.[0]).toMatchObject({
+      where: { id: 'check-in-1', receiverId: 'receiver-1' },
+      data: {
+        status: CheckInStatus.RESOLVED,
+        resolvedAt: new Date('2026-04-30T10:00:00.000Z'),
+        resolutionByUserId: 'user-1',
+        resolutionNote: 'enc-note',
+      },
+    });
+    expect(receiver?.latestCheckIn?.resolutionNote).toBe('enc-note');
+  });
+
+  it('leaves the note column untouched when the sender gave none', async () => {
+    const checkInUpdateMany = vi.fn().mockResolvedValue({ count: 0 });
+    const repository = new PrismaReceiversRepository(clientWith({ checkInUpdateMany }));
+
+    await repository.resolveCheckInForUserById({
+      userId: 'user-1',
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      resolvedAt: new Date('2026-04-30T10:00:00.000Z'),
+      resolutionByUserId: 'user-1',
+    });
+
+    expect(checkInUpdateMany.mock.calls[0]?.[0].data).not.toHaveProperty('resolutionNote');
+  });
+
+  it('overwrites the note of one check-in for the backup contact reply', async () => {
+    const checkInUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const repository = new PrismaReceiversRepository(clientWith({ checkInUpdateMany }));
+
+    await repository.setCheckInResolutionNote({ checkInId: 'check-in-1', resolutionNote: 'enc-appended' });
+
+    expect(checkInUpdateMany).toHaveBeenCalledWith({
+      where: { id: 'check-in-1' },
+      data: { resolutionNote: 'enc-appended' },
+    });
   });
 });

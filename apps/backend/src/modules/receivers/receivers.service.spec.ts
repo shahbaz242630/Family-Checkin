@@ -14,8 +14,16 @@ import type { ChannelRouterService } from '../channels/channel-router.service';
 import type { CheckInsService } from '../check-ins/check-ins.service';
 import type { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
+import type { CheckInsRepository } from '../check-ins/check-ins.repository';
+import {
+  CheckInInProgressError,
+  OptOutCooldownError,
+  ReceiverAlreadyMonitoredError,
+  RESOLUTION_NOTE_TOO_LONG_MESSAGE,
+} from './receiver-policy';
 import type {
   CreateReceiverRecordInput,
+  OptOutCooldownRecord,
   ReceiverRecord,
   ReceiversRepository,
   ReceiverWithLatestCheckInRecord,
@@ -28,6 +36,11 @@ const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 class InMemoryReceiversRepository implements ReceiversRepository {
   public lastInput: CreateReceiverRecordInput | null = null;
   public receiversForUser: ReceiverWithLatestCheckInRecord[] = [];
+  /** Rows any sender holds for a phone hash; `create` consults these for CB-014. */
+  public activeByPhoneHash: ReceiverRecord[] = [];
+  public optOutCooldown: OptOutCooldownRecord | null = null;
+  public lastResolveInput: { checkInId: string; resolutionNote?: string } | null = null;
+  public resolutionNotes: Array<{ checkInId: string; resolutionNote: string }> = [];
 
   async create(input: CreateReceiverRecordInput): Promise<ReceiverRecord> {
     this.lastInput = input;
@@ -39,8 +52,24 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     };
   }
 
-  async findActiveByPhoneHash(_phoneHash: string): Promise<ReceiverRecord | null> {
-    return null;
+  async findActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord | null> {
+    return this.activeByPhoneHash.find((receiver) => receiver.phoneHash === phoneHash) ?? null;
+  }
+
+  async findManyActiveByPhoneHash(phoneHash: string): Promise<ReceiverRecord[]> {
+    return this.activeByPhoneHash.filter((receiver) => receiver.phoneHash === phoneHash);
+  }
+
+  async findActiveById(receiverId: string): Promise<ReceiverRecord | null> {
+    return this.receiversForUser.find((receiver) => receiver.id === receiverId) ?? null;
+  }
+
+  async findOptOutCooldownByPhoneHash(_phoneHash: string): Promise<OptOutCooldownRecord | null> {
+    return this.optOutCooldown;
+  }
+
+  async setCheckInResolutionNote(input: { checkInId: string; resolutionNote: string }): Promise<void> {
+    this.resolutionNotes.push(input);
   }
 
   async findManyForUser(_userId: string): Promise<ReceiverWithLatestCheckInRecord[]> {
@@ -119,7 +148,9 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     checkInId: string;
     resolvedAt: Date;
     resolutionByUserId: string;
+    resolutionNote?: string;
   }): Promise<ReceiverWithLatestCheckInRecord | null> {
+    this.lastResolveInput = { checkInId: input.checkInId, resolutionNote: input.resolutionNote };
     const receiver = this.receiversForUser.find((item) => item.id === input.receiverId && item.userId === input.userId);
     if (!receiver?.latestCheckIn || receiver.latestCheckIn.id !== input.checkInId) {
       return null;
@@ -143,6 +174,7 @@ class InMemoryReceiversRepository implements ReceiversRepository {
         status: CheckInStatus.RESOLVED,
         resolvedAt: input.resolvedAt,
         resolutionByUserId: input.resolutionByUserId,
+        resolutionNote: input.resolutionNote ?? receiver.latestCheckIn.resolutionNote,
       },
     };
   }
@@ -997,6 +1029,7 @@ describe('ReceiversService', () => {
       actorId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
       metadata: {
         receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        resolutionTextPresent: false,
       },
       ipAddress: '203.0.113.10',
       userAgent: 'Nearby Mobile/1.0',
@@ -1493,5 +1526,413 @@ describe('ReceiversService cancels in-flight check-ins on pause and delete (CB-0
     });
 
     expect(checkIns.cancelled).toEqual([]);
+  });
+});
+
+function grantedReceiverRow(crypto: CryptoService, latestCheckIn?: ReceiverWithLatestCheckInRecord['latestCheckIn']) {
+  return {
+    id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+    nameEncrypted: crypto.encrypt('Fatima Parent'),
+    phoneEncrypted: crypto.encrypt('+971501234567'),
+    phoneHash: crypto.hashForLookup('+971501234567'),
+    countryCode: 'AE',
+    relationshipType: RelationshipType.PARENT,
+    language: 'en',
+    timezone: 'Asia/Dubai',
+    techProfile: TechProfile.WHATSAPP,
+    primaryChannel: Channel.WHATSAPP,
+    fallbackChannels: [Channel.SMS],
+    scheduleFrequency: 'daily',
+    scheduleTimeWindow: { start: '09:00', end: '11:00' },
+    consentStatus: ConsentStatus.GRANTED,
+    latestCheckIn,
+    createdAt: new Date('2026-04-26T08:00:00.000Z'),
+    updatedAt: new Date('2026-04-30T06:20:00.000Z'),
+  } satisfies ReceiverWithLatestCheckInRecord;
+}
+
+const createInput = {
+  userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+  name: 'Fatima Parent',
+  phone: '+971501234567',
+  countryCode: 'AE',
+  relationshipType: RelationshipType.PARENT,
+  language: 'en',
+  timezone: 'Asia/Dubai',
+  techProfile: TechProfile.WHATSAPP,
+  primaryChannel: Channel.WHATSAPP,
+  fallbackChannels: [Channel.SMS],
+  scheduleFrequency: 'daily',
+  scheduleTimeWindow: { start: '09:00', end: '11:00' },
+};
+
+describe('ReceiversService refuses to invite a phone that opted out or is monitored elsewhere (CB-009, CB-014)', () => {
+  const now = () => new Date('2026-05-01T10:00:00.000Z');
+
+  it('returns the cooldown end instead of creating a receiver while the STOP cooldown is running', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    repository.optOutCooldown = {
+      receiverId: '2bef91f9-64c9-4548-baa5-d70b52386efc',
+      optOutAt: new Date('2026-04-30T10:00:00.000Z'),
+      cooldownUntil: new Date('2026-05-07T10:00:00.000Z'),
+    };
+    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService, now);
+
+    const error = await service.createForSender(createInput).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(OptOutCooldownError);
+    expect((error as OptOutCooldownError).cooldownUntil).toEqual(new Date('2026-05-07T10:00:00.000Z'));
+    expect((error as OptOutCooldownError).details).toEqual({ cooldownUntil: '2026-05-07T10:00:00.000Z' });
+    expect(repository.lastInput).toBeNull();
+    expect(audit.events).toEqual([
+      {
+        entityType: 'receiver',
+        entityId: '2bef91f9-64c9-4548-baa5-d70b52386efc',
+        action: 'receiver.create_rejected',
+        actorType: ActorType.USER,
+        actorId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        metadata: { reason: 'opt_out_cooldown', cooldownUntil: '2026-05-07T10:00:00.000Z' },
+        ipAddress: undefined,
+        userAgent: undefined,
+      },
+    ]);
+    expect(JSON.stringify(audit.events)).not.toContain('+971501234567');
+  });
+
+  it('creates the receiver once the cooldown has lapsed', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    repository.optOutCooldown = {
+      receiverId: '2bef91f9-64c9-4548-baa5-d70b52386efc',
+      optOutAt: new Date('2026-04-20T10:00:00.000Z'),
+      cooldownUntil: new Date('2026-04-27T10:00:00.000Z'),
+    };
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+
+    const receiver = await service.createForSender(createInput);
+
+    expect(receiver.consentStatus).toBe(ConsentStatus.PENDING);
+    expect(repository.lastInput?.phoneHash).toBe(crypto.hashForLookup('+971501234567'));
+  });
+
+  it("refuses the phone while another sender's active receiver has it", async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    repository.activeByPhoneHash = [
+      {
+        ...grantedReceiverRow(crypto),
+        id: '3cef91f9-64c9-4548-baa5-d70b52386efd',
+        userId: 'other-sender',
+        consentStatus: ConsentStatus.REVOKED,
+      },
+    ];
+    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService, now);
+
+    await expect(service.createForSender(createInput)).rejects.toBeInstanceOf(ReceiverAlreadyMonitoredError);
+    expect(repository.lastInput).toBeNull();
+    expect(audit.events).toEqual([
+      expect.objectContaining({
+        entityType: 'receiver',
+        entityId: '3cef91f9-64c9-4548-baa5-d70b52386efd',
+        action: 'receiver.create_rejected',
+        actorId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        metadata: { reason: 'already_monitored' },
+      }),
+    ]);
+  });
+
+  it("does not treat the sender's own existing receiver for that phone as another sender's", async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    repository.activeByPhoneHash = [{ ...grantedReceiverRow(crypto), consentStatus: ConsentStatus.DECLINED }];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+
+    await expect(service.createForSender(createInput)).resolves.toMatchObject({ consentStatus: ConsentStatus.PENDING });
+  });
+});
+
+describe('ReceiversService sender check-in actions respect the running cascade (CB-017)', () => {
+  class InMemoryCheckInsRepository {
+    public pending: Array<{ receiverId: string; scheduledAt: Date; retryOf?: string }> = [];
+    public attempts: Array<{ checkInId: string; attemptNumber: number; channel: Channel; scheduledAt: Date }> = [];
+
+    async createPending(input: { receiverId: string; scheduledAt: Date; retryOf?: string }) {
+      this.pending.push(input);
+      return {
+        id: 'retry-check-in-1',
+        receiverId: input.receiverId,
+        scheduledAt: input.scheduledAt,
+        status: CheckInStatus.PENDING,
+        createdAt: input.scheduledAt,
+        updatedAt: input.scheduledAt,
+      };
+    }
+
+    async createAttempts(
+      input: Array<{ checkInId: string; attemptNumber: number; channel: Channel; scheduledAt: Date }>,
+    ) {
+      this.attempts.push(...input);
+      return [];
+    }
+  }
+
+  const now = () => new Date('2026-04-30T10:00:00.000Z');
+
+  function serviceWith(
+    repository: InMemoryReceiversRepository,
+    checkIns: InMemoryCheckInsRepository,
+    audit: InMemoryAuditService,
+  ) {
+    return new ReceiversService(
+      repository,
+      new CryptoService(masterKey),
+      audit as unknown as AuditService,
+      checkIns as unknown as Pick<CheckInsRepository, 'createPending' | 'createAttempts'>,
+      now,
+    );
+  }
+
+  it('schedules the try-later retry two hours ahead and links it to the check-in it retries', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    repository.receiversForUser = [
+      grantedReceiverRow(crypto, {
+        id: 'check-in-1',
+        status: CheckInStatus.NEEDS_ATTENTION,
+        scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+      }),
+    ];
+
+    const receiver = await serviceWith(repository, checkIns, audit).tryCheckInLaterForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      checkInId: 'check-in-1',
+    });
+
+    expect(receiver?.latestCheckIn?.id).toBe('check-in-1');
+    expect(checkIns.pending).toEqual([
+      {
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        scheduledAt: new Date('2026-04-30T12:00:00.000Z'),
+        retryOf: 'check-in-1',
+      },
+    ]);
+    expect(checkIns.attempts[0]).toMatchObject({
+      checkInId: 'retry-check-in-1',
+      attemptNumber: 1,
+      channel: Channel.WHATSAPP,
+      scheduledAt: new Date('2026-04-30T12:00:00.000Z'),
+    });
+    expect(audit.events[0]).toMatchObject({
+      action: 'check_in.try_later_requested',
+      metadata: {
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        previousStatus: CheckInStatus.NEEDS_ATTENTION,
+        retryAt: '2026-04-30T12:00:00.000Z',
+      },
+    });
+  });
+
+  it('refuses try-later while the latest check-in is still SENT, creating and auditing nothing', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkIns = new InMemoryCheckInsRepository();
+    const audit = new InMemoryAuditService();
+    repository.receiversForUser = [
+      grantedReceiverRow(crypto, {
+        id: 'check-in-1',
+        status: CheckInStatus.SENT,
+        scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+        sentAt: new Date('2026-04-30T06:01:00.000Z'),
+      }),
+    ];
+
+    await expect(
+      serviceWith(repository, checkIns, audit).tryCheckInLaterForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'check-in-1',
+      }),
+    ).rejects.toBeInstanceOf(CheckInInProgressError);
+    expect(checkIns.pending).toEqual([]);
+    expect(audit.events).toEqual([]);
+  });
+
+  it('refuses alert-backup while the latest check-in is still PENDING', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const escalations = new InMemoryEscalationsService();
+    repository.receiversForUser = [
+      grantedReceiverRow(crypto, {
+        id: 'check-in-1',
+        status: CheckInStatus.PENDING,
+        scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+      }),
+    ];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      escalations as unknown as EscalationsService,
+    );
+
+    await expect(
+      service.alertBackupForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'check-in-1',
+      }),
+    ).rejects.toBeInstanceOf(CheckInInProgressError);
+    expect(escalations.senderRequestedBackups).toEqual([]);
+  });
+
+  it('still answers "not found" for an in-progress check-in that is not the latest one', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    repository.receiversForUser = [
+      grantedReceiverRow(crypto, {
+        id: 'latest-check-in',
+        status: CheckInStatus.SENT,
+        scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+      }),
+    ];
+
+    await expect(
+      serviceWith(repository, new InMemoryCheckInsRepository(), new InMemoryAuditService()).tryCheckInLaterForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'older-check-in',
+      }),
+    ).resolves.toBeNull();
+  });
+});
+
+describe('ReceiversService stores the resolution note encrypted and returns it to the sender (CB-018)', () => {
+  const now = () => new Date('2026-04-30T10:00:00.000Z');
+
+  it('encrypts the note onto the check-in, audits only that a note exists, and returns it decrypted', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    repository.receiversForUser = [
+      grantedReceiverRow(crypto, {
+        id: 'check-in-1',
+        status: CheckInStatus.ESCALATED,
+        scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+      }),
+    ];
+    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService, now);
+
+    const receiver = await service.resolveCheckInForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      checkInId: 'check-in-1',
+      note: '  Spoke to her neighbour, she was at the clinic.  ',
+    });
+
+    expect(repository.lastResolveInput?.resolutionNote).toBeDefined();
+    expect(repository.lastResolveInput?.resolutionNote).not.toContain('neighbour');
+    expect(crypto.decrypt(repository.lastResolveInput?.resolutionNote ?? '')).toBe(
+      'Spoke to her neighbour, she was at the clinic.',
+    );
+    expect(receiver?.latestCheckIn).toMatchObject({
+      status: CheckInStatus.RESOLVED,
+      resolutionNote: 'Spoke to her neighbour, she was at the clinic.',
+    });
+    expect(audit.events[0]).toMatchObject({
+      action: 'check_in.resolved',
+      metadata: { receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb', resolutionTextPresent: true },
+    });
+    expect(JSON.stringify(audit.events)).not.toContain('neighbour');
+  });
+
+  it('rejects a note over 200 characters before touching the check-in, and accepts exactly 200', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    repository.receiversForUser = [
+      grantedReceiverRow(crypto, {
+        id: 'check-in-1',
+        status: CheckInStatus.FAILED,
+        scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+      }),
+    ];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+    const input = {
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      checkInId: 'check-in-1',
+    };
+
+    await expect(service.resolveCheckInForSender({ ...input, note: 'x'.repeat(201) })).rejects.toThrow(
+      RESOLUTION_NOTE_TOO_LONG_MESSAGE,
+    );
+    expect(repository.lastResolveInput).toBeNull();
+
+    const receiver = await service.resolveCheckInForSender({ ...input, note: 'y'.repeat(200) });
+    expect(receiver?.latestCheckIn?.resolutionNote).toBe('y'.repeat(200));
+  });
+
+  it('decrypts a stored note in receiver detail and leaves it out when there is none', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    repository.receiversForUser = [
+      grantedReceiverRow(crypto, {
+        id: 'check-in-1',
+        status: CheckInStatus.RESOLVED,
+        scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+        resolvedAt: new Date('2026-04-30T10:00:00.000Z'),
+        resolutionNote: crypto.encrypt('Backup contact reply: DONE, I am with her now'),
+      }),
+      {
+        ...grantedReceiverRow(crypto, {
+          id: 'check-in-2',
+          status: CheckInStatus.RESPONDED_OK,
+          scheduledAt: new Date('2026-04-30T06:00:00.000Z'),
+        }),
+        id: 'second-receiver',
+      },
+    ];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+
+    const withNote = await service.getForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    });
+    const withoutNote = await service.getForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: 'second-receiver',
+    });
+
+    expect(withNote?.latestCheckIn?.resolutionNote).toBe('Backup contact reply: DONE, I am with her now');
+    expect(withoutNote?.latestCheckIn).not.toHaveProperty('resolutionNote', expect.anything());
   });
 });
