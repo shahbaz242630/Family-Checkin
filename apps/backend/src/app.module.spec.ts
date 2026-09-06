@@ -60,6 +60,7 @@ const configuredModeRoutes = [
   'POST /provider-webhooks/whatsapp',
   'POST /receivers',
   'POST /receivers/:receiverId/backup-contacts',
+  'POST /receivers/:receiverId/consent/resend',
 ];
 
 const BOOT_TIMEOUT_MS = 60_000;

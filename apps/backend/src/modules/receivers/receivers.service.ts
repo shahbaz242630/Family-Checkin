@@ -3,7 +3,7 @@ import { ActorType, Channel, CheckInStatus, ConsentStatus, TechProfile } from '@
 import type { RelationshipType } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
-import type { CheckInsRepository } from '../check-ins/check-ins.repository';
+import type { CheckInsRepository, CreatePendingCheckInInput } from '../check-ins/check-ins.repository';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { ChannelRouterService } from '../channels/channel-router.service';
@@ -12,6 +12,14 @@ import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
 import { assertSupportedTimeZone, parseScheduleTimeWindow } from '../../shared/schedule/receiver-schedule';
+import {
+  CheckInInProgressError,
+  MAX_RESOLUTION_NOTE_LENGTH,
+  OptOutCooldownError,
+  ReceiverAlreadyMonitoredError,
+  RESOLUTION_NOTE_TOO_LONG_MESSAGE,
+  TRY_LATER_RETRY_OFFSET_MINUTES,
+} from './receiver-policy';
 import type {
   CreateReceiverRecordInput,
   ReceiverRecord,
@@ -23,6 +31,8 @@ import { RECEIVERS_REPOSITORY } from './receivers.tokens';
 
 const USER_PAUSED_UNTIL = new Date('9999-12-31T23:59:59.999Z');
 const USER_PAUSED_REASON = 'USER_PAUSED';
+/** A check-in in one of these is still being delivered or awaiting the receiver; sender actions wait (CB-017). */
+const IN_PROGRESS_CHECK_IN_STATUSES: CheckInStatus[] = [CheckInStatus.PENDING, CheckInStatus.SENT];
 /** FR-REC-05: the personal note rides inside every check-in message, so it is capped at 50 characters. */
 export const MAX_PERSONAL_NOTE_LENGTH = 50;
 export const PERSONAL_NOTE_TOO_LONG_MESSAGE = `Receiver personal note must be ${MAX_PERSONAL_NOTE_LENGTH} characters or fewer`;
@@ -73,6 +83,8 @@ export interface ReceiverSummary {
     respondedAt?: string;
     responseDetectedAs?: string;
     resolvedAt?: string;
+    /** Decrypted for the owning sender only (CB-018). */
+    resolutionNote?: string;
     resolutionByUserId?: string;
   };
   createdAt: string;
@@ -97,6 +109,8 @@ export interface ReceiverManagementInput {
 
 export interface ResolveCheckInForSenderInput extends ReceiverManagementInput {
   checkInId: string;
+  /** Optional free text, at most `MAX_RESOLUTION_NOTE_LENGTH` characters; stored encrypted (CB-018). */
+  note?: string;
 }
 
 export interface SenderCheckInActionInput extends ReceiverManagementInput {
@@ -167,7 +181,14 @@ export class ReceiversService {
 
   async createForSender(input: CreateReceiverForSenderInput): Promise<ReceiverRecord> {
     const normalized = await this.normalizeInput(input);
-    const receiver = await this.receiversRepository.create(this.toCreateRecordInput(normalized));
+    const record = this.toCreateRecordInput(normalized);
+    await this.assertPhoneCanBeInvited({
+      userId: normalized.userId,
+      phoneHash: record.phoneHash,
+      ipAddress: normalized.ipAddress,
+      userAgent: normalized.userAgent,
+    });
+    const receiver = await this.receiversRepository.create(record);
 
     await this.auditService.append({
       entityType: 'receiver',
@@ -355,6 +376,10 @@ export class ReceiversService {
     const userId = input.userId.trim();
     const receiverId = input.receiverId.trim();
     const checkInId = input.checkInId.trim();
+    const note = input.note?.trim() || undefined;
+    if (note && Array.from(note).length > MAX_RESOLUTION_NOTE_LENGTH) {
+      throw new Error(RESOLUTION_NOTE_TOO_LONG_MESSAGE);
+    }
     const receiverBeforeUpdate = await this.receiversRepository.findForUserById({ userId, receiverId });
     const actionableStatuses: CheckInStatus[] = [
       CheckInStatus.RESPONDED_HELP,
@@ -378,6 +403,7 @@ export class ReceiversService {
       checkInId,
       resolvedAt: this.now(),
       resolutionByUserId: userId,
+      resolutionNote: note ? this.cryptoService.encrypt(note) : undefined,
     });
 
     if (!receiver) {
@@ -392,6 +418,7 @@ export class ReceiversService {
       actorId: userId,
       metadata: {
         receiverId,
+        resolutionTextPresent: Boolean(note),
       },
       ipAddress: input.ipAddress,
       userAgent: input.userAgent,
@@ -440,7 +467,6 @@ export class ReceiversService {
 
   async tryCheckInLaterForSender(input: SenderCheckInActionInput): Promise<ReceiverDetail | null> {
     const context = await this.findActionableLatestCheckIn(input, [
-      CheckInStatus.SENT,
       CheckInStatus.RESPONDED_HELP,
       CheckInStatus.NEEDS_ATTENTION,
       CheckInStatus.FAILED,
@@ -450,12 +476,16 @@ export class ReceiversService {
       return null;
     }
 
-    const retryAt = new Date(this.now().getTime() + 15 * 60 * 1000);
+    const retryAt = new Date(this.now().getTime() + TRY_LATER_RETRY_OFFSET_MINUTES * 60 * 1000);
     if (this.checkInsRepository) {
-      const retryCheckIn = await this.checkInsRepository.createPending({
+      // `retryOf` ties the retry to the check-in it repeats so the scheduler's same-day dedupe can tell a
+      // sender-requested retry from a duplicate; the repository reads it once that dedupe lands.
+      const retryInput: CreatePendingCheckInInput & { retryOf?: string } = {
         receiverId: context.receiverId,
         scheduledAt: retryAt,
-      });
+        retryOf: context.checkInId,
+      };
+      const retryCheckIn = await this.checkInsRepository.createPending(retryInput);
       await this.checkInsRepository.createAttempts(
         this.buildRetryCascadeAttempts(context.receiver, retryCheckIn.id, retryAt),
       );
@@ -512,6 +542,59 @@ export class ReceiversService {
       | undefined,
   ): value is Pick<CheckInsRepository, 'createPending' | 'createAttempts'> {
     return typeof value === 'object' && value !== null && 'createPending' in value && 'createAttempts' in value;
+  }
+
+  /**
+   * A phone that replied STOP stays off-limits until its cooldown lapses (FR-SAF-07, CB-009), and a phone
+   * another sender already monitors cannot be added a second time until co-monitoring exists (CB-014).
+   */
+  private async assertPhoneCanBeInvited(input: {
+    userId: string;
+    phoneHash: string;
+    ipAddress?: string;
+    userAgent?: string;
+  }): Promise<void> {
+    const now = this.now();
+    const cooldown = await this.receiversRepository.findOptOutCooldownByPhoneHash(input.phoneHash);
+    if (cooldown && cooldown.cooldownUntil > now) {
+      await this.auditCreateRejected({
+        ...input,
+        existingReceiverId: cooldown.receiverId,
+        metadata: { reason: 'opt_out_cooldown', cooldownUntil: cooldown.cooldownUntil.toISOString() },
+      });
+      throw new OptOutCooldownError(cooldown.cooldownUntil);
+    }
+
+    const monitoredElsewhere = (await this.receiversRepository.findManyActiveByPhoneHash(input.phoneHash)).find(
+      (receiver) => receiver.userId !== input.userId,
+    );
+    if (monitoredElsewhere) {
+      await this.auditCreateRejected({
+        ...input,
+        existingReceiverId: monitoredElsewhere.id,
+        metadata: { reason: 'already_monitored' },
+      });
+      throw new ReceiverAlreadyMonitoredError();
+    }
+  }
+
+  private async auditCreateRejected(input: {
+    userId: string;
+    existingReceiverId: string;
+    metadata: Record<string, string>;
+    ipAddress?: string;
+    userAgent?: string;
+  }): Promise<void> {
+    await this.auditService.append({
+      entityType: 'receiver',
+      entityId: input.existingReceiverId,
+      action: 'receiver.create_rejected',
+      actorType: ActorType.USER,
+      actorId: input.userId,
+      metadata: input.metadata,
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent,
+    });
   }
 
   private lifecycleMessageVariables(receiver: ReceiverRecord): Record<string, string> {
@@ -809,11 +892,14 @@ export class ReceiversService {
     const checkInId = input.checkInId.trim();
     const receiver = await this.receiversRepository.findForUserById({ userId, receiverId });
 
-    if (
-      !receiver?.latestCheckIn ||
-      receiver.latestCheckIn.id !== checkInId ||
-      !actionableStatuses.includes(receiver.latestCheckIn.status)
-    ) {
+    if (!receiver?.latestCheckIn || receiver.latestCheckIn.id !== checkInId) {
+      return null;
+    }
+    // A second cascade on top of one still running would double-message the receiver (CB-017).
+    if (IN_PROGRESS_CHECK_IN_STATUSES.includes(receiver.latestCheckIn.status)) {
+      throw new CheckInInProgressError();
+    }
+    if (!actionableStatuses.includes(receiver.latestCheckIn.status)) {
       return null;
     }
 
@@ -864,6 +950,9 @@ export class ReceiversService {
             respondedAt: receiver.latestCheckIn.respondedAt?.toISOString(),
             responseDetectedAs: receiver.latestCheckIn.responseDetectedAs,
             resolvedAt: receiver.latestCheckIn.resolvedAt?.toISOString(),
+            resolutionNote: receiver.latestCheckIn.resolutionNote
+              ? this.cryptoService.decrypt(receiver.latestCheckIn.resolutionNote)
+              : undefined,
             resolutionByUserId: receiver.latestCheckIn.resolutionByUserId,
           }
         : undefined,

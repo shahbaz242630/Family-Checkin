@@ -1,7 +1,7 @@
 # Backup contacts — feature handoff
 
 Status: Built · Last verified: 2026-09-06 (emulator acceptance: backup contact added through the detail screen, HELP → alert with name and location instructions → DONE resolved; `docs/audits/2026-09-06/emulator-acceptance.md`)
-BRD: FR-BAK-03, FR-CSC-05, FR-CSC-06, BRD-4.4 · Open backlog: CB-018
+BRD: FR-BAK-03, FR-CSC-05, FR-CSC-06, BRD-4.4 · Open backlog: none
 
 ## What it does
 
@@ -9,7 +9,7 @@ BRD: FR-BAK-03, FR-CSC-05, FR-CSC-06, BRD-4.4 · Open backlog: CB-018
 - The list shows a display name, a masked phone (`*******1234`), the relationship, and whether location instructions are saved. Raw phone, phone hash, and encrypted values never leave the backend.
 - Edit and remove work from the same list. Remove is a soft delete, so the contact stops receiving alerts but the row survives for audit.
 - When a check-in escalates, every active backup contact is messaged once, in priority order — WhatsApp when the channel router confirms the number is reachable there, otherwise SMS (CB-011) — in the receiver's language, with the receiver's name, the channels already tried, and the contact's own location instructions. The escalation triggers themselves live in `docs/handoffs/escalations-and-notifications.md`.
-- A backup contact replying `DONE`, `CHECKED`, or `RESOLVED` from their own number closes the receiver's latest actionable check-in as `RESOLVED`. This is the BRD closure loop.
+- A backup contact replying `DONE`, `CHECKED`, or `RESOLVED` from their own number closes the receiver's latest actionable check-in as `RESOLVED`. This is the BRD closure loop. The contact's wording is kept encrypted on the check-in (`check_ins.resolutionNote`, as a `Backup contact reply: …` line appended under any sender note) and the sender gets a quiet push (`reason: backup_contact_done`, deep link to the receiver).
 
 ## Where it lives
 
@@ -46,7 +46,7 @@ Set up per `docs/EMULATOR_RUNBOOK.md`, then:
 3. Fake a `HELP` reply from the **receiver's** number:
    `Invoke-RestMethod -Method Post -Uri http://localhost:3000/receiver-replies/fake -Headers $h -Body '{"fromPhone":"+971500000001","channel":"SMS","body":"HELP"}'`
    Expect `check_in_responded_help` / `RESPONDED_HELP` on the response, the check-in row moving to `ESCALATED`, and one `escalation_event` per backup contact (`WHATSAPP` in fake mode, where both fake providers claim every number) with `backupAlertedAt` set.
-4. Fake `DONE` from the **backup contact's** number with the same command shape. Expect `201 {"action":"check_in_resolved_by_backup","checkInStatus":"RESOLVED"}` and `resolvedAt` set.
+4. Fake `DONE` from the **backup contact's** number with the same command shape. Expect `201 {"action":"check_in_resolved_by_backup","checkInStatus":"RESOLVED"}`, `resolvedAt` set, `GET /receivers/<id>` showing `latestCheckIn.resolutionNote: "Backup contact reply: DONE"`, and `sender_push.not_delivered {reason:"backup_contact_done"}` audited (no device token registered).
 
 `$h` is the cron-secret header block from the runbook. The alert copy prints in the backend terminal as a `[fake-provider]` line and is returned by `GET /receiver-replies/fake/outbound` (CB-067). The 2026-09-06 acceptance run recorded the rendered English body as:
 
@@ -62,12 +62,13 @@ Set up per `docs/EMULATOR_RUNBOOK.md`, then:
 - Audit metadata for backup contacts carries ids and safe scalars only (`receiverId`, `backupContactId`, `priorityOrder`, `relationshipToReceiver`, channel, normalized reply, provider message id). No names, phones, or message bodies. The audit PII guard must keep allowing keys ending in `Id` (CB-002).
 - Inbound replies resolve receivers first; only an unmatched number falls through to `handleBackupContactReply`. A backup contact's `DONE` therefore never shadows a receiver reply.
 - The close is a guarded transition: `markResolvedByBackupContact` uses `updateMany` with `status in CHECK_IN_ALLOWED_FROM.resolvedByBackupContact` (`RESPONDED_HELP`, `ESCALATED`, `NEEDS_ATTENTION`, `FAILED`, `SKIPPED`). A late `DONE` on an already-closed check-in audits `backup_contact.reply_ignored` and returns `no_actionable_check_in` — it must not 500 or reopen the check-in.
+- The note write happens only after the guarded close succeeded, through the receivers repository (`setCheckInResolutionNote`), so a rejected close never leaves a stray note. The reply text is encrypted; `check_in.resolved_by_backup` carries `resolutionTextStored: true`, never the text (the audit PII guard rejects keys containing `note`). The sender push is best effort and audited as `sender_push.*` on the check-in.
 - An unrecognised body from a known backup contact audits `backup_contact.reply_unrecognised` and returns `unrecognised_reply`; unknown senders audit `inbound_reply.unknown_sender`. Inbound replies never 500 (CB-015).
 - `BackupContactsService` throws a plain `Error` for the cap and for missing fields, so those surface as `500`. The mobile Add button hides at 5 contacts, which is what keeps the cap out of the user's way today.
 
 ## Known gaps
 
-- CB-018 — the backup contact's `DONE` message text is never stored on the check-in, and `check_ins.resolutionNote` is still never written.
+- Only the exact keywords close a check-in, so the stored reply text is one of `DONE` / `CHECKED` / `RESOLVED` in the contact's own casing; free text such as "Done, I am with her" is `unrecognised_reply` and is not stored.
 - The sender's own name is not stored, so backup alerts say "their family member" (`NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS`); a sender display name column is a remaining CB-010 slice.
 - Only English catalog copy exists for the three backup templates; other languages fall back to English and flag `renderFallback` in audit metadata.
 - Backup contacts have no app, no invite, and no login. There is no way for them to see history or opt out beyond replying.

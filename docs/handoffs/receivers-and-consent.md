@@ -1,22 +1,26 @@
 # Receivers and consent — feature handoff
 
-Status: Partially built · Last verified: 2026-09-06 (emulator acceptance: add receiver, consent, STOP, REPORT, remove with OTP; acceptance run for the reply paths; specs for the rest)
-BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open backlog: CB-009, CB-012, CB-014, CB-017, CB-018, CB-036, CB-069
+Status: Built · Last verified: 2026-09-06 (emulator acceptance: add receiver, consent, STOP, REPORT, remove with OTP; acceptance run for the reply paths; specs for the cooldown, resend, quiet pushes, shared-phone and resolution-note paths)
+BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open backlog: CB-036, CB-069
 
 ## What it does
 
-- A sender adds a receiver (name, phone, country, relationship, language, timezone, tech profile, check-in window, optional ≤50-char personal note). The row is created with `consentStatus = PENDING` and a consent request goes out immediately on the receiver's primary channel.
-- The receiver replies `YES` to grant consent or `NO` to decline. No check-in is ever sent before `GRANTED`.
-- `STOP` revokes consent, writes a 7-day opt-out cooldown row and cancels any attempt still queued for today.
+- A sender adds a receiver (name, phone, country, relationship, language, timezone, tech profile, check-in window, optional ≤50-char personal note). The row is created with `consentStatus = PENDING` and a consent request goes out immediately on the receiver's primary channel. If the provider refuses the send, the row still exists, `consentRequestedAt` stays null and the response says `consentRequestStatus: "failed"` so the sender can resend.
+- A phone that replied `STOP` cannot be added again by anyone until its 7-day cooldown lapses (409 `OPT_OUT_COOLDOWN`), and a phone another sender already monitors cannot be added a second time (409 `RECEIVER_ALREADY_MONITORED`; co-monitoring is a later BRD phase).
+- The sender can resend the consent request to a `PENDING` receiver, at most one invitation per receiver per 7 days counting the first one (429 `CONSENT_RESEND_LIMIT` otherwise).
+- The receiver replies `YES` to grant consent or `NO` to decline. No check-in is ever sent before `GRANTED`. A `YES` inside the STOP cooldown is ignored and audited.
+- `STOP` revokes consent, writes a 7-day opt-out cooldown row, cancels any attempt still queued for today and sends the receiver one `receiver_checkins_ended` confirmation on the channel the STOP arrived on.
+- Consent answers, STOP and a backup contact's DONE each send the sender a quiet push (default sound, no siren channel) deep-linking to the receiver.
 - `REPORT` files an abuse report and pauses the receiver until an admin reviews it; the open check-in and its pending attempts are cancelled.
 - The sender can pause (optionally until a date), resume, edit and remove a receiver. Remove is a soft delete behind an SMS step-up code; pause and remove send the receiver a best-effort lifecycle message.
+- Resolving a check-in accepts an optional ≤200-character note, stored encrypted on the check-in and returned decrypted in receiver detail; the backup contact's DONE wording is appended to the same note.
 - Mobile shows receivers on the dashboard with a consent/check-in status chip, and a detail screen with pause/resume, edit, backup contacts and remove. Both refetch on focus; a detail whose receiver was removed elsewhere says "This receiver was removed" and returns to the dashboard.
 
 ## Where it lives
 
 | Layer   | Paths                                                                                                                                                                                                                                                                                                     |
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Backend | `apps/backend/src/modules/receivers/` — `receivers.controller.ts`, `receivers.service.ts`, `receiver-consent.service.ts`, `receiver-reply.service.ts`, `receiver-replies.controller.ts`, `receiver-replies.module.ts`, `prisma-receivers.repository.ts`, `abuse-review-pause.ts`                             |
+| Backend | `apps/backend/src/modules/receivers/` — `receivers.controller.ts`, `receivers.service.ts`, `receiver-consent.service.ts`, `receiver-reply.service.ts`, `receiver-replies.controller.ts`, `receiver-replies.module.ts`, `prisma-receivers.repository.ts`, `abuse-review-pause.ts`, `receiver-policy.ts` (cooldown/resend/retry constants and the typed 409/429 errors); quiet pushes via `apps/backend/src/modules/notifications/notifications.service.ts` (`sendQuietUpdateToUser`) |
 | Mobile  | `apps/mobile/src/app/(main)/index.tsx` (dashboard), `apps/mobile/src/app/(main)/receivers/[id].tsx` (detail), `apps/mobile/src/app/(main)/receiver-setup.tsx` (re-exports `apps/mobile/src/app/(auth)/onboarding.tsx`), `apps/mobile/src/hooks/useLovedOnes.ts`, `apps/mobile/src/utils/channelProfiles.ts`, `apps/mobile/src/utils/receiverStatus.ts`, `apps/mobile/src/utils/checkInSkipReason.ts`, `apps/mobile/src/components/onboarding/TimeSelect.tsx` + `utils/timeOptions.ts`, `TimezoneSelect.tsx` + `utils/timezoneOffset.ts` |
 | Data    | `receivers`, `opt_out_cooldowns`, `abuse_reports`, `audit_logs`; migrations `202604260001_initial_nearby_schema`, `202605150001_receiver_remove_step_up`                                                                                                                                                   |
 | Tests   | `receivers.controller.spec.ts`, `receivers.service.spec.ts`, `receiver-consent.service.spec.ts`, `receiver-reply.service.spec.ts`, `receiver-replies.controller.spec.ts`, `prisma-receivers.repository.spec.ts`; mobile `utils/receiverStatus.spec.ts`, `utils/checkInSkipReason.spec.ts`, `utils/channelProfiles.spec.ts`, `utils/timeOptions.spec.ts`, `utils/timezoneOffset.spec.ts`, `services/backendApi.spec.ts`, `services/backendErrors.spec.ts` |
@@ -26,13 +30,14 @@ BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open
 All `/receivers` routes require a Supabase bearer token (`Authorization: Bearer <supabase access token>`), verified by `SupabaseAuthService`; the sender row is upserted from the identity on every call, and every query is scoped by `userId` + `deletedAt: null`.
 
 - `GET /receivers` — sender; returns `{ receivers: ReceiverSummary[] }` for the sender's non-deleted receivers.
-- `GET /receivers/:receiverId` — sender; detail plus `backupContacts` and an `escalation` summary. 404 when missing, deleted or not owned.
-- `POST /receivers` — sender **and** an entitled subscription; otherwise `403 { code: "PAID_ACCESS_REQUIRED" }`. Creates the receiver `PENDING`, then calls `ReceiverConsentService.requestConsent`. Returns only non-sensitive fields plus `consentRequestStatus: "requested"` — never name, phone, hashes or provider ids.
+- `GET /receivers/:receiverId` — sender; detail plus `backupContacts` and an `escalation` summary. `latestCheckIn.resolutionNote` is the decrypted note when one exists. 404 when missing, deleted or not owned.
+- `POST /receivers` — sender **and** an entitled subscription; otherwise `403 { code: "PAID_ACCESS_REQUIRED" }`. Before anything is stored: `409 { code: "OPT_OUT_COOLDOWN", cooldownUntil }` while the phone's STOP cooldown runs, `409 { code: "RECEIVER_ALREADY_MONITORED" }` when another sender has an active (non-deleted) receiver with the same phone; both are audited as `receiver.create_rejected`. Creates the receiver `PENDING`, then calls `ReceiverConsentService.requestConsent`. Returns only non-sensitive fields plus `consentRequestStatus: "requested" | "failed"` — never name, phone, hashes or provider ids. `failed` means the provider refused the send; the row exists and the resend route applies.
+- `POST /receivers/:receiverId/consent/resend` — sender; re-sends the consent request. `404` when not owned; `409 CONSENT_NOT_PENDING` unless `consentStatus = PENDING`; `409 OPT_OUT_COOLDOWN` during a cooldown; `429 { code: "CONSENT_RESEND_LIMIT", nextAllowedAt }` when the previous request (first one included) is less than 7 days old. Returns `{ receiver: { id, consentStatus, consentRequestStatus, consentRequestedAt } }`; a provider failure is `consentRequestStatus: "failed"` with `consentRequestedAt` unchanged. Audits `receiver.consent_resent` / `receiver.consent_resend_failed`.
 - `PATCH /receivers/:receiverId` — sender; updates name, country, relationship, language, timezone, tech profile, channels and schedule. Phone is not editable. Schedule errors return `400 { code, message }`.
 - `PATCH /receivers/:receiverId/pause` — sender; optional body `{ pausedUntil }` (ISO date; invalid → 400). Defaults to the indefinite sentinel `9999-12-31T23:59:59.999Z` with `pausedReason = "USER_PAUSED"`.
 - `PATCH /receivers/:receiverId/resume` — sender; clears the pause.
 - `DELETE /receivers/:receiverId` — sender **and** header `x-nearby-step-up-token`, consumed for `SensitiveAction.REMOVE_RECEIVER`; a missing header or an unavailable `StepUpService` is a 403. Soft-deletes (`deletedAt`).
-- `PATCH /receivers/:receiverId/check-ins/:checkInId/{resolve,alert-backup,try-later}` — sender actions on the latest check-in; the semantics belong to the check-in scheduler handoff.
+- `PATCH /receivers/:receiverId/check-ins/:checkInId/{resolve,alert-backup,try-later}` — sender actions on the latest check-in; the cascade semantics belong to the check-in scheduler handoff. `resolve` accepts `{ note? }` (≤200 characters, else 400; blank means none), encrypted into `check_ins.resolutionNote`, audited only as `resolutionTextPresent`. `alert-backup` and `try-later` answer `409 { code: "CHECK_IN_IN_PROGRESS" }` while the latest check-in is `PENDING` or `SENT` (a second cascade would double-message the receiver); `try-later` schedules the retry `now + 120 min` (`TRY_LATER_RETRY_OFFSET_MINUTES`) and passes `retryOf` to `createPending`.
 - `POST /receiver-replies/fake` — **not** Supabase: `Authorization: Bearer <operations cron secret>`, and the controller is only registered when the channel provider mode is `fake` (404 otherwise). Body `{ fromPhone, channel, body, providerMessageId? }`.
 - Real inbound replies arrive on `POST /provider-webhooks/{sms,whatsapp,twilio/messaging,twilio/voice}` (signature-checked; owned by the provider-webhooks feature) and call the same `ReceiverReplyService.handleInboundReply`.
 
@@ -50,13 +55,14 @@ The body is trimmed and upper-cased, then matched exactly:
 `PENDING` (on create) → `GRANTED` | `DECLINED`; any state → `REVOKED`.
 
 1. Sender phone that is not E.164 → `action: "invalid_sender"`, audited, no receiver touched.
-2. Phone hash matches no active receiver → backup-contact path, else `action: "unknown_sender"`.
-3. `REPORT` is evaluated first, at any consent status → `action: "abuse_reported"`; consent status is unchanged.
-4. If the receiver is `GRANTED` and the reply is `YES`/`NO`, it is a check-in answer (`RESPONDED_OK` / `RESPONDED_HELP`, `NO` also escalates); with no open check-in the result is `action: "no_open_check_in"` and consent is untouched.
-5. Otherwise `YES` → `GRANTED` + `consentGrantedAt`, `NO` → `DECLINED`, `STOP` → `REVOKED` + `consentRevokedAt` + an `opt_out_cooldowns` row (`cooldownUntil` = +7 days, keyword `STOP`).
-6. `UNKNOWN` → `action: "unrecognised_reply"`, audit `receiver.reply_unrecognised`, HTTP 201.
+2. Phone hash matches no active receiver → backup-contact path, else `action: "unknown_sender"`. When several non-deleted rows share the hash, the reply is resolved against the row with the most recent open check-in (`PENDING`/`SENT`/`NEEDS_ATTENTION`), else the most recently created row (`findActiveByPhoneHash`).
+3. `REPORT` is evaluated first, at any consent status → `action: "abuse_reported"`; consent status is unchanged (the resolved row only).
+4. If the resolved receiver is `GRANTED` and the reply is `YES`/`NO`, it is a check-in answer (`RESPONDED_OK` / `RESPONDED_HELP`, `NO` also escalates); with no open check-in the result is `action: "no_open_check_in"` and consent is untouched.
+5. `YES` while the phone's STOP cooldown is running → `action: "consent_ignored_cooldown"`, audit `receiver.consent_ignored_cooldown` with `cooldownUntil`; nothing changes and no push goes out.
+6. Otherwise the transition applies to **every** non-deleted row sharing the hash: `YES` → `GRANTED` + `consentGrantedAt`, `NO` → `DECLINED`, `STOP` → `REVOKED` + `consentRevokedAt` + an `opt_out_cooldowns` row per row (`cooldownUntil` = +7 days, keyword `STOP`) + `cancelOpenCheckInsForReceiver` per row + one `receiver_checkins_ended` confirmation to the phone on the inbound channel (`receiver.opt_out_confirmation_sent` / `_failed`, best effort). Each distinct sender then gets one quiet push (`reason`: `consent_granted`, `consent_declined`, `receiver_opted_out`).
+7. `UNKNOWN` → `action: "unrecognised_reply"`, audit `receiver.reply_unrecognised`, HTTP 201.
 
-Every transition encrypts the inbound transcript onto the receiver and appends `receiver.consent_granted` / `consent_declined` / `consent_revoked` / `abuse_reported`.
+Every transition encrypts the inbound transcript onto each receiver row and appends `receiver.consent_granted` / `consent_declined` / `consent_revoked` / `abuse_reported` per row. Quiet pushes audit `sender_push.sent` / `sender_push.not_delivered` / `sender_push.failed` with `reason` and `deepLink` on the receiver (or on the check-in for `backup_contact_done`).
 
 ## How to exercise it locally (fake mode)
 
@@ -65,9 +71,11 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 1. Add a receiver in the app (or `POST /receivers` with a Supabase token) — the fake consent request is sent and `consentRequestedAt` is set.
 2. `Invoke-RestMethod -Method Post -Uri http://localhost:3000/receiver-replies/fake -Headers $h -Body '{"fromPhone":"+971500000001","channel":"SMS","body":"YES"}'` → `{"action":"consent_granted","consentStatus":"GRANTED"}`.
 3. `POST /operations/check-ins/run` to create a check-in, then reply `YES` (resolves OK) or `HELP` (escalates).
-4. Reply `STOP` between two attempts → remaining attempts `SKIPPED`, `opt_out_cooldowns` row written.
-5. Reply `REPORT` → receiver paused for review, no new check-in on the next tick; admin "reviewed safe" unpauses.
-6. Free text (`"Thanks, I'm fine"`), an unknown number and a short code all return 201 with `unrecognised_reply` / `unknown_sender` / `invalid_sender`.
+4. Reply `STOP` between two attempts → remaining attempts `SKIPPED`, `opt_out_cooldowns` row written, a `receiver_checkins_ended` confirmation appears in `GET /receiver-replies/fake/outbound`, and `sender_push.not_delivered {reason:"receiver_opted_out"}` is audited (no device token registered).
+5. Reply `YES` straight after the STOP → `{"action":"consent_ignored_cooldown","consentStatus":"REVOKED"}`. Adding the same phone again from the app → `409 OPT_OUT_COOLDOWN` with `cooldownUntil`.
+6. `POST /receivers/<id>/consent/resend` with the Supabase bearer on a fresh `PENDING` receiver → `429 CONSENT_RESEND_LIMIT` (the create already sent one this week); on a receiver whose create returned `consentRequestStatus: "failed"` → 200 and the fake consent message.
+7. Reply `REPORT` → receiver paused for review, no new check-in on the next tick; admin "reviewed safe" unpauses.
+8. Free text (`"Thanks, I'm fine"`), an unknown number and a short code all return 201 with `unrecognised_reply` / `unknown_sender` / `invalid_sender`.
 
 ## Invariants — do not break
 
@@ -76,7 +84,12 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 - The abuse review pause is `pausedUntil = 9999-12-31T00:00:00.000Z` **plus** `pausedReason = "abuse_report_pending_review"` (`abuse-review-pause.ts`). The scheduler decides eligibility from `pausedUntil` alone, and the admin unpause clears it only while that reason still matches, so a sender's own `USER_PAUSED` pause is never cleared by a review.
 - `REPORT` is matched before the consent and check-in branches; a reported receiver must not have its consent silently changed by the same message.
 - STOP, REPORT, sender pause and sender delete all call `cancelOpenCheckInsForReceiver` — an opt-out must stop a cascade that is already mid-flight (CB-008).
-- `requestConsent` throws when `consentRequestedAt` is already set: one consent request per receiver, and duplicates must stay impossible.
+- `requestConsent` throws when `consentRequestedAt` is already set; only `resendConsent` may send again, and only for a `PENDING` receiver at least 7 days after the previous request (`CONSENT_REQUEST_MIN_INTERVAL_DAYS`). A provider failure in either path never sets `consentRequestedAt`, so a receiver who never got the message can always be re-invited.
+- The opt-out cooldown is read by `phoneHash` across every row that ever had the phone, deleted rows included (`findOptOutCooldownByPhoneHash`): deleting and re-adding a receiver who said STOP must not skip the 7 days (FR-SAF-07). Create, resend and the YES transition all consult it.
+- One phone, one sender: `POST /receivers` refuses a phone another sender holds on a non-deleted row (even `REVOKED` or `DECLINED`). Reply resolution and consent fan-out exist for rows that already share a hash (same sender, or pre-existing data), not to enable co-monitoring.
+- Quiet pushes and the STOP confirmation are best effort and run after the state change: a push gateway or provider failure is audited (`sender_push.failed`, `receiver.opt_out_confirmation_failed`) and never fails the inbound reply (CB-015). Push copy never contains the receiver's name or phone.
+- `try-later` and `alert-backup` must not start a second cascade while the latest check-in is `PENDING` or `SENT`; that is the 409, not a 404.
+- The resolution note is encrypted like every other free text; audit rows carry only `resolutionTextPresent` / `resolutionTextStored` (the audit PII guard rejects any key containing `note`).
 - Receiver PII (name, phone, personal note, consent and reply transcripts, report content) is encrypted; phones are matched only through `CryptoService.hashForLookup`. Audit metadata carries channel, template key, provider status and counts — never raw PII.
 - Delete is a soft delete scoped by `userId + receiverId + deletedAt: null`; the repository preloads the row first because the normal detail lookup excludes deleted receivers.
 - `POST /receivers` checks entitlement before creating anything; `DELETE /receivers/:id` refuses without a consumed step-up token.
@@ -85,13 +98,11 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 
 ## Known gaps
 
-- CB-009 — the opt-out cooldown is written but never read; there is no consent re-invite, and a failed consent send strands the receiver as `PENDING` forever.
-- CB-012 — no quiet sender push on consent granted/declined or opt-out, and the receiver gets no STOP confirmation.
-- CB-014 — the same phone under two senders attaches replies and consent to whichever row `findFirst` returns; create does not 409.
-- CB-017 — try-later retries in 15 minutes instead of 2 hours and is allowed while a cascade is still `SENT`.
-- CB-018 — the resolution note is never stored and the backup contact's reply text is not captured.
 - CB-036 — receiver detail lacks 30-day history, escalation list and time-since-last-contact; pause has no end-date picker in the app.
 - CB-069 — `check_in.schedule_invalid` is audited on every tick for a receiver with a bad timezone or window, and the sender is never told.
+- Mobile does not yet use the new contract: `backendApi.ts` types `consentRequestStatus` as `'requested'` only, has no call for `POST /receivers/:id/consent/resend`, sends no `note` on resolve, does not render `latestCheckIn.resolutionNote`, and shows no copy for the 409 `OPT_OUT_COOLDOWN` / `RECEIVER_ALREADY_MONITORED` / `CHECK_IN_IN_PROGRESS` and 429 `CONSENT_RESEND_LIMIT` bodies.
+- `REPORT` is applied to the resolved row only; with several rows sharing a phone, the other rows are not paused for review.
+- The STOP confirmation reuses `receiver_checkins_ended` ("has ended your Nearby check-ins"); a dedicated opt-out template is a CB-010 copy slice.
 
 ## History
 

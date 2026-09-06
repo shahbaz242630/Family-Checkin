@@ -1,8 +1,8 @@
 # Escalations and sender notifications — feature handoff
 
 Status: Built · Last verified: 2026-09-06 (acceptance run)
-BRD: FR-BAK-03, FR-CSC-04, FR-CSC-05, FR-CHN-03c-3/5/6/7/8, BRD-4.3 · Open backlog: CB-012, CB-023, CB-030, CB-031, CB-035, CB-038, CB-058, CB-074 (app part)
-Per area: HELP escalation, cascade-exhaustion notification and voice fallback — 2026-09-06 (acceptance run); backup-alert channel selection and language, sender-requested backup alert without a sender siren, deep link in sender audit rows, device-token registration, push payload shape — 2026-09-06 (specs); mobile push registration — 2026-05-18 (emulator, Expo Go skips registration).
+BRD: FR-BAK-03, FR-CSC-04, FR-CSC-05, FR-CHN-03c-3/5/6/7/8, BRD-4.3 · Open backlog: CB-023, CB-030, CB-031, CB-035, CB-038, CB-058, CB-074 (app part)
+Per area: HELP escalation, cascade-exhaustion notification and voice fallback — 2026-09-06 (acceptance run); backup-alert channel selection and language, sender-requested backup alert without a sender siren, deep link in sender audit rows, device-token registration, push payload shape, quiet sender updates — 2026-09-06 (specs); mobile push registration — 2026-05-18 (emulator, Expo Go skips registration).
 
 ## What it does
 
@@ -10,6 +10,7 @@ Per area: HELP escalation, cascade-exhaustion notification and voice fallback �
 - When a check-in's whole cascade goes unanswered, the check-in becomes `NEEDS_ATTENTION` and the sender gets a siren push with a deep link to the receiver. Backup contacts are deliberately not alerted here (FR-BAK-03).
 - The sender can request the backup alert themselves from receiver detail (`Alert backup contacts`), which runs the same backup fan-out but never sirens the sender (founder decision 2026-09-06, CB-074): `sender_push.skipped {reason: "sender_initiated"}` is audited instead of a push or voice call, and `escalateSenderRequestedBackup` returns `{ outcome: 'alerted' | 'no_backup_contacts' | 'all_failed', alerted, failed }` for the receivers controller and the app to surface (not wired yet).
 - Sender escalation pushes use a dedicated Expo shape: `sound: escalation-siren.wav`, `priority: high`, `channelId: emergency-alerts`, `interruptionLevel: timeSensitive`, `data.notificationType: escalation_siren`, `data.deepLink` (`/(main)/receivers/<receiverId>` on every siren — HELP, missed check-in and cascade exhaustion alike).
+- Routine sender updates (consent granted/declined, STOP, backup DONE) use `NotificationsService.sendQuietUpdateToUser`: `sound: default`, no `channelId`, no `priority`, no `interruptionLevel`, `data.notificationType: quiet_update`, `data.deepLink` (CB-012). The callers live in the receivers module (`receiver-reply.service.ts`) and audit `sender_push.sent` / `not_delivered` / `failed` with `reason` ∈ `consent_granted`, `consent_declined`, `receiver_opted_out`, `backup_contact_done`; see `docs/handoffs/receivers-and-consent.md`.
 - When zero pushes are accepted (no active token, or the Expo call throws), the backend places a voice call to the sender with script `sender_escalation_siren_voice`.
 - The mobile app registers an Expo push token after sign-in and creates the Android `emergency-alerts` channel first; the sender dashboard renders `ESCALATED`/`FAILED`/`SKIPPED` as `Backup alerted`/`Escalation failed`/`No backup available`.
 
@@ -61,7 +62,6 @@ Metadata worth knowing: every `sender_push.*` (except `skipped`) and `sender_voi
 - Android push cannot arrive at all: `apps/mobile/app.json` has no `android.googleServicesFile` and no FCM project exists (CB-031).
 - Expo Go on Android is skipped by design (`Constants.appOwnership === 'expo'` returns early); Expo Go on SDK 53+ has no remote push, so a development build is required to see any push.
 - iOS Critical Alerts entitlement is not implemented and Android DND bypass is off (`bypassDnd: false`); neither may be claimed as granted behaviour.
-- CB-012 — no quiet (non-siren) sender pushes for consent, STOP or backup DONE.
 - CB-023 — Expo gateway has no access token, no 100-message chunking, no timeout, no receipt polling; `platform` is free text.
 - CB-030 — no foreground handler, no tap → deep-link navigation, no token unregister on sign-out, no permission-denied UX.
 - CB-035 — no "Test my siren" control or DND/permission status surface.

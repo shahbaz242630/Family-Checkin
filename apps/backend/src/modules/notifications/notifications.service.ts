@@ -37,6 +37,8 @@ export interface SendUserPushResult {
 }
 
 const ESCALATION_SIREN_SOUND = 'escalation-siren.wav';
+const DEFAULT_DEEP_LINK = '/(main)';
+export const QUIET_UPDATE_NOTIFICATION_TYPE = 'quiet_update';
 
 @Injectable()
 export class NotificationsService {
@@ -105,12 +107,30 @@ export class NotificationsService {
       data: {
         ...input.data,
         notificationType: 'escalation_siren',
-        deepLink: input.data.deepLink ?? '/(main)',
+        deepLink: input.data.deepLink ?? DEFAULT_DEEP_LINK,
       },
       sound: ESCALATION_SIREN_SOUND,
       priority: 'high',
       channelId: 'emergency-alerts',
       interruptionLevel: 'timeSensitive',
+    }));
+  }
+
+  /**
+   * A routine update for the sender (consent answered, STOP, backup contact DONE): default sound, default
+   * channel and no time-sensitive interruption, so it never masquerades as the escalation siren (CB-012).
+   */
+  async sendQuietUpdateToUser(input: SendUserPushInput): Promise<SendUserPushResult> {
+    return this.sendToUserWithMessage(input, (token) => ({
+      to: token.token,
+      title: input.title,
+      body: input.body,
+      data: {
+        ...input.data,
+        notificationType: QUIET_UPDATE_NOTIFICATION_TYPE,
+        deepLink: input.data.deepLink ?? DEFAULT_DEEP_LINK,
+      },
+      sound: 'default',
     }));
   }
 
