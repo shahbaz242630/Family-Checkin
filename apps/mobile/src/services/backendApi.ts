@@ -1,5 +1,10 @@
 import { Platform } from 'react-native';
-import { BackendRequestError } from './backendErrors';
+import {
+  BackendRequestError,
+  BackendTransportError,
+  EMPTY_RESPONSE_MESSAGE,
+  UNREADABLE_RESPONSE_MESSAGE,
+} from './backendErrors';
 import { getSession } from './supabase';
 
 const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL;
@@ -358,12 +363,17 @@ export async function updateReceiver(receiverId: string, input: ReceiverUpdateIn
 }
 
 export async function deleteReceiver(receiverId: string, stepUpToken: string): Promise<void> {
-  await backendRequest<{ receiver: BackendReceiverDetail }>(`/receivers/${receiverId}`, {
-    method: 'DELETE',
-    headers: {
-      'x-nearby-step-up-token': stepUpToken,
+  // The body is discarded: a 2xx whose body was cut off still means the receiver is gone (CB-080).
+  await backendRequest<unknown>(
+    `/receivers/${receiverId}`,
+    {
+      method: 'DELETE',
+      headers: {
+        'x-nearby-step-up-token': stepUpToken,
+      },
     },
-  });
+    { acceptEmptyBody: true },
+  );
 }
 
 export async function getAdminMe(): Promise<BackendAdminMe> {
@@ -398,12 +408,17 @@ export async function verifyAccountStepUp(input: {
 }
 
 export async function exportAccountData(stepUpToken: string): Promise<unknown> {
-  return await backendRequest<unknown>('/account/export', {
-    method: 'GET',
-    headers: {
-      'x-nearby-step-up-token': stepUpToken,
+  // A GET, but the step-up token is consumed by the first request, so a retry could never succeed (CB-080).
+  return await backendRequest<unknown>(
+    '/account/export',
+    {
+      method: 'GET',
+      headers: {
+        'x-nearby-step-up-token': stepUpToken,
+      },
     },
-  });
+    { retry: false },
+  );
 }
 
 export async function deleteAccount(stepUpToken: string): Promise<{ ok: true; deletedAt: string }> {
@@ -565,11 +580,12 @@ export async function updateBackupContact(
 }
 
 export async function deleteBackupContact(receiverId: string, backupContactId: string): Promise<void> {
-  await backendRequest<{ backupContact: BackendBackupContact }>(
+  await backendRequest<unknown>(
     `/receivers/${receiverId}/backup-contacts/${backupContactId}`,
     {
       method: 'DELETE',
     },
+    { acceptEmptyBody: true },
   );
 }
 
@@ -582,7 +598,17 @@ export async function createReceiver(input: ReceiverSetupInput): Promise<Created
   return response.receiver;
 }
 
-async function backendRequest<T>(path: string, init: RequestInit): Promise<T> {
+interface BackendRequestOptions {
+  /** The caller discards the body: a 2xx with no body is a success (the status line proves the server acted). */
+  acceptEmptyBody?: boolean;
+  /** Overrides the default: idempotent reads (GET, HEAD) are retried once, everything else never. */
+  retry?: boolean;
+}
+
+/** Methods a transport failure may safely re-send: the server treats a repeat exactly like the first request. */
+const RETRIED_METHODS = new Set(['GET', 'HEAD']);
+
+async function backendRequest<T>(path: string, init: RequestInit, options: BackendRequestOptions = {}): Promise<T> {
   const resolvedBackendUrl = resolveBackendUrl();
   if (!resolvedBackendUrl) {
     throw new Error('Missing EXPO_PUBLIC_BACKEND_URL');
@@ -595,7 +621,8 @@ async function backendRequest<T>(path: string, init: RequestInit): Promise<T> {
     throw new Error('You need to sign in again');
   }
 
-  const response = await fetch(`${resolvedBackendUrl.replace(/\/$/, '')}${path}`, {
+  const url = `${resolvedBackendUrl.replace(/\/$/, '')}${path}`;
+  const request: RequestInit = {
     ...init,
     headers: {
       Accept: 'application/json',
@@ -603,14 +630,52 @@ async function backendRequest<T>(path: string, init: RequestInit): Promise<T> {
       Authorization: `Bearer ${accessToken}`,
       ...init.headers,
     },
-  });
+  };
+  const method = (init.method ?? 'GET').toUpperCase();
+  // Responses occasionally reach the Android app with the body cut off although the backend executed the request
+  // (sprint-2 acceptance F2, CB-080). A read is simply asked again, once; a request that changes state is never
+  // re-sent because the server may already have acted on it, so the sender gets a readable message instead.
+  const attempts = (options.retry ?? RETRIED_METHODS.has(method)) ? 2 : 1;
+
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await performRequest<T>(url, request, options);
+    } catch (error) {
+      if (attempt >= attempts || !isRetryableTransportFailure(error)) {
+        throw error;
+      }
+    }
+  }
+}
+
+function isRetryableTransportFailure(error: unknown): boolean {
+  // fetch rejects with a TypeError ("Network request failed") when the connection drops before any status arrives.
+  return error instanceof BackendTransportError || error instanceof TypeError;
+}
+
+async function performRequest<T>(url: string, request: RequestInit, options: BackendRequestOptions): Promise<T> {
+  const response = await fetch(url, request);
+  // Read as text first: a truncated body must be told apart from a JSON syntax error, and an empty error body
+  // must still map to a readable status message.
+  const text = await response.text().catch(() => null);
 
   if (!response.ok) {
-    const errorBody = await responseErrorBody(response);
+    const errorBody = parseErrorBody(text ?? '', response.status);
     throw new BackendRequestError(errorBody.message, response.status, errorBody.code, errorBody.details);
   }
 
-  return (await response.json()) as T;
+  if (text === null || text.trim() === '') {
+    if (options.acceptEmptyBody) {
+      return undefined as T;
+    }
+    throw new BackendTransportError(EMPTY_RESPONSE_MESSAGE, response.status, 'empty_body');
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new BackendTransportError(UNREADABLE_RESPONSE_MESSAGE, response.status, 'unreadable_body');
+  }
 }
 
 function resolveBackendUrl(): string | undefined {
@@ -632,10 +697,10 @@ interface ErrorBody {
   details: Record<string, unknown>;
 }
 
-async function responseErrorBody(response: Response): Promise<ErrorBody> {
-  const fallback = `Backend request failed with status ${response.status}`;
+function parseErrorBody(text: string, status: number): ErrorBody {
+  const fallback = `Backend request failed with status ${status}`;
   try {
-    const body: unknown = await response.json();
+    const body: unknown = JSON.parse(text);
     if (!body || typeof body !== 'object' || Array.isArray(body)) {
       return { message: fallback, details: {} };
     }

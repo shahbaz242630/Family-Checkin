@@ -25,6 +25,27 @@ export class BackendRequestError extends Error {
   }
 }
 
+/** A 2xx whose body never arrived: the server acted on the request, the reply did not come through whole (CB-080). */
+export const EMPTY_RESPONSE_MESSAGE =
+  'The reply from the server did not arrive in full. Check the screen and try again if needed.';
+/** A 2xx whose body is not the JSON the app expected (CB-080). */
+export const UNREADABLE_RESPONSE_MESSAGE = 'The reply from the server could not be read. Please try again.';
+
+/**
+ * The request reached the backend and was answered with a success status, but the body was missing or unreadable
+ * (sprint-2 acceptance F2). Idempotent reads are retried once on it; anything else surfaces the message as is.
+ */
+export class BackendTransportError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly reason: 'empty_body' | 'unreadable_body',
+  ) {
+    super(message);
+    this.name = 'BackendTransportError';
+  }
+}
+
 export function isPaidAccessRequiredError(error: unknown): boolean {
   return (
     error instanceof BackendRequestError &&
