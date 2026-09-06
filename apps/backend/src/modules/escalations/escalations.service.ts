@@ -51,7 +51,7 @@ export class EscalationsService {
     @Optional()
     @Inject(NotificationsService)
     notificationsOrNow?: Pick<NotificationsService, 'sendToUser' | 'sendEscalationAlertToUser'> | (() => Date),
-    now?: () => Date,
+    @Optional() now?: () => Date,
   ) {
     this.now = () => new Date();
     if (typeof notificationsOrNow === 'function') {

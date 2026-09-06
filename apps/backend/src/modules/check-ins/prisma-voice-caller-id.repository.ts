@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { VoiceCallerIdStatus } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import type { ResolveVoiceCallerIdInput, VoiceCallerIdRepository } from './voice-caller-id.repository';
@@ -36,7 +36,7 @@ export class PrismaVoiceCallerIdRepository implements VoiceCallerIdRepository {
   constructor(
     @Inject(PrismaService)
     private readonly prisma: VoiceCallerIdPrismaClient | PrismaService,
-    private readonly now: () => Date = () => new Date(),
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   async resolveForReceiver(input: ResolveVoiceCallerIdInput): Promise<string | undefined> {

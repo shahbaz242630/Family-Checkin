@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import type {
   CreateProviderWebhookEventInput,
@@ -39,7 +39,7 @@ export class PrismaProviderWebhookEventsRepository implements ProviderWebhookEve
   constructor(
     @Inject(PrismaService)
     private readonly prisma: ProviderWebhookEventsPrismaClient | PrismaService,
-    private readonly now: () => Date = () => new Date(),
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   async createEvent(input: CreateProviderWebhookEventInput): Promise<{ id: string }> {

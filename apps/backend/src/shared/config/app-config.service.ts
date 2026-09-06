@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { z } from 'zod';
 
 const channelProviderModeSchema = z.enum(['configured', 'fake']).default('configured');
@@ -57,7 +57,9 @@ export function channelProviderModeFromEnv(source: BackendEnv = process.env): Ch
 export class AppConfigService {
   private readonly env: z.infer<typeof envSchema>;
 
-  constructor(source: BackendEnv = process.env) {
+  // `@Optional()` because the emitted parameter type is `Object`, which the container can never supply; the
+  // environment is read directly. Specs pass an explicit `source`.
+  constructor(@Optional() source: BackendEnv = process.env) {
     const parsed = envSchema.safeParse(source);
 
     if (!parsed.success) {

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ActorType, Channel } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
@@ -24,7 +24,7 @@ export class ReceiverConsentService {
     private readonly channelRouter: ChannelRouterService,
     @Inject(AuditService)
     private readonly auditService: AuditService,
-    private readonly now: () => Date = () => new Date(),
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   async requestConsent(input: RequestReceiverConsentInput): Promise<ReceiverRecord> {

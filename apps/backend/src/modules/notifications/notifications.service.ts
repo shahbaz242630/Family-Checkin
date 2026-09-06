@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ActorType } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import type { ExpoPushMessage, ExpoPushTicket, PushGateway } from './expo-push.gateway';
@@ -47,7 +47,7 @@ export class NotificationsService {
     private readonly auditService: AuditService,
     @Inject(ExpoPushGateway)
     private readonly pushGatewayOrSend: ExpoPushGateway | PushGateway,
-    private readonly now: () => Date = () => new Date(),
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   async registerDeviceToken(input: RegisterDeviceTokenInput): Promise<RegisteredDeviceTokenResponse> {
