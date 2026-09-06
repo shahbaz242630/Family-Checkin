@@ -1,7 +1,8 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ActorType, Channel, CheckInStatus, EscalationResult } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
-import { ChannelRouterService } from '../channels/channel-router.service';
+import type { ChannelSendResult, TemplatedMessage } from '../channels/channel-provider';
+import { ChannelRouterService, type ReachableChannelPlan } from '../channels/channel-router.service';
 import { renderingAuditMetadata } from '../channels/message-catalog.service';
 import {
   DEFAULT_MESSAGE_LANGUAGE,
@@ -45,7 +46,54 @@ export interface EscalateHelpResponseResult {
   failed: number;
 }
 
-const BACKUP_CONTACT_ALERT_CHANNELS = [Channel.SMS, Channel.WHATSAPP] as const;
+/** What the sender's own "Alert backup contacts" action achieved, for the app to show (CB-074). */
+export type SenderRequestedBackupOutcome = 'alerted' | 'no_backup_contacts' | 'all_failed';
+
+export interface EscalateSenderRequestedBackupResult {
+  outcome: SenderRequestedBackupOutcome;
+  /** Backup contacts reached on at least one channel. */
+  alerted: number;
+  /** Backup contacts no channel could reach. */
+  failed: number;
+}
+
+/** The siren push to the sender, or the reason it is deliberately withheld. */
+type SenderSiren = { title: string; body: string } | { skipped: 'sender_initiated' };
+
+type ChannelDetection = ReachableChannelPlan['detectionStatus'];
+
+type BackupAlertDelivery =
+  | {
+      delivered: true;
+      channel: Channel;
+      providerResult: ChannelSendResult;
+      attemptedChannels: Channel[];
+      channelDetection: ChannelDetection;
+    }
+  | {
+      delivered: false;
+      /** The last channel tried, so the ERROR event names where the contact was finally given up on. */
+      channel: Channel;
+      attemptedChannels: Channel[];
+      channelDetection: ChannelDetection;
+    };
+
+/** In-app route a sender siren opens. Ids only, so it is safe in audit metadata (CB-068). */
+function receiverDeepLink(receiverId: string): string {
+  return `/(main)/receivers/${receiverId}`;
+}
+
+/**
+ * WhatsApp only when the router confirmed it for this number, then SMS; SMS alone otherwise. An unconfigured
+ * WhatsApp provider throws from its availability check, which the router reports as `MANUAL_REQUIRED`, and a
+ * number WhatsApp does not claim comes back as `FALLBACK_SELECTED` — either way SMS is the one channel worth an
+ * attempt (CB-011).
+ */
+function backupAlertChannelOrder(plan: ReachableChannelPlan): Channel[] {
+  return plan.detectionConfidence === 'provider_availability_check'
+    ? [plan.primaryChannel, ...plan.fallbackChannels]
+    : [Channel.SMS];
+}
 
 @Injectable()
 export class EscalationsService {
@@ -81,16 +129,16 @@ export class EscalationsService {
       receiverId: input.receiverId,
       checkInId: input.checkInId,
       templateKey: 'backup_contact_help_alert',
+      reason: 'help_response',
       auditMetadata: {
         sourceChannel: input.sourceChannel,
       },
       noContactsMetadata: {
         sourceChannel: input.sourceChannel,
       },
-      senderPush: {
+      senderSiren: {
         title: 'Receiver needs attention',
         body: 'A receiver asked for help during a check-in.',
-        reason: 'help_response',
       },
     });
   }
@@ -100,6 +148,7 @@ export class EscalationsService {
       receiverId: input.receiverId,
       checkInId: input.checkInId,
       templateKey: 'backup_contact_missed_checkin_alert',
+      reason: 'missed_check_in',
       terminalNoContactsStatus: CheckInStatus.SKIPPED,
       terminalFailureStatus: CheckInStatus.FAILED,
       auditMetadata: {
@@ -112,31 +161,40 @@ export class EscalationsService {
         sentAt: input.sentAt.toISOString(),
         responseWindowMinutes: input.responseWindowMinutes,
       },
-      senderPush: {
+      senderSiren: {
         title: 'Missed receiver check-in',
         body: 'A receiver missed a scheduled check-in.',
-        reason: 'missed_check_in',
       },
     });
   }
 
-  async escalateSenderRequestedBackup(input: EscalateSenderRequestedBackupInput): Promise<EscalateHelpResponseResult> {
-    return await this.escalateBackupContacts({
+  /**
+   * The sender's own "Alert backup contacts" action. The sender already knows, so a sender-initiated alert must not
+   * siren the sender (founder decision, CB-074): the push and its voice fallback are skipped and audited as such.
+   * Returns what happened so the app can tell the sender.
+   */
+  async escalateSenderRequestedBackup(
+    input: EscalateSenderRequestedBackupInput,
+  ): Promise<EscalateSenderRequestedBackupResult> {
+    const result = await this.escalateBackupContacts({
       receiverId: input.receiverId,
       checkInId: input.checkInId,
       templateKey: 'backup_contact_sender_requested_alert',
+      reason: 'sender_requested',
       auditMetadata: {
         escalationReason: 'sender_requested',
       },
       noContactsMetadata: {
         escalationReason: 'sender_requested',
       },
-      senderPush: {
-        title: 'Backup alert requested',
-        body: 'Backup contacts are being alerted for this check-in.',
-        reason: 'sender_requested',
-      },
+      senderSiren: { skipped: 'sender_initiated' },
     });
+
+    return {
+      outcome: result.attempted === 0 ? 'no_backup_contacts' : result.succeeded > 0 ? 'alerted' : 'all_failed',
+      alerted: result.succeeded,
+      failed: result.failed,
+    };
   }
 
   /**
@@ -151,7 +209,7 @@ export class EscalationsService {
       title: 'Missed check-in',
       body: 'A receiver has not answered any check-in attempt today. Open the app to decide what to do next.',
       reason: 'cascade_exhausted',
-      deepLink: `/(main)/receivers/${input.receiverId}`,
+      deepLink: receiverDeepLink(input.receiverId),
     });
   }
 
@@ -159,21 +217,15 @@ export class EscalationsService {
     receiverId: string;
     checkInId: string;
     templateKey: string;
+    /** Why this escalation is happening; goes into the alert variables and every sender-facing audit row. */
+    reason: string;
     terminalNoContactsStatus?: CheckInStatus;
     terminalFailureStatus?: CheckInStatus;
     auditMetadata: Record<string, string | number>;
     noContactsMetadata: Record<string, string | number>;
-    senderPush: {
-      title: string;
-      body: string;
-      reason: string;
-    };
+    senderSiren: SenderSiren;
   }): Promise<EscalateHelpResponseResult> {
-    const senderNotifiedAt = await this.notifySender({
-      receiverId: input.receiverId,
-      checkInId: input.checkInId,
-      ...input.senderPush,
-    });
+    const senderNotifiedAt = await this.sirenSender(input);
     const backupContacts = await this.escalationsRepository.findActiveBackupContactsForReceiver({
       receiverId: input.receiverId,
     });
@@ -222,29 +274,23 @@ export class EscalationsService {
     const alert = await this.backupAlertContext({
       receiverId: input.receiverId,
       checkInId: input.checkInId,
-      reason: input.senderPush.reason,
+      reason: input.reason,
     });
 
     for (const [index, contact] of backupContacts.entries()) {
-      const attemptNumber = index + 1;
-      const channelResults = await Promise.all(
-        BACKUP_CONTACT_ALERT_CHANNELS.map((channel) =>
-          this.alertBackupContactChannel({
-            receiverId: input.receiverId,
-            checkInId: input.checkInId,
-            contact,
-            attemptNumber,
-            channel,
-            templateKey: input.templateKey,
-            language: alert.language,
-            variables: alert.variables,
-            senderNotifiedAt,
-            auditMetadata: input.auditMetadata,
-          }),
-        ),
-      );
+      const alerted = await this.alertBackupContact({
+        receiverId: input.receiverId,
+        checkInId: input.checkInId,
+        contact,
+        attemptNumber: index + 1,
+        templateKey: input.templateKey,
+        language: alert.language,
+        variables: alert.variables,
+        senderNotifiedAt,
+        auditMetadata: input.auditMetadata,
+      });
 
-      if (channelResults.some(Boolean)) {
+      if (alerted) {
         succeeded += 1;
       } else {
         failed += 1;
@@ -291,9 +337,41 @@ export class EscalationsService {
     };
   }
 
+  /** The sender siren that opens a backup fan-out, or its audited absence when the sender asked for the alert. */
+  private async sirenSender(input: {
+    receiverId: string;
+    checkInId: string;
+    reason: string;
+    senderSiren: SenderSiren;
+  }): Promise<Date | undefined> {
+    if ('skipped' in input.senderSiren) {
+      await this.auditService.append({
+        entityType: 'check_in',
+        entityId: input.checkInId,
+        action: 'sender_push.skipped',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: input.receiverId,
+          reason: input.senderSiren.skipped,
+        },
+      });
+      return undefined;
+    }
+
+    return await this.notifySender({
+      receiverId: input.receiverId,
+      checkInId: input.checkInId,
+      title: input.senderSiren.title,
+      body: input.senderSiren.body,
+      reason: input.reason,
+      deepLink: receiverDeepLink(input.receiverId),
+    });
+  }
+
   /**
    * What every backup alert for this escalation says: who the receiver is, in their language, what was already
    * tried, and why. The sender's own name is not stored yet, so a neutral "their family member" stands in.
+   * `receivers.language` is `char(5)`, so the stored value is trimmed before it reaches the catalog or a provider.
    */
   private async backupAlertContext(input: {
     receiverId: string;
@@ -306,7 +384,7 @@ export class EscalationsService {
     );
 
     return {
-      language: owner?.receiverLanguage ?? DEFAULT_MESSAGE_LANGUAGE,
+      language: owner?.receiverLanguage?.trim() || DEFAULT_MESSAGE_LANGUAGE,
       variables: {
         receiverName: owner?.receiverNameEncrypted
           ? this.cryptoService.decrypt(owner.receiverNameEncrypted)
@@ -318,12 +396,16 @@ export class EscalationsService {
     };
   }
 
-  private async alertBackupContactChannel(input: {
+  /**
+   * One alert per backup contact per pass (CB-011): WhatsApp first when the router says the number is reachable
+   * there, SMS otherwise or when the WhatsApp send fails. Exactly one `escalation_event` records the outcome —
+   * SUCCESS on the channel that accepted the message, or a single ERROR once every channel refused.
+   */
+  private async alertBackupContact(input: {
     receiverId: string;
     checkInId: string;
     contact: EscalationBackupContactRecord;
     attemptNumber: number;
-    channel: Channel;
     templateKey: string;
     language: string;
     variables: Record<string, string>;
@@ -331,33 +413,27 @@ export class EscalationsService {
     auditMetadata: Record<string, string | number>;
   }): Promise<boolean> {
     const startedAt = this.now();
+    const delivery = await this.deliverBackupAlert(input);
+    const deliveryMetadata = {
+      receiverId: input.receiverId,
+      checkInId: input.checkInId,
+      backupContactId: input.contact.id,
+      channel: delivery.channel,
+      attemptNumber: input.attemptNumber,
+      attemptedChannels: delivery.attemptedChannels.join(','),
+      channelDetection: delivery.channelDetection,
+    };
 
-    try {
-      const locationInstructions = input.contact.locationInstructionsEncrypted
-        ? this.cryptoService.decrypt(input.contact.locationInstructionsEncrypted)
-        : undefined;
-      const providerResult = await this.channelRouter.sendMessage(
-        input.channel,
-        this.cryptoService.decrypt(input.contact.phoneEncrypted),
-        {
-          templateKey: input.templateKey,
-          language: input.language,
-          variables: {
-            ...input.variables,
-            contactName: this.cryptoService.decrypt(input.contact.nameEncrypted),
-            ...(locationInstructions ? { locationInstructions } : {}),
-          },
-        },
-      );
+    if (delivery.delivered) {
       const event = await this.escalationsRepository.createEvent({
         checkInId: input.checkInId,
         attemptNumber: input.attemptNumber,
-        channel: input.channel,
+        channel: delivery.channel,
         startedAt,
         completedAt: this.now(),
         result: EscalationResult.SUCCESS,
         senderNotifiedAt: input.senderNotifiedAt,
-        backupAlertedAt: providerResult.acceptedAt,
+        backupAlertedAt: delivery.providerResult.acceptedAt,
       });
 
       await this.auditService.append({
@@ -366,47 +442,105 @@ export class EscalationsService {
         action: 'escalation.backup_contact_alerted',
         actorType: ActorType.SYSTEM,
         metadata: {
-          receiverId: input.receiverId,
-          checkInId: input.checkInId,
-          backupContactId: input.contact.id,
-          channel: input.channel,
-          attemptNumber: input.attemptNumber,
-          providerStatus: providerResult.providerStatus,
-          ...renderingAuditMetadata(providerResult.rendering),
+          ...deliveryMetadata,
+          providerStatus: delivery.providerResult.providerStatus,
+          ...renderingAuditMetadata(delivery.providerResult.rendering),
           ...input.auditMetadata,
         },
       });
 
       return true;
-    } catch {
-      const event = await this.escalationsRepository.createEvent({
-        checkInId: input.checkInId,
-        attemptNumber: input.attemptNumber,
-        channel: input.channel,
-        startedAt,
-        completedAt: this.now(),
-        result: EscalationResult.ERROR,
-        errorDetails: 'provider_send_failed',
-        senderNotifiedAt: input.senderNotifiedAt,
-      });
-
-      await this.auditService.append({
-        entityType: 'escalation_event',
-        entityId: event.id,
-        action: 'escalation.backup_contact_failed',
-        actorType: ActorType.SYSTEM,
-        metadata: {
-          receiverId: input.receiverId,
-          checkInId: input.checkInId,
-          backupContactId: input.contact.id,
-          channel: input.channel,
-          attemptNumber: input.attemptNumber,
-          ...input.auditMetadata,
-        },
-      });
-
-      return false;
     }
+
+    const event = await this.escalationsRepository.createEvent({
+      checkInId: input.checkInId,
+      attemptNumber: input.attemptNumber,
+      channel: delivery.channel,
+      startedAt,
+      completedAt: this.now(),
+      result: EscalationResult.ERROR,
+      errorDetails: 'provider_send_failed',
+      senderNotifiedAt: input.senderNotifiedAt,
+    });
+
+    await this.auditService.append({
+      entityType: 'escalation_event',
+      entityId: event.id,
+      action: 'escalation.backup_contact_failed',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        ...deliveryMetadata,
+        ...input.auditMetadata,
+      },
+    });
+
+    return false;
+  }
+
+  /**
+   * Sends the alert on the first channel that accepts it and never throws; a contact no channel could reach comes
+   * back as `delivered: false` so the caller records exactly one ERROR event. The contact's phone is decrypted
+   * here, at the moment of the provider call, and nowhere else.
+   */
+  private async deliverBackupAlert(input: {
+    contact: EscalationBackupContactRecord;
+    templateKey: string;
+    language: string;
+    variables: Record<string, string>;
+  }): Promise<BackupAlertDelivery> {
+    const attemptedChannels: Channel[] = [];
+    let channelDetection: ChannelDetection = 'MANUAL_REQUIRED';
+
+    try {
+      const phone = this.cryptoService.decrypt(input.contact.phoneEncrypted);
+      const message = this.backupAlertMessage(input);
+      const plan = await this.channelRouter.resolveReachablePlan({
+        phone,
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+      });
+      channelDetection = plan.detectionStatus;
+
+      for (const channel of backupAlertChannelOrder(plan)) {
+        attemptedChannels.push(channel);
+        try {
+          const providerResult = await this.channelRouter.sendMessage(channel, phone, message);
+          return { delivered: true, channel, providerResult, attemptedChannels, channelDetection };
+        } catch {
+          // The next channel, if any, gets its turn; the single ERROR event covers the contact as a whole.
+        }
+      }
+    } catch {
+      // Decrypting the contact or resolving the plan failed: nothing can be sent to this contact.
+    }
+
+    return {
+      delivered: false,
+      channel: attemptedChannels.at(-1) ?? Channel.SMS,
+      attemptedChannels,
+      channelDetection,
+    };
+  }
+
+  private backupAlertMessage(input: {
+    contact: EscalationBackupContactRecord;
+    templateKey: string;
+    language: string;
+    variables: Record<string, string>;
+  }): TemplatedMessage {
+    const locationInstructions = input.contact.locationInstructionsEncrypted
+      ? this.cryptoService.decrypt(input.contact.locationInstructionsEncrypted)
+      : undefined;
+
+    return {
+      templateKey: input.templateKey,
+      language: input.language,
+      variables: {
+        ...input.variables,
+        contactName: this.cryptoService.decrypt(input.contact.nameEncrypted),
+        ...(locationInstructions ? { locationInstructions } : {}),
+      },
+    };
   }
 
   private async notifySender(input: {
@@ -415,8 +549,8 @@ export class EscalationsService {
     title: string;
     body: string;
     reason: string;
-    /** In-app route the push opens; `NotificationsService` falls back to the home tab when absent. */
-    deepLink?: string;
+    /** In-app route the push opens; also written to every `sender_push.*` and `sender_voice_fallback.*` row (CB-068). */
+    deepLink: string;
   }): Promise<Date | undefined> {
     if (!this.notificationsService) {
       return undefined;
@@ -436,7 +570,7 @@ export class EscalationsService {
           checkInId: input.checkInId,
           receiverId: input.receiverId,
           reason: input.reason,
-          ...(input.deepLink ? { deepLink: input.deepLink } : {}),
+          deepLink: input.deepLink,
         },
       });
 
@@ -451,6 +585,7 @@ export class EscalationsService {
           sent: result.sent,
           failed: result.failed,
           reason: input.reason,
+          deepLink: input.deepLink,
         },
       });
 
@@ -463,6 +598,7 @@ export class EscalationsService {
         receiverId: input.receiverId,
         checkInId: input.checkInId,
         reason: input.reason,
+        deepLink: input.deepLink,
       });
       return undefined;
     } catch {
@@ -474,6 +610,7 @@ export class EscalationsService {
         metadata: {
           receiverId: input.receiverId,
           reason: input.reason,
+          deepLink: input.deepLink,
         },
       });
       await this.sendSenderVoiceFallback({
@@ -481,6 +618,7 @@ export class EscalationsService {
         receiverId: input.receiverId,
         checkInId: input.checkInId,
         reason: input.reason,
+        deepLink: input.deepLink,
       });
       return undefined;
     }
@@ -491,6 +629,7 @@ export class EscalationsService {
     receiverId: string;
     checkInId: string;
     reason: string;
+    deepLink: string;
   }): Promise<void> {
     try {
       const result = await this.channelRouter.makeVoiceCall(
@@ -516,6 +655,7 @@ export class EscalationsService {
           receiverId: input.receiverId,
           reason: input.reason,
           providerStatus: result.providerStatus,
+          deepLink: input.deepLink,
         },
       });
     } catch {
@@ -527,6 +667,7 @@ export class EscalationsService {
         metadata: {
           receiverId: input.receiverId,
           reason: input.reason,
+          deepLink: input.deepLink,
         },
       });
     }
