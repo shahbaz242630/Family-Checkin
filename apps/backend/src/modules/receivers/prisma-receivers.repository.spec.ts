@@ -1,5 +1,13 @@
-import { AbuseReportStatus, Channel, CheckInStatus, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
+import {
+  AbuseReportStatus,
+  Channel,
+  CheckInStatus,
+  ConsentStatus,
+  RelationshipType,
+  TechProfile,
+} from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
+import { ABUSE_REVIEW_PAUSE_REASON, ABUSE_REVIEW_PAUSE_UNTIL } from './abuse-review-pause';
 import { PrismaReceiversRepository } from './prisma-receivers.repository';
 
 describe('PrismaReceiversRepository', () => {
@@ -594,5 +602,64 @@ describe('PrismaReceiversRepository', () => {
         reportedAt: new Date('2026-04-26T11:00:00.000Z'),
       },
     });
+  });
+
+  it('pauses a reported receiver until the abuse-review sentinel so the scheduler skips it', async () => {
+    const update = vi.fn().mockResolvedValue({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      nameEncrypted: 'encrypted-name',
+      phoneEncrypted: 'encrypted-phone',
+      phoneHash: 'phone-hash',
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      scheduleCustomCron: null,
+      personalNoteEncrypted: null,
+      consentStatus: ConsentStatus.GRANTED,
+      pausedUntil: ABUSE_REVIEW_PAUSE_UNTIL,
+      pausedReason: ABUSE_REVIEW_PAUSE_REASON,
+      createdAt: new Date('2026-04-26T10:00:00.000Z'),
+      updatedAt: new Date('2026-04-26T11:00:00.000Z'),
+    });
+    const repository = new PrismaReceiversRepository({
+      receiver: {
+        create: vi.fn(),
+        findFirst: vi.fn(),
+        findMany: vi.fn(),
+        update,
+        updateMany: vi.fn(),
+      },
+      abuseReport: {
+        create: vi.fn(),
+      },
+      optOutCooldown: {
+        upsert: vi.fn(),
+      },
+    });
+
+    const receiver = await repository.pauseForAbuseReview({
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      pausedReason: ABUSE_REVIEW_PAUSE_REASON,
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: '1aef91f9-64c9-4548-baa5-d70b52386efb' },
+      data: {
+        pausedUntil: ABUSE_REVIEW_PAUSE_UNTIL,
+        pausedReason: 'abuse_report_pending_review',
+      },
+    });
+    expect(receiver.pausedUntil).toEqual(ABUSE_REVIEW_PAUSE_UNTIL);
+    expect(receiver.pausedReason).toBe('abuse_report_pending_review');
+    // Eligibility only reads pausedUntil (check-ins.service.ts isEligible, prisma-check-ins.repository.ts
+    // findReceiversDueForCheckIn), so the sentinel must sit in the future to keep the receiver off the schedule.
+    expect(ABUSE_REVIEW_PAUSE_UNTIL.getTime()).toBeGreaterThan(Date.now());
   });
 });

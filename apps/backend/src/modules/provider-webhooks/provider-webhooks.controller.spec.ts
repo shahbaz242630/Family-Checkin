@@ -9,7 +9,14 @@ import type { CreateProviderWebhookEventInput } from './provider-webhook-events.
 class FakeReceiverReplyService {
   public handled: HandleInboundReceiverReplyInput[] = [];
 
+  public failNextWith?: Error;
+
   async handleInboundReply(input: HandleInboundReceiverReplyInput) {
+    if (this.failNextWith) {
+      const error = this.failNextWith;
+      this.failNextWith = undefined;
+      throw error;
+    }
     this.handled.push(input);
     return {
       receiverId: 'receiver-1',
@@ -25,12 +32,43 @@ class FakeProviderWebhookEventsRepository {
     this.events.push(input);
     return { id: `event-${this.events.length}` };
   }
+
+  async findEvent(key: { provider: string; eventType: string; providerEventId: string }) {
+    const index = this.events.findIndex(
+      (event) =>
+        event.provider === key.provider &&
+        event.eventType === key.eventType &&
+        event.providerEventId === key.providerEventId,
+    );
+    return index >= 0 ? { id: `event-${index + 1}` } : null;
+  }
+
+  async createEventIfAbsent(input: CreateProviderWebhookEventInput) {
+    const existingIndex = this.events.findIndex(
+      (event) =>
+        input.providerEventId !== undefined &&
+        event.provider === input.provider &&
+        event.eventType === input.eventType &&
+        event.providerEventId === input.providerEventId,
+    );
+    if (existingIndex >= 0) {
+      return { id: `event-${existingIndex + 1}`, created: false };
+    }
+
+    const created = await this.createEvent(input);
+    return { ...created, created: true };
+  }
 }
 
 class FakeCheckInsService {
-  public voiceProviderFailures: Array<{ providerMessageId?: string; providerStatus?: string; answeredBy?: string }> = [];
+  public voiceProviderFailures: Array<{ providerMessageId?: string; providerStatus?: string; answeredBy?: string }> =
+    [];
 
-  async recordVoiceProviderFailure(input: { providerMessageId?: string; providerStatus?: string; answeredBy?: string }) {
+  async recordVoiceProviderFailure(input: {
+    providerMessageId?: string;
+    providerStatus?: string;
+    answeredBy?: string;
+  }) {
     this.voiceProviderFailures.push(input);
     return { updated: true };
   }
@@ -377,7 +415,7 @@ describe('ProviderWebhooksController', () => {
   });
 
   it('rejects Twilio callbacks with invalid signatures', async () => {
-    const { controller, service } = makeController();
+    const { controller, service, eventsRepository } = makeController();
 
     await expect(
       controller.handleTwilioMessagingWebhook('invalid-signature', {
@@ -387,6 +425,135 @@ describe('ProviderWebhooksController', () => {
       }),
     ).rejects.toThrow(UnauthorizedException);
     expect(service.handled).toEqual([]);
+    expect(eventsRepository.events).toEqual([]);
+  });
+
+  it('stores one PII-free event per inbound Twilio message before handing it to the reply service', async () => {
+    const { controller, service, eventsRepository } = makeController();
+    const params = {
+      From: '+971501234569',
+      Body: "Thanks, I'm fine",
+      MessageSid: 'SM900',
+    };
+
+    const response = await controller.handleTwilioMessagingWebhook(
+      signatureFor('https://api.nearby.test/provider-webhooks/twilio/messaging', params),
+      params,
+      '203.0.113.30',
+      'TwilioProxy/1.1',
+    );
+
+    expect(response).toEqual({ ok: true, processed: 1 });
+    expect(service.handled).toHaveLength(1);
+    expect(eventsRepository.events).toEqual([
+      {
+        provider: 'twilio',
+        eventType: 'messaging_inbound',
+        providerEventId: 'SM900',
+        providerMessageId: 'SM900',
+        payload: {
+          MessageSid: 'SM900',
+          channel: 'sms',
+          bodyLength: '16',
+          hasButtonPayload: 'false',
+        },
+      },
+    ]);
+    expect(JSON.stringify(eventsRepository.events)).not.toContain('971501234569');
+    expect(JSON.stringify(eventsRepository.events)).not.toContain('fine');
+  });
+
+  it('short-circuits a replayed Twilio MessageSid without re-processing the reply', async () => {
+    const { controller, service, eventsRepository } = makeController();
+    const params = {
+      From: 'whatsapp:+971501234570',
+      Body: 'OK',
+      MessageSid: 'SM901',
+    };
+    const signature = signatureFor('https://api.nearby.test/provider-webhooks/twilio/messaging', params);
+
+    const first = await controller.handleTwilioMessagingWebhook(signature, params, undefined, undefined);
+    const replay = await controller.handleTwilioMessagingWebhook(signature, params, undefined, undefined);
+
+    expect(first).toEqual({ ok: true, processed: 1 });
+    expect(replay).toEqual({ ok: true, processed: 0 });
+    expect(service.handled).toHaveLength(1);
+    expect(eventsRepository.events).toHaveLength(1);
+    expect(eventsRepository.events[0]?.payload.channel).toBe('whatsapp');
+  });
+
+  it('does not record the event when processing throws, so the Twilio retry is processed', async () => {
+    const { controller, service, eventsRepository } = makeController();
+    const params = {
+      From: 'whatsapp:+971501234570',
+      Body: 'OK',
+      MessageSid: 'SM902',
+    };
+    const signature = signatureFor('https://api.nearby.test/provider-webhooks/twilio/messaging', params);
+    service.failNextWith = new Error('database unavailable');
+
+    await expect(controller.handleTwilioMessagingWebhook(signature, params, undefined, undefined)).rejects.toThrow(
+      'database unavailable',
+    );
+    expect(eventsRepository.events).toHaveLength(0);
+
+    const retry = await controller.handleTwilioMessagingWebhook(signature, params, undefined, undefined);
+
+    expect(retry).toEqual({ ok: true, processed: 1 });
+    expect(service.handled).toHaveLength(1);
+    expect(eventsRepository.events).toHaveLength(1);
+  });
+
+  it('accepts a short-code sender and still records exactly one event', async () => {
+    const { controller, service, eventsRepository } = makeController();
+    const params = {
+      From: '12345',
+      Body: 'Your verification code is 000000',
+      MessageSid: 'SM902',
+    };
+
+    const response = await controller.handleTwilioMessagingWebhook(
+      signatureFor('https://api.nearby.test/provider-webhooks/twilio/messaging', params),
+      params,
+      undefined,
+      undefined,
+    );
+
+    expect(response).toEqual({ ok: true, processed: 1 });
+    expect(service.handled).toEqual([
+      expect.objectContaining({
+        fromPhone: '+12345',
+        channel: Channel.SMS,
+        providerMessageId: 'SM902',
+      }),
+    ]);
+    expect(eventsRepository.events).toHaveLength(1);
+    expect(JSON.stringify(eventsRepository.events)).not.toContain('12345');
+    expect(JSON.stringify(eventsRepository.events)).not.toContain('verification');
+  });
+
+  it('records inbound Twilio messages that carry no reply text without calling the reply service', async () => {
+    const { controller, service, eventsRepository } = makeController();
+    const params = {
+      From: '+971501234569',
+      MessageSid: 'SM903',
+    };
+
+    const response = await controller.handleTwilioMessagingWebhook(
+      signatureFor('https://api.nearby.test/provider-webhooks/twilio/messaging', params),
+      params,
+      undefined,
+      undefined,
+    );
+
+    expect(response).toEqual({ ok: true, processed: 0 });
+    expect(service.handled).toEqual([]);
+    expect(eventsRepository.events).toEqual([
+      expect.objectContaining({
+        providerEventId: 'SM903',
+        payload: { MessageSid: 'SM903', channel: 'sms', bodyLength: undefined, hasButtonPayload: 'false' },
+      }),
+    ]);
   });
 });
 

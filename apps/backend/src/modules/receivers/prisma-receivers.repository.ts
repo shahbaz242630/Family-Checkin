@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { AbuseReportStatus } from '@prisma/client';
 import type { Channel, CheckIn, Receiver } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { ABUSE_REVIEW_PAUSE_UNTIL } from './abuse-review-pause';
 import type {
   CreateReceiverRecordInput,
   ReceiverRecord,
@@ -20,12 +21,14 @@ interface ReceiversPrismaClient {
       include: { checkIns: { orderBy: { scheduledAt: 'desc' }; take: 1 } };
       orderBy: { createdAt: 'desc' };
     }): Promise<ReceiverWithCheckIns[]>;
-    findFirst(args:
-      | { where: { phoneHash: string; deletedAt: null } }
-      | {
-          where: { id: string; userId: string; deletedAt: null };
-          include: { checkIns: { orderBy: { scheduledAt: 'desc' }; take: 1 } };
-        }): Promise<Receiver | ReceiverWithCheckIns | null>;
+    findFirst(
+      args:
+        | { where: { phoneHash: string; deletedAt: null } }
+        | {
+            where: { id: string; userId: string; deletedAt: null };
+            include: { checkIns: { orderBy: { scheduledAt: 'desc' }; take: 1 } };
+          },
+    ): Promise<Receiver | ReceiverWithCheckIns | null>;
     update(args: {
       where: { id: string };
       data: Partial<{
@@ -158,7 +161,10 @@ export class PrismaReceiversRepository implements ReceiversRepository {
     }));
   }
 
-  async findForUserById(input: { userId: string; receiverId: string }): Promise<ReceiverWithLatestCheckInRecord | null> {
+  async findForUserById(input: {
+    userId: string;
+    receiverId: string;
+  }): Promise<ReceiverWithLatestCheckInRecord | null> {
     const receiver = (await this.prisma.receiver.findFirst({
       where: {
         id: input.receiverId,
@@ -227,7 +233,10 @@ export class PrismaReceiversRepository implements ReceiversRepository {
     return result.count > 0 ? await this.findForUserById(input) : null;
   }
 
-  async resumeForUserById(input: { userId: string; receiverId: string }): Promise<ReceiverWithLatestCheckInRecord | null> {
+  async resumeForUserById(input: {
+    userId: string;
+    receiverId: string;
+  }): Promise<ReceiverWithLatestCheckInRecord | null> {
     const result = await this.prisma.receiver.updateMany({
       where: {
         id: input.receiverId,
@@ -243,7 +252,11 @@ export class PrismaReceiversRepository implements ReceiversRepository {
     return result.count > 0 ? await this.findForUserById(input) : null;
   }
 
-  async deleteForUserById(input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverWithLatestCheckInRecord | null> {
+  async deleteForUserById(input: {
+    userId: string;
+    receiverId: string;
+    deletedAt: Date;
+  }): Promise<ReceiverWithLatestCheckInRecord | null> {
     const receiver = await this.findForUserById(input);
     if (!receiver) {
       return null;
@@ -371,6 +384,7 @@ export class PrismaReceiversRepository implements ReceiversRepository {
     const receiver = await this.prisma.receiver.update({
       where: { id: input.receiverId },
       data: {
+        pausedUntil: ABUSE_REVIEW_PAUSE_UNTIL,
         pausedReason: input.pausedReason,
       },
     });

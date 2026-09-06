@@ -24,6 +24,9 @@ describe('PrismaAdminAbuseReportsRepository', () => {
         findFirst: async () => null,
         updateMany: async () => ({ count: 0 }),
       },
+      receiver: {
+        updateMany: async () => ({ count: 0 }),
+      },
     };
     const repository = new PrismaAdminAbuseReportsRepository(prisma);
 
@@ -85,6 +88,9 @@ describe('PrismaAdminAbuseReportsRepository', () => {
           calls.push({ method: 'updateMany', args });
           return { count: 1 };
         },
+      },
+      receiver: {
+        updateMany: async () => ({ count: 0 }),
       },
     };
     const repository = new PrismaAdminAbuseReportsRepository(prisma);
@@ -149,6 +155,9 @@ describe('PrismaAdminAbuseReportsRepository', () => {
         findFirst: async () => null,
         updateMany: async () => ({ count: 0 }),
       },
+      receiver: {
+        updateMany: async () => ({ count: 0 }),
+      },
     };
     const repository = new PrismaAdminAbuseReportsRepository(prisma);
 
@@ -160,5 +169,57 @@ describe('PrismaAdminAbuseReportsRepository', () => {
         reviewedAt: new Date('2026-04-30T08:00:00.000Z'),
       }),
     ).resolves.toBeNull();
+  });
+
+  it('clears only the abuse-review pause and only once no pending report remains', async () => {
+    const calls: unknown[] = [];
+    const prisma = {
+      abuseReport: {
+        findMany: async () => [],
+        findFirst: async () => null,
+        updateMany: async () => ({ count: 0 }),
+      },
+      receiver: {
+        updateMany: async (args: unknown) => {
+          calls.push(args);
+          return { count: 1 };
+        },
+      },
+    };
+    const repository = new PrismaAdminAbuseReportsRepository(prisma);
+
+    const result = await repository.clearAbuseReviewPause({ receiverId: 'receiver-1' });
+
+    expect(result).toEqual({ resumed: true });
+    expect(calls).toEqual([
+      {
+        where: {
+          id: 'receiver-1',
+          deletedAt: null,
+          pausedReason: 'abuse_report_pending_review',
+          abuseReports: { none: { reviewStatus: AbuseReportStatus.PENDING } },
+        },
+        data: {
+          pausedUntil: null,
+          pausedReason: null,
+        },
+      },
+    ]);
+  });
+
+  it('reports no resume when the receiver was not paused for abuse review', async () => {
+    const prisma = {
+      abuseReport: {
+        findMany: async () => [],
+        findFirst: async () => null,
+        updateMany: async () => ({ count: 0 }),
+      },
+      receiver: {
+        updateMany: async () => ({ count: 0 }),
+      },
+    };
+    const repository = new PrismaAdminAbuseReportsRepository(prisma);
+
+    await expect(repository.clearAbuseReviewPause({ receiverId: 'receiver-1' })).resolves.toEqual({ resumed: false });
   });
 });

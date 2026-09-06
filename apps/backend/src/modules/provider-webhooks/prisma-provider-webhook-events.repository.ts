@@ -1,6 +1,10 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../shared/prisma/prisma.service';
-import type { CreateProviderWebhookEventInput, ProviderWebhookEventsRepository } from './provider-webhook-events.repository';
+import type {
+  CreateProviderWebhookEventInput,
+  ProviderWebhookEventKey,
+  ProviderWebhookEventsRepository,
+} from './provider-webhook-events.repository';
 
 interface ProviderWebhookEventsPrismaClient {
   checkInAttempt: {
@@ -11,6 +15,10 @@ interface ProviderWebhookEventsPrismaClient {
     }): Promise<{ id: string } | null>;
   };
   providerWebhookEvent: {
+    findFirst(args: {
+      where: { provider: string; eventType: string; providerEventId: string };
+      select: { id: true };
+    }): Promise<{ id: string } | null>;
     create(args: {
       data: {
         provider: string;
@@ -56,5 +64,27 @@ export class PrismaProviderWebhookEventsRepository implements ProviderWebhookEve
         processedAt: receivedAt,
       },
     });
+  }
+
+  // The dedupe index is non-unique until CB-016 restores it, so a concurrent duplicate can still slip past this
+  // check; it closes the retry/replay window that matters in practice.
+  async findEvent(key: ProviderWebhookEventKey): Promise<{ id: string } | null> {
+    return this.prisma.providerWebhookEvent.findFirst({ where: key, select: { id: true } });
+  }
+
+  async createEventIfAbsent(input: CreateProviderWebhookEventInput): Promise<{ id: string; created: boolean }> {
+    if (input.providerEventId) {
+      const existing = await this.findEvent({
+        provider: input.provider,
+        eventType: input.eventType,
+        providerEventId: input.providerEventId,
+      });
+      if (existing) {
+        return { id: existing.id, created: false };
+      }
+    }
+
+    const created = await this.createEvent(input);
+    return { id: created.id, created: true };
   }
 }

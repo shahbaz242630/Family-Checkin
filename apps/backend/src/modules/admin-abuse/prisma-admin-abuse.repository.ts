@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { AbuseReportStatus } from '@prisma/client';
 import type { AbuseReport } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { ABUSE_REVIEW_PAUSE_REASON } from '../receivers/abuse-review-pause';
 import type { AdminAbuseReportRecord, AdminAbuseReportsRepository } from './admin-abuse.repository';
 
 type AbuseReportSafeRecord = Pick<
@@ -37,6 +38,20 @@ interface AdminAbusePrismaClient {
         reviewStatus: AbuseReportStatus;
         reviewerAdminId: string;
         reviewedAt: Date;
+      };
+    }): Promise<{ count: number }>;
+  };
+  receiver: {
+    updateMany(args: {
+      where: {
+        id: string;
+        deletedAt: null;
+        pausedReason: string;
+        abuseReports: { none: { reviewStatus: AbuseReportStatus } };
+      };
+      data: {
+        pausedUntil: null;
+        pausedReason: null;
       };
     }): Promise<{ count: number }>;
   };
@@ -106,6 +121,23 @@ export class PrismaAdminAbuseReportsRepository implements AdminAbuseReportsRepos
     }
 
     return this.findById({ abuseReportId: input.abuseReportId });
+  }
+
+  async clearAbuseReviewPause(input: { receiverId: string }): Promise<{ resumed: boolean }> {
+    const result = await this.prisma.receiver.updateMany({
+      where: {
+        id: input.receiverId,
+        deletedAt: null,
+        pausedReason: ABUSE_REVIEW_PAUSE_REASON,
+        abuseReports: { none: { reviewStatus: AbuseReportStatus.PENDING } },
+      },
+      data: {
+        pausedUntil: null,
+        pausedReason: null,
+      },
+    });
+
+    return { resumed: result.count > 0 };
   }
 
   private toRecord(report: AbuseReportSafeRecord): AdminAbuseReportRecord {

@@ -133,13 +133,28 @@ export class ProviderWebhooksController {
   ): Promise<ProviderWebhookResponse> {
     this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/messaging', body);
 
-    const reply = this.extractTwilioMessagingReply(body, ipAddress, userAgent);
-    if (!reply) {
+    // Twilio can deliver the same MessageSid more than once (retries, fallback URL). Check for a stored event before
+    // processing, and store it only after processing succeeded: a transient failure then leaves nothing behind, so
+    // Twilio's retry is processed instead of being mistaken for a replay (CB-015).
+    const eventKey = { provider: 'twilio', eventType: 'messaging_inbound', providerEventId: body.MessageSid };
+    if (
+      body.MessageSid &&
+      (await this.providerWebhookEventsRepository.findEvent({ ...eventKey, providerEventId: body.MessageSid }))
+    ) {
       return { ok: true, processed: 0 };
     }
 
-    await this.receiverReplyService.handleInboundReply(reply);
-    return { ok: true, processed: 1 };
+    const reply = this.extractTwilioMessagingReply(body, ipAddress, userAgent);
+    if (reply) {
+      await this.receiverReplyService.handleInboundReply(reply);
+    }
+
+    await this.providerWebhookEventsRepository.createEventIfAbsent({
+      ...eventKey,
+      providerMessageId: body.MessageSid,
+      payload: this.toInboundMessagingEventPayload(body),
+    });
+    return { ok: true, processed: reply ? 1 : 0 };
   }
 
   @Post('twilio/voice')
@@ -294,6 +309,23 @@ export class ProviderWebhooksController {
     }
 
     return reply;
+  }
+
+  // provider_webhook_events is an operational log: phone numbers and message text stay out of it. The reply
+  // service audits the outcome with the same PII-free shape.
+  private toInboundMessagingEventPayload(body: TwilioMessagingWebhookBody): Record<string, string | undefined> {
+    const replyBody = body.ButtonPayload ?? body.ButtonText ?? body.Body;
+    let channel: string | undefined;
+    if (body.From !== undefined) {
+      channel = body.From.startsWith('whatsapp:') ? 'whatsapp' : 'sms';
+    }
+
+    return {
+      MessageSid: body.MessageSid,
+      channel,
+      bodyLength: replyBody === undefined ? undefined : String(replyBody.length),
+      hasButtonPayload: String(body.ButtonPayload !== undefined),
+    };
   }
 
   private extractTwilioVoiceReply(
