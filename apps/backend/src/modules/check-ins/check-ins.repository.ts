@@ -149,9 +149,23 @@ export interface MarkCheckInSentInput {
 export interface MarkCheckInAttemptSentInput {
   attemptId: string;
   sentAt: Date;
+  /**
+   * Absent when the cron claims the attempt before the provider call (CB-045): the provider's id arrives afterwards
+   * through `recordAttemptSendResult`. Present when the caller already holds the provider's answer.
+   */
+  providerMessageId?: string;
+  providerStatus: string;
+}
+
+/** The provider's answer for an attempt the cron claimed with `markAttemptSent` before sending (CB-045). */
+export interface RecordCheckInAttemptSendResultInput {
+  attemptId: string;
   providerMessageId: string;
   providerStatus: string;
 }
+
+/** What `runExclusively` resolves to: the work's result, or `locked` when another tick held the lock. */
+export type ExclusiveRunResult<T> = { locked: true } | { locked: false; result: T };
 
 export interface MarkCheckInAttemptFailedInput {
   attemptId: string;
@@ -243,8 +257,28 @@ export interface CheckInsRepository {
   markSent(input: MarkCheckInSentInput): Promise<boolean>;
   findDuePendingAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]>;
   findTimedOutSentAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]>;
-  /** PENDING -> SENT. */
+  /**
+   * PENDING -> SENT. The cron calls it *before* the provider call, as the atomic claim on the attempt (CB-045):
+   * `false` means another tick claimed it first and this one must not send it. The provider's id is stored
+   * afterwards through `recordAttemptSendResult`.
+   */
   markAttemptSent(input: MarkCheckInAttemptSentInput): Promise<boolean>;
+  /**
+   * Stores the provider's message or call id and status on an attempt claimed by `markAttemptSent`, only while it
+   * is still SENT. Optional only for doubles in other modules; `PrismaCheckInsRepository` always provides it.
+   */
+  recordAttemptSendResult?(input: RecordCheckInAttemptSendResultInput): Promise<boolean>;
+  /** How many attempts of the check-in are still PENDING, counted in the database (CB-045). Optional only for doubles. */
+  countPendingAttempts?(input: { checkInId: string }): Promise<number>;
+  /** The earliest PENDING attempt of the check-in that is already due (`scheduledAt <= now`), or null. Optional only for doubles. */
+  findNextDuePendingAttempt?(input: { checkInId: string; now: Date }): Promise<CheckInAttemptWithCheckInRecord | null>;
+  /**
+   * Runs `work` while holding the scheduler's Postgres advisory lock so two overlapping ticks never process the
+   * same rows; resolves `{ locked: true }` at once, without running `work`, when another tick holds it (CB-045).
+   * The work runs on the normal client: the lock's transaction does nothing but hold the lock, and must outlive
+   * the run (`timeoutMs`). Optional only for doubles in other modules.
+   */
+  runExclusively?<T>(work: () => Promise<T>, options: { timeoutMs: number }): Promise<ExclusiveRunResult<T>>;
   /** PENDING or SENT -> FAILED. */
   markAttemptFailed(input: MarkCheckInAttemptFailedInput): Promise<boolean>;
   /** The latest SENT attempt for the provider id -> FAILED; null when no such attempt is still SENT. */

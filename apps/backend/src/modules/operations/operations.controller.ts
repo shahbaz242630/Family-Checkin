@@ -19,7 +19,7 @@ import { OperationsVisibilityService } from './operations-visibility.service';
 export class OperationsController {
   constructor(
     @Inject(CheckInsService)
-    private readonly checkInsService: Pick<CheckInsService, 'sendDueCheckIns' | 'processCascadeAttempts'>,
+    private readonly checkInsService: Pick<CheckInsService, 'runScheduledTick'>,
     @Inject(AppConfigService)
     private readonly config: Pick<AppConfigService, 'operationsCronSecret'>,
     @Inject(OperationsVisibilityService)
@@ -33,19 +33,22 @@ export class OperationsController {
 
   // Called by the scheduler every 10 minutes in bursts and authenticated by the
   // cron secret (timing-safe compare), so the global rate limit is skipped here.
-  // The admin GET routes below stay throttled.
+  // The admin GET routes below stay throttled. A tick that overlaps a running one
+  // answers `{ ok: true, locked: true }` at once and sends nothing (CB-045).
   @SkipThrottle()
   @Post('check-ins/run')
   async runCheckIns(@Headers('authorization') authorization: string | undefined) {
     this.assertOperationsCronBearer(authorization);
 
-    const dueCheckIns = await this.checkInsService.sendDueCheckIns();
-    const cascadeAttempts = await this.checkInsService.processCascadeAttempts();
+    const tick = await this.checkInsService.runScheduledTick();
+    if (tick.locked) {
+      return { ok: true, locked: true };
+    }
 
     return {
       ok: true,
-      dueCheckIns,
-      cascadeAttempts,
+      dueCheckIns: tick.dueCheckIns,
+      cascadeAttempts: tick.cascadeAttempts,
     };
   }
 

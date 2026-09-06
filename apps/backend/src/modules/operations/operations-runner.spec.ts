@@ -66,6 +66,45 @@ describe('runOperationsCheckIns', () => {
     ).rejects.toThrow('Operations check-ins run failed with HTTP 401 Unauthorized');
   });
 
+  it('reports a locked tick as ok with zero counts (CB-045)', async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(JSON.stringify({ ok: true, locked: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    const result = await runOperationsCheckIns({
+      endpointUrl: 'https://api.nearby.example/operations/check-ins/run',
+      operationsCronSecret: 'operations-cron-secret',
+      fetchImpl,
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      locked: true,
+      dueCheckIns: { created: 0, sent: 0, skipped: 0 },
+      cascadeAttempts: { sent: 0, timedOut: 0, failed: 0, needsAttention: 0, skipped: 0 },
+    });
+  });
+
+  it('rejects a body that carries neither counts nor a lock', async () => {
+    const fetchImpl = vi.fn(async () => {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    await expect(
+      runOperationsCheckIns({
+        endpointUrl: 'https://api.nearby.example/operations/check-ins/run',
+        operationsCronSecret: 'operations-cron-secret',
+        fetchImpl,
+      }),
+    ).rejects.toThrow('Operations check-ins run returned no dueCheckIns counts');
+  });
+
   it('returns only aggregate fields even if the endpoint response has unexpected details', async () => {
     const fetchImpl = vi.fn(async () => {
       return new Response(

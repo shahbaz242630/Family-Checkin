@@ -1,7 +1,8 @@
 import { Channel, CheckInAttemptStatus, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { CheckInAlreadyScheduledError } from './check-ins.repository';
-import { PrismaCheckInsRepository } from './prisma-check-ins.repository';
+import { ATTEMPT_SCAN_LIMIT, CHECK_INS_RUN_LOCK_KEY, PrismaCheckInsRepository } from './prisma-check-ins.repository';
+import type { CheckInsPrismaClient, LockTransactionClient } from './prisma-check-ins.repository';
 
 function receiverMock() {
   return {
@@ -22,9 +23,46 @@ function checkInMock() {
 function checkInAttemptMock() {
   return {
     createManyAndReturn: vi.fn(),
+    count: vi.fn(),
     findMany: vi.fn(),
     findFirst: vi.fn(),
     updateMany: vi.fn(),
+  };
+}
+
+/** A `$transaction` whose lock query answers `acquired`; the callback gets the recording `$queryRaw`. */
+function transactionMock(acquired: boolean) {
+  const queries: Array<{ sql: string; values: unknown[] }> = [];
+  const $queryRaw = async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    queries.push({ sql: strings.join('?'), values });
+    return [{ acquired }];
+  };
+  const $transaction = vi.fn(async (fn: (tx: LockTransactionClient) => Promise<unknown>) =>
+    fn({ $queryRaw } as LockTransactionClient),
+  );
+  return { $transaction, lock: $transaction as unknown as CheckInsPrismaClient['$transaction'], queries };
+}
+
+function attemptWithCheckInRow(overrides: Record<string, unknown> = {}) {
+  return {
+    ...attemptRow({
+      status: CheckInAttemptStatus.PENDING,
+      sentAt: null,
+      providerMessageId: null,
+      providerStatus: null,
+    }),
+    checkIn: {
+      ...checkInRow(),
+      receiver: {
+        userId: 'sender-user-1',
+        phoneEncrypted: 'encrypted-phone',
+        countryCode: 'AE',
+        language: 'en',
+        nameEncrypted: 'encrypted-name',
+        personalNoteEncrypted: null,
+      },
+    },
+    ...overrides,
   };
 }
 
@@ -117,6 +155,7 @@ describe('PrismaCheckInsRepository', () => {
     receiver.findMany.mockResolvedValue([receiverRow()]);
     const checkIn = checkInMock();
     const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
       receiver,
       checkIn,
       checkInAttempt: checkInAttemptMock(),
@@ -168,7 +207,12 @@ describe('PrismaCheckInsRepository', () => {
     const receiver = receiverMock();
     receiver.findMany.mockResolvedValue([receiverRow({ scheduleTimeWindow: { start: '18:00', end: '20:00' } })]);
     const checkIn = checkInMock();
-    const repository = new PrismaCheckInsRepository({ receiver, checkIn, checkInAttempt: checkInAttemptMock() });
+    const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
+      receiver,
+      checkIn,
+      checkInAttempt: checkInAttemptMock(),
+    });
 
     const due = await repository.findReceiversDueForCheckIn(new Date('2026-04-27T05:30:00.000Z'));
 
@@ -186,6 +230,7 @@ describe('PrismaCheckInsRepository', () => {
       receiverRow({ id: 'receiver-good' }),
     ]);
     const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
       receiver,
       checkIn: checkInMock(),
       checkInAttempt: checkInAttemptMock(),
@@ -206,7 +251,12 @@ describe('PrismaCheckInsRepository', () => {
       const receiver = receiverMock();
       receiver.findMany.mockResolvedValue([losAngelesEvening()]);
       const checkIn = checkInMock();
-      const repository = new PrismaCheckInsRepository({ receiver, checkIn, checkInAttempt: checkInAttemptMock() });
+      const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
+        receiver,
+        checkIn,
+        checkInAttempt: checkInAttemptMock(),
+      });
 
       // 16:30 PDT on 5 September: nothing yet for that local day.
       const firstTick = await repository.findReceiversDueForCheckIn(new Date('2026-09-05T23:30:00.000Z'));
@@ -228,7 +278,12 @@ describe('PrismaCheckInsRepository', () => {
       const receiver = receiverMock();
       receiver.findMany.mockResolvedValue([losAngelesEvening()]);
       const checkIn = checkInMock();
-      const repository = new PrismaCheckInsRepository({ receiver, checkIn, checkInAttempt: checkInAttemptMock() });
+      const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
+        receiver,
+        checkIn,
+        checkInAttempt: checkInAttemptMock(),
+      });
 
       // 16:30 PST on 1 November (clocks went back at 02:00 that morning); yesterday's row is for 31 October.
       checkIn.findMany.mockResolvedValue([{ receiverId: 'receiver-la', scheduledLocalDate: localDay('2026-10-31') }]);
@@ -248,6 +303,7 @@ describe('PrismaCheckInsRepository', () => {
       const receiver = receiverMock();
       receiver.findMany.mockResolvedValue([receiverRow({ scheduleTimeWindow: { start: '22:00', end: '06:00' } })]);
       const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
         receiver,
         checkIn: checkInMock(),
         checkInAttempt: checkInAttemptMock(),
@@ -263,7 +319,12 @@ describe('PrismaCheckInsRepository', () => {
       const receiver = receiverMock();
       receiver.findMany.mockResolvedValue([receiverRow()]);
       const checkIn = checkInMock();
-      const repository = new PrismaCheckInsRepository({ receiver, checkIn, checkInAttempt: checkInAttemptMock() });
+      const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
+        receiver,
+        checkIn,
+        checkInAttempt: checkInAttemptMock(),
+      });
 
       await repository.findReceiversDueForCheckIn(new Date('2026-04-27T05:30:00.000Z'));
 
@@ -288,6 +349,7 @@ describe('PrismaCheckInsRepository', () => {
           }),
         );
       const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
         receiver: receiverMock(),
         checkIn,
         checkInAttempt: checkInAttemptMock(),
@@ -330,6 +392,7 @@ describe('PrismaCheckInsRepository', () => {
       const checkIn = checkInMock();
       checkIn.create.mockRejectedValueOnce(uniqueViolation()).mockRejectedValueOnce(new Error('connection reset'));
       const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
         receiver: receiverMock(),
         checkIn,
         checkInAttempt: checkInAttemptMock(),
@@ -359,6 +422,7 @@ describe('PrismaCheckInsRepository', () => {
         .mockResolvedValueOnce({ count: 0 })
         .mockResolvedValueOnce({ count: 2 });
       const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
         receiver,
         checkIn: checkInMock(),
         checkInAttempt: checkInAttemptMock(),
@@ -400,6 +464,7 @@ describe('PrismaCheckInsRepository', () => {
         receiverRow({ id: 'receiver-never-bad' }),
       ]);
       const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
         receiver,
         checkIn: checkInMock(),
         checkInAttempt: checkInAttemptMock(),
@@ -422,6 +487,7 @@ describe('PrismaCheckInsRepository', () => {
     checkIn.create.mockResolvedValue(checkInRow({ status: CheckInStatus.PENDING, channelUsed: null, sentAt: null }));
     checkIn.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
     const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
       receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
@@ -473,6 +539,7 @@ describe('PrismaCheckInsRepository', () => {
     );
     checkIn.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
     const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
       receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
@@ -530,6 +597,7 @@ describe('PrismaCheckInsRepository', () => {
       );
     checkIn.updateMany.mockResolvedValue({ count: 1 });
     const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
       receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
@@ -585,6 +653,7 @@ describe('PrismaCheckInsRepository', () => {
     const checkIn = checkInMock();
     checkIn.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
     const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
       receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
@@ -607,6 +676,7 @@ describe('PrismaCheckInsRepository', () => {
     const checkIn = checkInMock();
     checkIn.findMany.mockResolvedValue([checkInRow({ status: CheckInStatus.PENDING })]);
     const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
       receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
@@ -633,6 +703,7 @@ describe('PrismaCheckInsRepository', () => {
       .mockResolvedValueOnce({ count: 0 })
       .mockResolvedValueOnce({ count: 2 });
     const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
       receiver: receiverMock(),
       checkIn: checkInMock(),
       checkInAttempt,
@@ -687,6 +758,7 @@ describe('PrismaCheckInsRepository', () => {
     checkInAttempt.findFirst.mockResolvedValue(attemptRow());
     checkInAttempt.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
     const repository = new PrismaCheckInsRepository({
+      $transaction: vi.fn(),
       receiver: receiverMock(),
       checkIn: checkInMock(),
       checkInAttempt,
@@ -725,6 +797,216 @@ describe('PrismaCheckInsRepository', () => {
     expect(replayed).toBeNull();
   });
 
+  describe('claims attempts and locks the tick (CB-045)', () => {
+    it('claims a pending attempt as SENT with a sending status and no provider id, then records the provider result while it is still SENT', async () => {
+      const checkInAttempt = checkInAttemptMock();
+      checkInAttempt.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 1 });
+      const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt,
+      });
+      const sentAt = new Date('2026-04-27T05:30:00.000Z');
+
+      await expect(
+        repository.markAttemptSent({ attemptId: 'attempt-1', sentAt, providerStatus: 'sending' }),
+      ).resolves.toBe(true);
+      await expect(
+        repository.markAttemptSent({ attemptId: 'attempt-1', sentAt, providerStatus: 'sending' }),
+      ).resolves.toBe(false);
+      await expect(
+        repository.recordAttemptSendResult({
+          attemptId: 'attempt-1',
+          providerMessageId: 'SM-1',
+          providerStatus: 'queued',
+        }),
+      ).resolves.toBe(true);
+
+      expect(checkInAttempt.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { id: 'attempt-1', status: { in: [CheckInAttemptStatus.PENDING] } },
+        data: { status: CheckInAttemptStatus.SENT, sentAt, providerStatus: 'sending' },
+      });
+      expect(checkInAttempt.updateMany).toHaveBeenNthCalledWith(3, {
+        where: { id: 'attempt-1', status: { in: [CheckInAttemptStatus.SENT] } },
+        data: { providerMessageId: 'SM-1', providerStatus: 'queued' },
+      });
+    });
+
+    it('still writes the provider id on markAttemptSent when the caller already has it', async () => {
+      const checkInAttempt = checkInAttemptMock();
+      checkInAttempt.updateMany.mockResolvedValue({ count: 1 });
+      const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt,
+      });
+      const sentAt = new Date('2026-04-27T05:30:00.000Z');
+
+      await repository.markAttemptSent({
+        attemptId: 'attempt-1',
+        sentAt,
+        providerMessageId: 'SM-1',
+        providerStatus: 'queued',
+      });
+
+      expect(checkInAttempt.updateMany).toHaveBeenCalledWith({
+        where: { id: 'attempt-1', status: { in: [CheckInAttemptStatus.PENDING] } },
+        data: { status: CheckInAttemptStatus.SENT, sentAt, providerStatus: 'queued', providerMessageId: 'SM-1' },
+      });
+    });
+
+    it('counts pending attempts in the database and bounds both attempt scans', async () => {
+      const checkInAttempt = checkInAttemptMock();
+      checkInAttempt.count.mockResolvedValue(2);
+      checkInAttempt.findMany.mockResolvedValue([]);
+      const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt,
+      });
+      const now = new Date('2026-04-27T05:46:00.000Z');
+
+      await expect(repository.countPendingAttempts({ checkInId: 'check-in-1' })).resolves.toBe(2);
+      await repository.findDuePendingAttempts({ now });
+      await repository.findTimedOutSentAttempts({ now });
+
+      expect(checkInAttempt.count).toHaveBeenCalledWith({
+        where: { checkInId: 'check-in-1', status: CheckInAttemptStatus.PENDING },
+      });
+      expect(ATTEMPT_SCAN_LIMIT).toBe(500);
+      expect(checkInAttempt.findMany).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          where: { status: CheckInAttemptStatus.PENDING, scheduledAt: { lte: now } },
+          orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
+          take: ATTEMPT_SCAN_LIMIT,
+        }),
+      );
+      expect(checkInAttempt.findMany).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          where: { status: CheckInAttemptStatus.SENT, sentAt: { lte: now } },
+          take: ATTEMPT_SCAN_LIMIT,
+        }),
+      );
+    });
+
+    it('fetches only the earliest due pending attempt of one check-in', async () => {
+      const checkInAttempt = checkInAttemptMock();
+      checkInAttempt.findMany.mockResolvedValueOnce([attemptWithCheckInRow()]).mockResolvedValueOnce([]);
+      const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt,
+      });
+      const now = new Date('2026-04-27T06:20:00.000Z');
+
+      const next = await repository.findNextDuePendingAttempt({ checkInId: 'check-in-1', now });
+      const none = await repository.findNextDuePendingAttempt({ checkInId: 'check-in-1', now });
+
+      expect(next).toMatchObject({
+        id: 'attempt-3',
+        status: CheckInAttemptStatus.PENDING,
+        checkIn: { id: 'check-in-1', receiverUserId: 'sender-user-1', receiverPhoneEncrypted: 'encrypted-phone' },
+      });
+      expect(none).toBeNull();
+      expect(checkInAttempt.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { checkInId: 'check-in-1', status: CheckInAttemptStatus.PENDING, scheduledAt: { lte: now } },
+          orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
+          take: 1,
+        }),
+      );
+    });
+
+    it('runs the tick inside a transaction that holds the advisory lock and returns the work result', async () => {
+      const { $transaction, lock, queries } = transactionMock(true);
+      const repository = new PrismaCheckInsRepository({
+        $transaction: lock,
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt: checkInAttemptMock(),
+      });
+      const work = vi.fn(async () => ({ sent: 3 }));
+
+      await expect(repository.runExclusively(work, { timeoutMs: 300_000 })).resolves.toEqual({
+        locked: false,
+        result: { sent: 3 },
+      });
+
+      expect(work).toHaveBeenCalledTimes(1);
+      expect($transaction).toHaveBeenCalledWith(expect.any(Function), { maxWait: 5000, timeout: 300_000 });
+      expect(queries).toEqual([
+        {
+          sql: expect.stringContaining('pg_try_advisory_xact_lock(?::int, ?::int)'),
+          values: [...CHECK_INS_RUN_LOCK_KEY],
+        },
+      ]);
+    });
+
+    it('answers locked at once, without running the work, when another tick holds the lock', async () => {
+      const { lock } = transactionMock(false);
+      const repository = new PrismaCheckInsRepository({
+        $transaction: lock,
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt: checkInAttemptMock(),
+      });
+      const work = vi.fn(async () => ({ sent: 3 }));
+
+      await expect(repository.runExclusively(work, { timeoutMs: 300_000 })).resolves.toEqual({ locked: true });
+      expect(work).not.toHaveBeenCalled();
+    });
+
+    it('keeps the counts of a run that outlived its lock transaction and rethrows any other failure', async () => {
+      const expired = Object.assign(new Error('Transaction already closed'), { code: 'P2028', clientVersion: 'test' });
+      const $queryRaw = async () => [{ acquired: true }];
+      const $transaction = vi.fn(async (fn: (tx: LockTransactionClient) => Promise<unknown>) => {
+        await fn({ $queryRaw } as LockTransactionClient);
+        throw expired;
+      });
+      const repository = new PrismaCheckInsRepository({
+        $transaction: $transaction as unknown as CheckInsPrismaClient['$transaction'],
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt: checkInAttemptMock(),
+      });
+
+      await expect(repository.runExclusively(async () => ({ sent: 1 }), { timeoutMs: 1 })).resolves.toEqual({
+        locked: false,
+        result: { sent: 1 },
+      });
+      await expect(
+        repository.runExclusively(
+          async () => {
+            throw new Error('provider exploded');
+          },
+          { timeoutMs: 1 },
+        ),
+      ).rejects.toThrow('provider exploded');
+
+      const beforeWork = vi.fn(async () => {
+        throw expired;
+      });
+      const failing = new PrismaCheckInsRepository({
+        $transaction: beforeWork as unknown as CheckInsPrismaClient['$transaction'],
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt: checkInAttemptMock(),
+      });
+      await expect(failing.runExclusively(async () => ({ sent: 1 }), { timeoutMs: 1 })).rejects.toThrow(
+        'Transaction already closed',
+      );
+    });
+  });
+
   describe('pulls the next attempt forward after a delivery failure (CB-016)', () => {
     const dueAt = new Date('2026-04-27T05:32:00.000Z');
 
@@ -743,6 +1025,7 @@ describe('PrismaCheckInsRepository', () => {
       );
       checkInAttempt.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
       const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
         receiver: receiverMock(),
         checkIn: checkInMock(),
         checkInAttempt,
@@ -775,6 +1058,7 @@ describe('PrismaCheckInsRepository', () => {
         )
         .mockResolvedValueOnce(null);
       const repository = new PrismaCheckInsRepository({
+        $transaction: vi.fn(),
         receiver: receiverMock(),
         checkIn: checkInMock(),
         checkInAttempt,

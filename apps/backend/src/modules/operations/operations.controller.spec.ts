@@ -8,24 +8,29 @@ import { OperationsController } from './operations.controller';
 
 class FakeCheckInsService {
   public calls: string[] = [];
+  /** When true the run lock is held by another tick (CB-045). */
+  public lockHeld = false;
 
-  async sendDueCheckIns() {
-    this.calls.push('sendDueCheckIns');
+  async runScheduledTick() {
+    this.calls.push('runScheduledTick');
+    if (this.lockHeld) {
+      return { locked: true as const };
+    }
     return {
-      created: 2,
-      sent: 2,
-      skipped: 1,
-    };
-  }
-
-  async processCascadeAttempts() {
-    this.calls.push('processCascadeAttempts');
-    return {
-      sent: 3,
-      timedOut: 2,
-      failed: 1,
-      needsAttention: 1,
-      skipped: 1,
+      locked: false as const,
+      dueCheckIns: {
+        created: 2,
+        sent: 2,
+        skipped: 1,
+        failed: 0,
+      },
+      cascadeAttempts: {
+        sent: 3,
+        timedOut: 2,
+        failed: 1,
+        needsAttention: 1,
+        skipped: 1,
+      },
     };
   }
 }
@@ -118,13 +123,14 @@ describe('OperationsController', () => {
 
     const response = await controller.runCheckIns('Bearer operations-cron-secret');
 
-    expect(checkIns.calls).toEqual(['sendDueCheckIns', 'processCascadeAttempts']);
+    expect(checkIns.calls).toEqual(['runScheduledTick']);
     expect(response).toEqual({
       ok: true,
       dueCheckIns: {
         created: 2,
         sent: 2,
         skipped: 1,
+        failed: 0,
       },
       cascadeAttempts: {
         sent: 3,
@@ -136,6 +142,20 @@ describe('OperationsController', () => {
     });
     expect(JSON.stringify(response)).not.toContain('receiver');
     expect(JSON.stringify(response)).not.toContain('phone');
+  });
+
+  it('answers ok and locked, with no counts, when another tick holds the run lock (CB-045)', async () => {
+    const checkIns = new FakeCheckInsService();
+    checkIns.lockHeld = true;
+    const controller = new OperationsController(
+      checkIns as unknown as CheckInsService,
+      { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
+      new FakeOperationsVisibilityService() as unknown as OperationsVisibilityService,
+      new FakeAdminAuthService() as unknown as AdminAuthService,
+    );
+
+    await expect(controller.runCheckIns('Bearer operations-cron-secret')).resolves.toEqual({ ok: true, locked: true });
+    expect(checkIns.calls).toEqual(['runScheduledTick']);
   });
 
   it('requires the configured operations cron bearer token', async () => {
