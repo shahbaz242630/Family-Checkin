@@ -4,12 +4,19 @@ import type { Channel, CheckIn, CheckInAttempt, Receiver } from '@prisma/client'
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import {
   assertSupportedTimeZone,
+  isInsideScheduleWindow,
+  localClockInTimeZone,
   parseScheduleTimeWindow,
   ReceiverScheduleValidationError,
-  timeOfDayToMinutes,
+  scheduleDayOf,
 } from '../../shared/schedule/receiver-schedule';
 import type { ScheduleTimeWindow } from '../../shared/schedule/receiver-schedule';
-import { CHECK_IN_ALLOWED_FROM, CHECK_IN_ATTEMPT_ALLOWED_FROM, OPEN_CHECK_IN_STATUSES } from './check-ins.repository';
+import {
+  CHECK_IN_ALLOWED_FROM,
+  CHECK_IN_ATTEMPT_ALLOWED_FROM,
+  CheckInAlreadyScheduledError,
+  OPEN_CHECK_IN_STATUSES,
+} from './check-ins.repository';
 import type {
   CheckInAttemptRecord,
   CheckInAttemptWithCheckInRecord,
@@ -46,6 +53,7 @@ type ReceiverDueForCheckIn = Pick<
   | 'consentStatus'
   | 'pausedUntil'
   | 'deletedAt'
+  | 'scheduleInvalidAt'
 >;
 
 type AttemptWithCheckIn = CheckInAttempt & {
@@ -68,21 +76,23 @@ interface CheckInsPrismaClient {
         deletedAt: null;
         OR: [{ pausedUntil: null }, { pausedUntil: { lte: Date } }];
         scheduleFrequency: { in: string[] };
-        NOT: {
-          checkIns: {
-            some: {
-              scheduledAt: {
-                gte: Date;
-                lt: Date;
-              };
-            };
-          };
-        };
       };
     }): Promise<ReceiverDueForCheckIn[]>;
+    updateMany(args: {
+      where: { id: string; scheduleInvalidAt: null } | { id: { in: string[] }; scheduleInvalidAt: { not: null } };
+      data: { scheduleInvalidAt: Date | null };
+    }): Promise<{ count: number }>;
   };
   checkIn: {
-    create(args: { data: { receiverId: string; scheduledAt: Date; status: CheckInStatus } }): Promise<CheckIn>;
+    create(args: {
+      data: {
+        receiverId: string;
+        scheduledAt: Date;
+        scheduledLocalDate: Date;
+        retryOf: string | null;
+        status: CheckInStatus;
+      };
+    }): Promise<CheckIn>;
     findFirst(
       args:
         | {
@@ -98,13 +108,22 @@ interface CheckInsPrismaClient {
             orderBy: { scheduledAt: 'desc' };
           },
     ): Promise<CheckIn | null>;
-    findMany(args: {
-      where: {
-        receiverId: string;
-        status: { in: CheckInStatus[] };
-      };
-      orderBy: { scheduledAt: 'asc' };
-    }): Promise<CheckIn[]>;
+    findMany(
+      args:
+        | {
+            where: {
+              receiverId: string;
+              status: { in: CheckInStatus[] };
+            };
+            orderBy: { scheduledAt: 'asc' };
+          }
+        | {
+            where: {
+              retryOf: null;
+              OR: Array<{ receiverId: string; scheduledLocalDate: Date }>;
+            };
+          },
+    ): Promise<CheckIn[]>;
     updateMany(args: {
       where: { id: string; status: { in: CheckInStatus[] } };
       data: Partial<{
@@ -165,39 +184,39 @@ interface CheckInsPrismaClient {
   };
 }
 
+/** A receiver whose window is open right now, with the local day the new check-in will belong to. */
+interface DueReceiver {
+  receiver: ReceiverDueForCheckIn;
+  window: ScheduleTimeWindow;
+  scheduledLocalDate: string;
+}
+
+/** Prisma's error code for a unique-constraint violation, checked structurally so a mock can raise it too. */
+const UNIQUE_VIOLATION_CODE = 'P2002';
+
 @Injectable()
 export class PrismaCheckInsRepository implements CheckInsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: CheckInsPrismaClient | PrismaService) {}
 
   async findReceiversDueForCheckIn(now: Date): Promise<ReceiversDueForCheckIn> {
-    const { startOfDay, startOfNextDay } = this.utcDayBounds(now);
     const receivers = await this.prisma.receiver.findMany({
       where: {
         consentStatus: ConsentStatus.GRANTED,
         deletedAt: null,
         OR: [{ pausedUntil: null }, { pausedUntil: { lte: now } }],
         scheduleFrequency: { in: ['daily'] },
-        NOT: {
-          checkIns: {
-            some: {
-              scheduledAt: {
-                gte: startOfDay,
-                lt: startOfNextDay,
-              },
-            },
-          },
-        },
       },
     });
-    const result: ReceiversDueForCheckIn = { candidates: [], skipped: [] };
+    const result: Required<ReceiversDueForCheckIn> = { candidates: [], skipped: [], recovered: [] };
+    const due: DueReceiver[] = [];
 
     for (const receiver of receivers) {
       let window: ScheduleTimeWindow;
-      let due: boolean;
+      let clock: ReturnType<typeof localClockInTimeZone>;
       try {
         window = parseScheduleTimeWindow(receiver.scheduleTimeWindow);
         assertSupportedTimeZone(receiver.timezone);
-        due = this.isInsideScheduleWindow(window, now, receiver.timezone);
+        clock = localClockInTimeZone(now, receiver.timezone);
       } catch (error) {
         // One row saved as `timezone: 'Dubai'` or `{ start: '9:00' }` used to reject the whole query and stall
         // every receiver's check-in (CB-004). Report the row and carry on; the service audits it.
@@ -205,22 +224,70 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         continue;
       }
 
-      if (due) {
-        result.candidates.push(this.toCandidate(receiver, window));
+      if (receiver.scheduleInvalidAt) {
+        result.recovered.push(receiver.id);
       }
+      if (isInsideScheduleWindow(window, clock.minutes)) {
+        due.push({ receiver, window, scheduledLocalDate: scheduleDayOf(clock, window) });
+      }
+    }
+
+    // The daily dedupe: one non-retry check-in per receiver per *local* day (CB-013). The day differs per
+    // receiver, so it cannot be a constant in the receivers query; one batched lookup covers every due receiver.
+    const alreadyScheduled = await this.findScheduledLocalDays(due);
+    for (const entry of due) {
+      if (alreadyScheduled.has(this.localDayKey(entry.receiver.id, entry.scheduledLocalDate))) {
+        continue;
+      }
+      result.candidates.push(this.toCandidate(entry));
     }
 
     return result;
   }
 
-  async createPending(input: CreatePendingCheckInInput): Promise<CheckInRecord> {
-    const checkIn = await this.prisma.checkIn.create({
-      data: {
-        receiverId: input.receiverId,
-        scheduledAt: input.scheduledAt,
-        status: CheckInStatus.PENDING,
-      },
+  async markScheduleInvalid(input: { receiverId: string; seenAt: Date }): Promise<boolean> {
+    const result = await this.prisma.receiver.updateMany({
+      where: { id: input.receiverId, scheduleInvalidAt: null },
+      data: { scheduleInvalidAt: input.seenAt },
     });
+
+    return result.count > 0;
+  }
+
+  async clearScheduleInvalid(input: { receiverIds: string[] }): Promise<number> {
+    if (input.receiverIds.length === 0) {
+      return 0;
+    }
+
+    const result = await this.prisma.receiver.updateMany({
+      where: { id: { in: input.receiverIds }, scheduleInvalidAt: { not: null } },
+      data: { scheduleInvalidAt: null },
+    });
+
+    return result.count;
+  }
+
+  async createPending(input: CreatePendingCheckInInput): Promise<CheckInRecord> {
+    const scheduledLocalDate = input.scheduledLocalDate ?? this.utcCalendarDay(input.scheduledAt);
+    let checkIn: CheckIn;
+    try {
+      checkIn = await this.prisma.checkIn.create({
+        data: {
+          receiverId: input.receiverId,
+          scheduledAt: input.scheduledAt,
+          scheduledLocalDate: this.toDateColumn(scheduledLocalDate),
+          retryOf: input.retryOf ?? null,
+          status: CheckInStatus.PENDING,
+        },
+      });
+    } catch (error) {
+      if (this.isUniqueViolation(error)) {
+        // The partial unique index on (receiverId, scheduledLocalDate) WHERE retryOf IS NULL fired: an
+        // overlapping tick created today's check-in between our lookup and this insert (CB-013, CB-045).
+        throw new CheckInAlreadyScheduledError(input.receiverId, scheduledLocalDate);
+      }
+      throw error;
+    }
 
     return this.toCheckInRecord(checkIn);
   }
@@ -501,47 +568,59 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return result.count > 0;
   }
 
-  private isInsideScheduleWindow(window: ScheduleTimeWindow, now: Date, timezone: string): boolean {
-    const currentMinutes = this.localTimeToMinutes(now, timezone);
-    const startMinutes = timeOfDayToMinutes(window.start);
-    const endMinutes = timeOfDayToMinutes(window.end);
-
-    if (startMinutes <= endMinutes) {
-      return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  /** `receiverId|YYYY-MM-DD` keys of the non-retry check-ins that already exist for the due receivers' local days. */
+  private async findScheduledLocalDays(due: DueReceiver[]): Promise<Set<string>> {
+    if (due.length === 0) {
+      return new Set();
     }
 
-    return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+    const existing = await this.prisma.checkIn.findMany({
+      where: {
+        retryOf: null,
+        OR: due.map((entry) => ({
+          receiverId: entry.receiver.id,
+          scheduledLocalDate: this.toDateColumn(entry.scheduledLocalDate),
+        })),
+      },
+    });
+
+    return new Set(
+      existing.map((checkIn) => this.localDayKey(checkIn.receiverId, this.fromDateColumn(checkIn.scheduledLocalDate))),
+    );
   }
 
-  private localTimeToMinutes(now: Date, timezone: string): number {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timezone,
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(now);
-    const hour = Number(parts.find((part) => part.type === 'hour')?.value);
-    const minute = Number(parts.find((part) => part.type === 'minute')?.value);
+  private localDayKey(receiverId: string, scheduledLocalDate: string): string {
+    return `${receiverId}|${scheduledLocalDate}`;
+  }
 
-    if (!Number.isInteger(hour) || !Number.isInteger(minute)) {
-      throw new Error(`Could not resolve local time for timezone ${timezone}`);
-    }
+  /** A `DATE` column travels through Prisma as a `Date` at UTC midnight. */
+  private toDateColumn(localDate: string): Date {
+    return new Date(`${localDate}T00:00:00.000Z`);
+  }
 
-    return hour * 60 + minute;
+  private fromDateColumn(value: Date): string {
+    return value.toISOString().slice(0, 10);
+  }
+
+  private utcCalendarDay(instant: Date): string {
+    return instant.toISOString().slice(0, 10);
+  }
+
+  private isUniqueViolation(error: unknown): boolean {
+    return (
+      typeof error === 'object' &&
+      error !== null &&
+      'code' in error &&
+      (error as { code?: unknown }).code === UNIQUE_VIOLATION_CODE
+    );
   }
 
   private scheduleInvalidReason(error: unknown): string {
     return error instanceof ReceiverScheduleValidationError ? error.code.toLowerCase() : 'schedule_evaluation_failed';
   }
 
-  private utcDayBounds(now: Date): { startOfDay: Date; startOfNextDay: Date } {
-    const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-    const startOfNextDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
-
-    return { startOfDay, startOfNextDay };
-  }
-
-  private toCandidate(receiver: ReceiverDueForCheckIn, window: ScheduleTimeWindow): CheckInReceiverCandidate {
+  private toCandidate(entry: DueReceiver): CheckInReceiverCandidate {
+    const { receiver, window } = entry;
     return {
       id: receiver.id,
       userId: receiver.userId,
@@ -559,6 +638,7 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       consentStatus: receiver.consentStatus,
       pausedUntil: receiver.pausedUntil ?? undefined,
       deletedAt: receiver.deletedAt ?? undefined,
+      scheduledLocalDate: entry.scheduledLocalDate,
     };
   }
 
@@ -567,6 +647,8 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       id: checkIn.id,
       receiverId: checkIn.receiverId,
       scheduledAt: checkIn.scheduledAt,
+      scheduledLocalDate: this.fromDateColumn(checkIn.scheduledLocalDate),
+      retryOf: checkIn.retryOf ?? undefined,
       status: checkIn.status,
       channelUsed: checkIn.channelUsed ?? undefined,
       sentAt: checkIn.sentAt ?? undefined,

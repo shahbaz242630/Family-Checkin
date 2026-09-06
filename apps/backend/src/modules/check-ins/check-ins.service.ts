@@ -7,10 +7,12 @@ import { renderingAuditMetadata, type MessageRendering } from '../channels/messa
 import { NEUTRAL_RECEIVER_GREETING_NAME, NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
+import { CheckInAlreadyScheduledError } from './check-ins.repository';
 import type {
   CheckInAttemptRecord,
   CheckInAttemptWithCheckInRecord,
   CheckInReceiverCandidate,
+  CheckInRecord,
   CheckInsRepository,
 } from './check-ins.repository';
 import { CHECK_INS_REPOSITORY } from './check-ins.tokens';
@@ -62,6 +64,11 @@ interface CheckInRef {
 
 const PROVIDER_SEND_FAILED = 'provider_send_failed';
 const CASCADE_EXHAUSTED = 'cascade_exhausted';
+/** Message templates for a check-in's first attempt and for every later attempt of the same check-in (CB-010). */
+const CHECK_IN_FIRST_ATTEMPT_TEMPLATE = 'checkin_daily';
+const CHECK_IN_LATER_ATTEMPT_TEMPLATE = 'checkin_retry';
+/** Voice attempts play the same script whatever their position in the cascade. */
+const CHECK_IN_VOICE_SCRIPT = 'checkin_daily_voice';
 
 @Injectable()
 export class CheckInsService {
@@ -90,6 +97,11 @@ export class CheckInsService {
 
     for (const invalid of due.skipped) {
       result.failed += 1;
+      // Audited once per schedule version, not once per tick: the first sighting stamps the receiver and only
+      // that stamp write audits (CB-069). The stamp is cleared below once the schedule evaluates again.
+      if (!(await this.stampScheduleInvalid(invalid.receiverId, now))) {
+        continue;
+      }
       await this.auditService.append({
         entityType: 'receiver',
         entityId: invalid.receiverId,
@@ -100,6 +112,9 @@ export class CheckInsService {
           reason: invalid.reason,
         },
       });
+    }
+    if (due.recovered?.length) {
+      await this.checkInsRepository.clearScheduleInvalid?.({ receiverIds: due.recovered });
     }
 
     for (const receiver of due.candidates) {
@@ -112,10 +127,22 @@ export class CheckInsService {
         continue;
       }
 
-      const checkIn = await this.checkInsRepository.createPending({
-        receiverId: receiver.id,
-        scheduledAt: now,
-      });
+      let checkIn: CheckInRecord;
+      try {
+        checkIn = await this.checkInsRepository.createPending({
+          receiverId: receiver.id,
+          scheduledAt: now,
+          scheduledLocalDate: receiver.scheduledLocalDate,
+        });
+      } catch (error) {
+        if (error instanceof CheckInAlreadyScheduledError) {
+          // An overlapping tick created this receiver's check-in for the same local day between the repository's
+          // lookup and this insert; the unique index made it lose the race, so it neither sends nor audits (CB-013).
+          result.skipped += 1;
+          continue;
+        }
+        throw error;
+      }
       result.created += 1;
       const [firstAttempt] = await this.checkInsRepository.createAttempts(
         this.buildCascadeAttempts(receiver, checkIn.id, now),
@@ -275,6 +302,11 @@ export class CheckInsService {
     return (await this.billingService?.getBillingStatus(userId))?.entitled ?? false;
   }
 
+  /** True when this tick is the first to see the receiver's schedule as invalid; a repository without the stamp audits every tick. */
+  private async stampScheduleInvalid(receiverId: string, seenAt: Date): Promise<boolean> {
+    return (await this.checkInsRepository.markScheduleInvalid?.({ receiverId, seenAt })) ?? true;
+  }
+
   /**
    * First attempt of a new check-in. A provider that throws (Twilio 21211, a stalled socket, a bad row) marks the
    * attempt FAILED and returns false; the receiver's fallback attempts stay scheduled and the loop continues with
@@ -349,7 +381,7 @@ export class CheckInsService {
         Channel.VOICE,
         to,
         {
-          scriptKey: 'checkin_daily_voice',
+          scriptKey: CHECK_IN_VOICE_SCRIPT,
           language: receiver.language,
           variables: {},
         },
@@ -363,7 +395,7 @@ export class CheckInsService {
     }
 
     const result = await this.channelRouter.sendMessage(receiver.primaryChannel, to, {
-      templateKey: 'checkin_daily',
+      templateKey: CHECK_IN_FIRST_ATTEMPT_TEMPLATE,
       language: receiver.language,
       variables: this.checkInMessageVariables(receiver.nameEncrypted, receiver.personalNoteEncrypted),
     });
@@ -455,14 +487,16 @@ export class CheckInsService {
             Channel.VOICE,
             to,
             {
-              scriptKey: 'checkin_daily_voice',
+              scriptKey: CHECK_IN_VOICE_SCRIPT,
               language: attempt.checkIn.receiverLanguage,
               variables: {},
             },
             await this.voiceCallOptions(attempt.checkIn.receiverId, attempt.checkIn.receiverCountryCode),
           )
         : await this.channelRouter.sendMessage(attempt.channel, to, {
-            templateKey: 'checkin_daily',
+            // Attempt 2 onwards tells the receiver we have not heard back yet (CB-010); attempt 1 of a check-in
+            // that reaches the cascade unsent (a sender try-later row) still reads as a first check-in.
+            templateKey: attempt.attemptNumber > 1 ? CHECK_IN_LATER_ATTEMPT_TEMPLATE : CHECK_IN_FIRST_ATTEMPT_TEMPLATE,
             language: attempt.checkIn.receiverLanguage,
             variables: this.checkInMessageVariables(
               attempt.checkIn.receiverNameEncrypted,
