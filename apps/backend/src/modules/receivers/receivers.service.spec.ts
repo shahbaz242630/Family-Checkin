@@ -12,7 +12,7 @@ import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
 import type { ChannelRouterService } from '../channels/channel-router.service';
 import type { CheckInsService } from '../check-ins/check-ins.service';
-import type { EscalationsService } from '../escalations/escalations.service';
+import type { EscalateSenderRequestedBackupResult, EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type { CheckInsRepository } from '../check-ins/check-ins.repository';
 import {
@@ -273,16 +273,15 @@ class InMemoryAuditService {
 
 class InMemoryEscalationsService {
   public senderRequestedBackups: Array<{ receiverId: string; checkInId: string }> = [];
+  /** What the fan-out reports back; the service must hand it to the controller untouched (CB-074). */
+  public result: EscalateSenderRequestedBackupResult = { outcome: 'alerted', alerted: 1, failed: 0 };
 
-  async escalateSenderRequestedBackup(input: { receiverId: string; checkInId: string }) {
+  async escalateSenderRequestedBackup(input: {
+    receiverId: string;
+    checkInId: string;
+  }): Promise<EscalateSenderRequestedBackupResult> {
     this.senderRequestedBackups.push(input);
-    return {
-      checkInId: input.checkInId,
-      status: CheckInStatus.ESCALATED,
-      attempted: 1,
-      succeeded: 1,
-      failed: 0,
-    };
+    return this.result;
   }
 }
 
@@ -566,6 +565,7 @@ describe('ReceiversService', () => {
         consentGrantedAt: '2026-04-26T09:00:00.000Z',
         pausedUntil: undefined,
         pausedReason: undefined,
+        scheduleInvalidAt: null,
         latestCheckIn: {
           id: '49a43e47-4e21-46f1-9fcc-2cf81ca3b41d',
           status: 'RESPONDED_OK',
@@ -582,6 +582,44 @@ describe('ReceiversService', () => {
     expect(JSON.stringify(receivers)).not.toContain('phoneHash');
     expect(JSON.stringify(receivers)).not.toContain('nameEncrypted');
     expect(JSON.stringify(receivers)).not.toContain('+971501234567');
+  });
+
+  it('surfaces the schedule-invalid stamp as an ISO string on the summary and the detail, null when clear (CB-069)', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const crypto = new CryptoService(masterKey);
+    const baseReceiver: ReceiverWithLatestCheckInRecord = {
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      nameEncrypted: crypto.encrypt('Fatima Parent'),
+      phoneEncrypted: crypto.encrypt('+971501234567'),
+      phoneHash: crypto.hashForLookup('+971501234567'),
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      consentStatus: ConsentStatus.GRANTED,
+      createdAt: new Date('2026-04-26T08:00:00.000Z'),
+      updatedAt: new Date('2026-04-27T10:02:00.000Z'),
+    };
+    repository.receiversForUser = [
+      { ...baseReceiver, scheduleInvalidAt: new Date('2026-09-06T07:10:00.000Z') },
+      { ...baseReceiver, id: 'receiver-2', scheduleInvalidAt: undefined },
+    ];
+    const service = new ReceiversService(repository, crypto, new InMemoryAuditService() as unknown as AuditService);
+
+    const receivers = await service.listForSender('61a5639c-c902-4950-9924-1a4d6db1e02d');
+    const detail = await service.getForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    });
+
+    expect(receivers.map((receiver) => receiver.scheduleInvalidAt)).toEqual(['2026-09-06T07:10:00.000Z', null]);
+    expect(detail?.scheduleInvalidAt).toBe('2026-09-06T07:10:00.000Z');
   });
 
   it('returns receiver detail with latest check-in and placeholder relationship surfaces', async () => {
@@ -1137,7 +1175,7 @@ describe('ReceiversService', () => {
       escalations as unknown as EscalationsService,
     );
 
-    const receiver = await service.alertBackupForSender({
+    const result = await service.alertBackupForSender({
       userId: '  61a5639c-c902-4950-9924-1a4d6db1e02d  ',
       receiverId: '  1aef91f9-64c9-4548-baa5-d70b52386efb  ',
       checkInId: '  check-in-1  ',
@@ -1151,10 +1189,11 @@ describe('ReceiversService', () => {
         checkInId: 'check-in-1',
       },
     ]);
-    expect(receiver?.latestCheckIn).toMatchObject({
+    expect(result?.receiver.latestCheckIn).toMatchObject({
       id: 'check-in-1',
       status: CheckInStatus.RESPONDED_HELP,
     });
+    expect(result?.backupAlert).toEqual({ outcome: 'alerted', alerted: 1, failed: 0 });
     expect(audit.events[0]).toEqual({
       entityType: 'check_in',
       entityId: 'check-in-1',
@@ -1832,6 +1871,92 @@ describe('ReceiversService sender check-in actions respect the running cascade (
         checkInId: 'older-check-in',
       }),
     ).resolves.toBeNull();
+  });
+});
+
+describe('ReceiversService hands the backup alert outcome to the sender (CB-074)', () => {
+  const crypto = new CryptoService(masterKey);
+
+  function receiverNeedingAttention(): ReceiverWithLatestCheckInRecord {
+    return {
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      nameEncrypted: crypto.encrypt('Fatima Parent'),
+      phoneEncrypted: crypto.encrypt('+971501234567'),
+      phoneHash: crypto.hashForLookup('+971501234567'),
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      consentStatus: ConsentStatus.GRANTED,
+      latestCheckIn: {
+        id: 'check-in-1',
+        status: CheckInStatus.NEEDS_ATTENTION,
+        scheduledAt: new Date('2026-09-06T06:00:00.000Z'),
+        channelUsed: Channel.SMS,
+        sentAt: new Date('2026-09-06T06:01:00.000Z'),
+      },
+      createdAt: new Date('2026-04-26T08:00:00.000Z'),
+      updatedAt: new Date('2026-09-06T06:20:00.000Z'),
+    };
+  }
+
+  it.each<EscalateSenderRequestedBackupResult>([
+    { outcome: 'no_backup_contacts', alerted: 0, failed: 0 },
+    { outcome: 'all_failed', alerted: 0, failed: 2 },
+    { outcome: 'alerted', alerted: 2, failed: 1 },
+  ])('returns the fan-out result %o next to the refreshed receiver', async (fanOutResult) => {
+    const repository = new InMemoryReceiversRepository();
+    const escalations = new InMemoryEscalationsService();
+    escalations.result = fanOutResult;
+    repository.receiversForUser = [receiverNeedingAttention()];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      escalations as unknown as EscalationsService,
+    );
+
+    const result = await service.alertBackupForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      checkInId: 'check-in-1',
+    });
+
+    expect(result?.backupAlert).toEqual(fanOutResult);
+    expect(result?.receiver).toMatchObject({
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      displayName: 'Fatima Parent',
+    });
+    expect(escalations.senderRequestedBackups).toHaveLength(1);
+  });
+
+  it('still answers null (404) when the check-in is not actionable, without running the fan-out', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const escalations = new InMemoryEscalationsService();
+    const receiver = receiverNeedingAttention();
+    receiver.latestCheckIn = { ...receiver.latestCheckIn!, status: CheckInStatus.RESOLVED };
+    repository.receiversForUser = [receiver];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      escalations as unknown as EscalationsService,
+    );
+
+    await expect(
+      service.alertBackupForSender({
+        userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        checkInId: 'check-in-1',
+      }),
+    ).resolves.toBeNull();
+    expect(escalations.senderRequestedBackups).toEqual([]);
   });
 });
 

@@ -512,6 +512,7 @@ export class PrismaReceiversRepository implements ReceiversRepository {
       consentTranscript: receiver.consentTranscript ?? undefined,
       pausedUntil: receiver.pausedUntil ?? undefined,
       pausedReason: receiver.pausedReason ?? undefined,
+      scheduleInvalidAt: receiver.scheduleInvalidAt ?? undefined,
       deletedAt: receiver.deletedAt ?? undefined,
       createdAt: receiver.createdAt,
       updatedAt: receiver.updatedAt,

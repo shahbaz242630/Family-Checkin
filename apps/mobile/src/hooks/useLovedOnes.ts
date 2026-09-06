@@ -21,6 +21,8 @@ export interface ReceiverDashboardItem {
   consent_status: string;
   paused_reason?: string;
   paused_until?: string;
+  /** ISO timestamp while the scheduler cannot evaluate the schedule (CB-069); null when it is fine. */
+  schedule_invalid_at: string | null;
   latest_check_in_status?: string;
   created_at: string;
   updated_at: string;
@@ -120,6 +122,7 @@ function toReceiverDashboardItem(receiver: BackendReceiverSummary): ReceiverDash
     consent_status: receiver.consentStatus,
     paused_reason: receiver.pausedReason,
     paused_until: receiver.pausedUntil,
+    schedule_invalid_at: receiver.scheduleInvalidAt ?? null,
     latest_check_in_status: receiver.latestCheckIn?.status,
     created_at: receiver.createdAt,
     updated_at: receiver.updatedAt,

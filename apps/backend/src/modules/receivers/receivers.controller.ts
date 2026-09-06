@@ -340,7 +340,7 @@ export class ReceiversController {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
     const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
-    const receiver = await this.mapReceiverValidationFailure(() =>
+    const result = await this.mapReceiverValidationFailure(() =>
       this.receiversService.alertBackupForSender({
         userId: sender.id,
         receiverId,
@@ -350,11 +350,13 @@ export class ReceiversController {
       }),
     );
 
-    if (!receiver) {
+    if (!result) {
       throw new NotFoundException('Check-in not found');
     }
 
-    return { receiver };
+    // `backupAlert.outcome` is 'alerted' | 'no_backup_contacts' | 'all_failed' so the app can say what happened
+    // instead of showing an unchanged screen (CB-074).
+    return { receiver: result.receiver, backupAlert: result.backupAlert };
   }
 
   @Patch(':receiverId/check-ins/:checkInId/try-later')

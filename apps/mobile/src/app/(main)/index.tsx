@@ -4,7 +4,11 @@ import { useRouter } from 'expo-router';
 import { useState, useCallback } from 'react';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { useProfile, useReceivers, type ReceiverDashboardItem } from '../../hooks';
-import { getReceiverStatusDisplay, type ReceiverStatusTone } from '../../utils/receiverStatus';
+import {
+  getReceiverStatusDisplay,
+  getScheduleAttentionDisplay,
+  type ReceiverStatusTone,
+} from '../../utils/receiverStatus';
 
 export default function DashboardScreen() {
   const router = useRouter();
@@ -27,9 +31,7 @@ export default function DashboardScreen() {
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
     >
       {/* Welcome Section */}
       <View style={styles.welcomeSection}>
@@ -58,9 +60,7 @@ export default function DashboardScreen() {
 
       {/* Status Overview / Receiver List */}
       <View style={styles.section}>
-        <Text style={styles.sectionTitle}>
-          {hasReceivers ? 'Receivers' : 'Status Overview'}
-        </Text>
+        <Text style={styles.sectionTitle}>{hasReceivers ? 'Receivers' : 'Status Overview'}</Text>
 
         {loading ? (
           <View style={styles.loadingContainer}>
@@ -76,13 +76,8 @@ export default function DashboardScreen() {
           <View style={styles.statusCard}>
             <Text style={styles.statusIcon}>👋</Text>
             <Text style={styles.statusTitle}>No receivers yet</Text>
-            <Text style={styles.statusSubtitle}>
-              Add your first receiver to start daily check-ins.
-            </Text>
-            <Pressable
-              style={styles.statusButton}
-              onPress={() => router.push('/(main)/receiver-setup')}
-            >
+            <Text style={styles.statusSubtitle}>Add your first receiver to start daily check-ins.</Text>
+            <Pressable style={styles.statusButton} onPress={() => router.push('/(main)/receiver-setup')}>
               <Text style={styles.statusButtonText}>Get Started</Text>
             </Pressable>
           </View>
@@ -105,45 +100,39 @@ function ReceiverCard({ receiver }: ReceiverCardProps) {
   const router = useRouter();
 
   // Format schedule display
-  const scheduleText = receiver.schedule
-    ? `Daily at ${formatTime(receiver.schedule.time_local)}`
-    : 'No schedule set';
+  const scheduleText = receiver.schedule ? `Daily at ${formatTime(receiver.schedule.time_local)}` : 'No schedule set';
   const isPaused = Boolean(receiver.paused_reason || receiver.paused_until);
   const status = getReceiverStatusDisplay(receiver.consent_status, receiver.latest_check_in_status, isPaused);
   const statusColor = receiverStatusColor(status.tone);
+  // Separate from the status chip: a bad timezone or window stops check-ins whatever the consent state (CB-069).
+  const scheduleAttention = getScheduleAttentionDisplay(receiver.schedule_invalid_at);
 
   // Get preferred channel
   const channels = receiver.preferred_channels;
-  const preferredChannel = channels.push
-    ? 'Push'
-    : channels.whatsapp
-    ? 'WhatsApp'
-    : channels.sms
-    ? 'SMS'
-    : 'Not set';
+  const preferredChannel = channels.push ? 'Push' : channels.whatsapp ? 'WhatsApp' : channels.sms ? 'SMS' : 'Not set';
 
   return (
-    <Pressable
-      style={styles.lovedOneCard}
-      onPress={() => router.push(`/(main)/receivers/${receiver.id}` as never)}
-    >
+    <Pressable style={styles.lovedOneCard} onPress={() => router.push(`/(main)/receivers/${receiver.id}` as never)}>
       <View style={styles.lovedOneHeader}>
         <View style={styles.lovedOneAvatar}>
-          <Text style={styles.lovedOneAvatarText}>
-            {receiver.display_name.charAt(0).toUpperCase()}
-          </Text>
+          <Text style={styles.lovedOneAvatarText}>{receiver.display_name.charAt(0).toUpperCase()}</Text>
         </View>
         <View style={styles.lovedOneInfo}>
           <Text style={styles.lovedOneName}>{receiver.display_name}</Text>
-          <Text style={styles.lovedOneRelation}>
-            {formatRelationship(receiver.relationship_type)}
-          </Text>
+          <Text style={styles.lovedOneRelation}>{formatRelationship(receiver.relationship_type)}</Text>
         </View>
         <View style={styles.lovedOneStatus}>
           <View style={[styles.statusDot, { backgroundColor: statusColor }]} />
           <Text style={styles.statusText}>{status.label}</Text>
         </View>
       </View>
+
+      {scheduleAttention ? (
+        <View style={styles.attentionChip}>
+          <View style={[styles.statusDot, { backgroundColor: receiverStatusColor(scheduleAttention.tone) }]} />
+          <Text style={styles.attentionChipText}>{scheduleAttention.label}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.lovedOneDetails}>
         <View style={styles.detailItem}>
@@ -334,6 +323,24 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: fontSize.sm,
     color: colors.textSecondary,
+  },
+  attentionChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    gap: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    backgroundColor: colors.warningLight,
+    borderRadius: borderRadius.full,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    marginBottom: spacing.md,
+  },
+  attentionChipText: {
+    fontSize: fontSize.xs,
+    fontWeight: '600',
+    color: colors.text,
   },
   lovedOneDetails: {
     flexDirection: 'row',

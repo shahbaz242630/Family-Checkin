@@ -51,6 +51,8 @@ export interface ReceiverRecord extends CreateReceiverRecordInput {
   consentTranscript?: string;
   pausedUntil?: Date;
   pausedReason?: string;
+  /** Set by the scheduler while the stored timezone or window cannot be evaluated; cleared once it can (CB-069). */
+  scheduleInvalidAt?: Date;
   deletedAt?: Date;
   createdAt: Date;
   updatedAt: Date;

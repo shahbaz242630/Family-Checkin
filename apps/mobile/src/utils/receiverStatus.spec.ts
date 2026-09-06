@@ -1,5 +1,30 @@
 import { describe, expect, it } from 'vitest';
-import { getReceiverStatusDisplay } from './receiverStatus';
+import {
+  getReceiverStatusDisplay,
+  getScheduleAttentionDisplay,
+  SCHEDULE_NEEDS_ATTENTION_LABEL,
+} from './receiverStatus';
+
+describe('getScheduleAttentionDisplay', () => {
+  it('shows a warning chip while the scheduler has the schedule stamped invalid (CB-069)', () => {
+    expect(getScheduleAttentionDisplay('2026-09-06T07:10:00.000Z')).toEqual({
+      label: 'Schedule needs attention',
+      tone: 'warning',
+    });
+    expect(SCHEDULE_NEEDS_ATTENTION_LABEL).toBe('Schedule needs attention');
+  });
+
+  it('shows nothing when the stamp is clear or the payload predates the field', () => {
+    expect(getScheduleAttentionDisplay(null)).toBeNull();
+    expect(getScheduleAttentionDisplay(undefined)).toBeNull();
+    expect(getScheduleAttentionDisplay('')).toBeNull();
+  });
+
+  it('does not replace the status chip: consent and check-in state are still reported separately', () => {
+    expect(getReceiverStatusDisplay('GRANTED', 'RESPONDED_OK')).toEqual({ label: 'OK', tone: 'success' });
+    expect(getScheduleAttentionDisplay('2026-09-06T07:10:00.000Z')?.label).not.toBe('OK');
+  });
+});
 
 describe('getReceiverStatusDisplay', () => {
   it('marks escalated check-ins as urgent backup alerts', () => {
