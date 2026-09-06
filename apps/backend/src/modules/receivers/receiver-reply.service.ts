@@ -12,6 +12,7 @@ import { CheckInsService } from '../check-ins/check-ins.service';
 import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { EscalationsService } from '../escalations/escalations.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UsersService } from '../users/users.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
 import { ABUSE_REVIEW_PAUSE_REASON } from './abuse-review-pause';
@@ -108,6 +109,10 @@ export class ReceiverReplyService {
     @Optional()
     @Inject(ChannelRouterService)
     private readonly channelRouter?: Pick<ChannelRouterService, 'sendMessage' | 'makeVoiceCall'>,
+    // Names the sender in the STOP confirmation, like the pause and delete messages do (CB-079).
+    @Optional()
+    @Inject(UsersService)
+    private readonly usersService?: Pick<UsersService, 'senderDisplayNameFor'>,
   ) {}
 
   async handleInboundReply(input: HandleInboundReceiverReplyInput): Promise<HandleInboundReceiverReplyResult> {
@@ -382,7 +387,9 @@ export class ReceiverReplyService {
 
   /**
    * One STOP confirmation to the phone, on the channel the STOP arrived on, from the message catalog in the
-   * receiver's language. Best effort: a provider failure is audited and never undoes the opt-out (CB-012).
+   * receiver's language. It names the sender the way every other receiver message does (CB-079); the catalog
+   * localises the neutral fallback when no name is stored. Best effort: a provider failure is audited and never
+   * undoes the opt-out (CB-012).
    */
   private async confirmOptOutToReceiver(
     receiver: ReceiverRecord,
@@ -398,7 +405,8 @@ export class ReceiverReplyService {
       const to = this.cryptoService.decrypt(receiver.phoneEncrypted);
       const variables = {
         receiverName: this.cryptoService.decrypt(receiver.nameEncrypted),
-        senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME,
+        senderDisplayName:
+          (await this.usersService?.senderDisplayNameFor(receiver.userId)) ?? NEUTRAL_SENDER_DISPLAY_NAME,
       };
       const result =
         channel === Channel.VOICE

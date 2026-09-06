@@ -8,7 +8,15 @@ import {
   UnknownMessageTemplateError,
   renderingAuditMetadata,
 } from './message-catalog.service';
-import { IN_CODE_MESSAGE_TEMPLATES, MESSAGE_TEMPLATE_KEYS, describeChannelsTried } from './message-catalog.templates';
+import {
+  IN_CODE_MESSAGE_TEMPLATES,
+  MESSAGE_TEMPLATE_KEYS,
+  NEUTRAL_SENDER_DISPLAY_NAME,
+  NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS,
+  NEUTRAL_SENDER_DISPLAY_NAMES_BY_LANGUAGE,
+  describeChannelsTried,
+  localizeNeutralSenderDisplayName,
+} from './message-catalog.templates';
 
 /** Enough variables to render every in-code template. */
 const allVariables = {
@@ -213,6 +221,101 @@ describe('MessageCatalogService', () => {
       renderFallback: true,
     });
     expect(renderingAuditMetadata(undefined)).toEqual({});
+  });
+});
+
+describe('neutral sender wording follows the rendered language (CB-079)', () => {
+  const SEED_LANGUAGES = ['en', 'ar', 'es', 'hi', 'ur', 'ml', 'ta', 'bn'];
+  const arabicTemplates = new InMemoryChannelTemplateRepository([
+    {
+      templateKey: 'receiver_checkins_ended',
+      language: 'ar',
+      channel: Channel.SMS,
+      bodyText: 'مرحباً {{receiverName}}، تم إنهاء رسائل الاطمئنان من Nearby بطلب من {{senderDisplayName}}.',
+    },
+    {
+      templateKey: 'backup_contact_help_alert',
+      language: 'ar',
+      channel: Channel.SMS,
+      bodyText:
+        'مرحباً {{contactName}}، وصلنا طلب مساعدة من {{receiverName}} أثناء رسالة اطمئنان من {{senderDisplayName}}.',
+    },
+  ]);
+
+  it('has both phrases for every seeded language, each in its own script', () => {
+    for (const language of SEED_LANGUAGES) {
+      const phrases = NEUTRAL_SENDER_DISPLAY_NAMES_BY_LANGUAGE[language];
+      expect(phrases, language).toBeDefined();
+      expect(phrases?.receiver.trim().length, language).toBeGreaterThan(0);
+      expect(phrases?.backupContact.trim().length, language).toBeGreaterThan(0);
+      if (language !== 'en' && language !== 'es') {
+        expect(phrases?.receiver, language).not.toMatch(/[A-Za-z]/);
+        expect(phrases?.backupContact, language).not.toMatch(/[A-Za-z]/);
+      }
+    }
+    expect(NEUTRAL_SENDER_DISPLAY_NAMES_BY_LANGUAGE.en).toEqual({
+      receiver: NEUTRAL_SENDER_DISPLAY_NAME,
+      backupContact: NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS,
+    });
+  });
+
+  it('swaps the English constants for the phrase of the language and leaves everything else alone', () => {
+    expect(localizeNeutralSenderDisplayName(NEUTRAL_SENDER_DISPLAY_NAME, 'ar')).toBe('أحد أفراد عائلتك');
+    expect(localizeNeutralSenderDisplayName(NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS, 'ar-EG')).toBe(
+      'أحد أفراد العائلة',
+    );
+    expect(localizeNeutralSenderDisplayName(NEUTRAL_SENDER_DISPLAY_NAME, 'en-GB')).toBe(NEUTRAL_SENDER_DISPLAY_NAME);
+    expect(localizeNeutralSenderDisplayName(NEUTRAL_SENDER_DISPLAY_NAME, 'fr')).toBe(NEUTRAL_SENDER_DISPLAY_NAME);
+    expect(localizeNeutralSenderDisplayName('Ahmed', 'ar')).toBe('Ahmed');
+    expect(localizeNeutralSenderDisplayName('your family members', 'ar')).toBe('your family members');
+  });
+
+  it('renders an Arabic STOP confirmation for a sender without a name with no English inside it', async () => {
+    const rendered = await new MessageCatalogService(arabicTemplates).render({
+      templateKey: 'receiver_checkins_ended',
+      language: 'ar',
+      channel: Channel.SMS,
+      variables: { receiverName: 'فاطمة', senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME },
+    });
+
+    expect(rendered.language).toBe('ar');
+    expect(rendered.body).toBe('مرحباً فاطمة، تم إنهاء رسائل الاطمئنان من Nearby بطلب من أحد أفراد عائلتك.');
+    expect(rendered.body).not.toMatch(/family member/i);
+  });
+
+  it('uses the backup-contact phrase for the backup-contact constant', async () => {
+    const rendered = await new MessageCatalogService(arabicTemplates).render({
+      templateKey: 'backup_contact_help_alert',
+      language: 'ar',
+      channel: Channel.SMS,
+      variables: {
+        contactName: 'سلمى',
+        receiverName: 'فاطمة',
+        senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS,
+      },
+    });
+
+    expect(rendered.body).toContain('من أحد أفراد العائلة.');
+    expect(rendered.body).not.toMatch(/family member/i);
+  });
+
+  it('keeps the English wording when the copy falls back to English, and never touches a real name', async () => {
+    const fallback = await new MessageCatalogService(arabicTemplates).render({
+      templateKey: 'checkin_daily',
+      language: 'ar',
+      channel: Channel.SMS,
+      variables: { receiverName: 'Fatima', senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME },
+    });
+    const named = await new MessageCatalogService(arabicTemplates).render({
+      templateKey: 'receiver_checkins_ended',
+      language: 'ar',
+      channel: Channel.SMS,
+      variables: { receiverName: 'فاطمة', senderDisplayName: 'Ahmed' },
+    });
+
+    expect(fallback).toMatchObject({ language: 'en', fallback: true });
+    expect(fallback.body).toContain('your family member is checking in on you today');
+    expect(named.body).toContain('بطلب من Ahmed.');
   });
 });
 
