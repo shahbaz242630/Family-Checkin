@@ -9,9 +9,11 @@ This is not an emergency service, a surveillance product, or a medical device. R
 ## Source Of Truth
 
 - Product requirements: `Business Requirements Document.txt`
-- Current engineering handoff: `PROJECT_HANDOFF.md`
+- Engineering handoff: `PROJECT_HANDOFF.md` (lean; read first), then the per-feature handoffs in `docs/handoffs/`
+- Work list: `docs/COMPLETION_BACKLOG.md`
+- History: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` (frozen)
 
-Read both before starting feature work. The handoff is updated after each completed task so a fresh session can resume quickly.
+Read the BRD and the handoff before starting feature work. A feature PR updates that feature's handoff so a fresh session can resume quickly.
 
 ## Product Model
 
@@ -40,7 +42,10 @@ apps/
 packages/
   shared-types/    Shared TypeScript types and constants
 docs/
-  superpowers/
+  handoffs/        One short handoff per feature (+ TEMPLATE.md)
+  audits/          Dated audit and acceptance reports
+  archive/         Frozen session history
+  superpowers/     Historical plans and specs
 Business Requirements Document.txt
 PROJECT_HANDOFF.md
 ```

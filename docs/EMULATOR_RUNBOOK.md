@@ -63,7 +63,7 @@ Metro logs go to the terminal; the handoff's older runs used `expo-android*.log`
 
 ## 5. Driving the flows
 
-Fake providers log every outbound message in the backend terminal instead of sending it. Inbound receiver replies are simulated with the fake reply route, which is only registered in fake mode and now requires the cron secret:
+Fake providers send nothing. Until CB-067 is merged they also keep rendered bodies only in memory (nothing in the terminal, and the step-up OTP is stored hashed), so scenarios that need to read a message body or an OTP (2, 4, 7, 12) need CB-067 first: a `[fake-provider]` log line per send and a fake-mode-only route that returns the last sends. Inbound receiver replies are simulated with the fake reply route, which is only registered in fake mode and now requires the cron secret:
 
 ```powershell
 $h = @{ Authorization = 'Bearer cron-secret'; 'Content-Type' = 'application/json' }
@@ -94,4 +94,4 @@ Known-open mobile items to NOT chase (backlog Phase 3): social login (CB-028), p
 
 ## 6. Recording results
 
-Add a dated section to `PROJECT_HANDOFF.md` (or a file under `docs/audits/`) with pass/fail per scenario and the backend log lines that prove each outcome; open backlog items for anything that fails, with the next free `CB-` id.
+Write `docs/audits/<date>/emulator-acceptance.md` with pass/fail per scenario and the backend log lines that prove each outcome; open backlog items for anything that fails, with the next free `CB-` id.

@@ -1,9 +1,8 @@
 # Nearby Project Handoff Redirect
 
-The canonical engineering handoff is now at the repository root:
+The engineering handoff lives at the repository root: `PROJECT_HANDOFF.md` (lean, read first).
 
-```powershell
-Get-Content -LiteralPath PROJECT_HANDOFF.md
-```
+Per-feature handoffs live in `docs/handoffs/`. The full session history up to 2026-09-06 is archived at
+`docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md`.
 
-This file is intentionally a redirect stub to prevent stale duplicated handoff state. Update `PROJECT_HANDOFF.md` after each completed task.
+This file is intentionally a redirect stub to prevent stale duplicated handoff state.

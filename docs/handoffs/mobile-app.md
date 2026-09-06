@@ -1,0 +1,104 @@
+# Mobile app shell (Nearby sender app) — feature handoff
+
+Status: Partially built · Last verified: 2026-05-18 (emulator Pixel_7 via Expo Go: login, dashboard, drawer, add-receiver form, admin screens, billing screen loaded)
+BRD: FR-DSB-01/02/04, FR-AUTH-02, FR-CHN-03c, FR-LNG-01 · Open backlog: CB-027 … CB-041, CB-066
+
+## What it does
+
+- Expo SDK 54 / React Native 0.81 / Expo Router 6 app for the **sender**. Receivers never install it; they answer over WhatsApp/SMS/voice.
+- Boots to a splash route that redirects to `/(auth)/welcome` or `/(main)` from the Supabase session.
+- Authenticated shell is a fixed `Header` + left `Sidebar` drawer (Dashboard, Add receiver, Admin Operations, Abuse Reports) + right `ProfileMenu` (Profile, Billing, Appearance, Language, Security, Data & Privacy, Log out).
+- Talks to the NestJS backend through one client (`services/backendApi.ts`) with a Supabase bearer token; no direct Supabase table reads remain on the receiver/check-in path.
+- Handles password-reset and OAuth/email-confirmation deep links on the `familycheckin://` scheme.
+- Registers an Expo push token after sign-in, except on web and Android/Expo Go.
+
+## Where it lives
+
+| Layer       | Paths                                                                                   |
+| ----------- | --------------------------------------------------------------------------------------- |
+| Routes      | `apps/mobile/src/app/` (Expo Router root, set in `app.json` → `plugins.expo-router.root`) |
+| Shell       | `apps/mobile/src/components/layout/` (`Header`, `Sidebar`, `ProfileMenu`), `contexts/DrawerContext.tsx` |
+| Auth state  | `apps/mobile/src/contexts/AuthContext.tsx`, `components/auth/ProtectedRoute.tsx`          |
+| API client  | `apps/mobile/src/services/backendApi.ts`, `services/backendErrors.ts`                     |
+| Services    | `services/userData.ts`, `biometric.ts`, `pushNotifications.ts`, `revenueCat.ts`, `supabase.ts` |
+| Theme       | `apps/mobile/src/theme/` (`colors.ts`, `spacing.ts`) — static tokens, light only          |
+| Config      | `apps/mobile/app.json`, `metro.config.js`, `eas.json`, `.env.example`, `package.json`     |
+| Tests       | `apps/mobile/src/**/*.spec.ts` (vitest project `mobile`, node environment)                |
+
+## Routes and contracts
+
+Backend endpoints this app calls are all declared in `services/backendApi.ts`; they belong to the receivers, admin, billing and account handoffs in `docs/handoffs/`.
+
+| Route                              | Purpose                                                        | Reachable?                                         |
+| ---------------------------------- | -------------------------------------------------------------- | -------------------------------------------------- |
+| `/` (`app/index.tsx`)              | Splash; redirects on auth state after ~800 ms                   | app entry                                           |
+| `/(auth)/welcome`                  | Unauthenticated landing, Log in / Sign up                       | from splash and after sign-out                      |
+| `/(auth)/login`                    | Email/password + social sign-in                                 | from welcome                                        |
+| `/(auth)/signup`                   | Account creation                                                | from welcome, from login                            |
+| `/(auth)/forgot-password`          | Password reset request                                          | from login                                          |
+| `/(auth)/onboarding`               | Sender onboarding wizard                                        | `router.replace('/onboarding')` from login/signup, but `ProtectedRoute` bounces authenticated users out of `(auth)` → effectively not reachable |
+| `/auth/callback`                   | OAuth / email-confirmation landing                              | from the root deep-link handler                     |
+| `/auth/reset-password`             | Sets a new password from a recovery link                        | from the root deep-link handler                     |
+| `/(main)`                          | Dashboard: receiver cards, statuses, quick actions              | drawer                                              |
+| `/(main)/receiver-setup`           | Add-receiver form (name, phone, channel, schedule, consent send)| drawer, and from dashboard empty state / quick action|
+| `/(main)/receivers/[id]`           | Receiver detail: status, schedule, channels, backup contacts, pause/resume/edit/remove | from dashboard cards       |
+| `/(main)/admin-operations`         | Check-in operations summary                                     | drawer (shown to every user — CB-039)               |
+| `/(main)/admin-operations/[checkInId]` | Per-check-in attempts and escalations                       | from admin-operations rows                          |
+| `/(main)/admin-abuse-reports`      | Abuse-report review queue                                       | drawer (shown to every user — CB-039)               |
+| `/(main)/settings/profile`         | Name/phone profile form                                         | profile menu                                        |
+| `/(main)/settings/billing`         | RevenueCat plans, purchase, restore                             | profile menu, and an onboarding alert               |
+| `/(main)/settings/appearance`      | Theme picker — local `useState` only, nothing applied           | profile menu (decoy — CB-034)                       |
+| `/(main)/settings/language`        | Language picker — local `useState` only, nothing applied        | profile menu (decoy — CB-034)                       |
+| `/(main)/settings/security`        | Biometric enable/disable toggle                                 | profile menu                                        |
+| `/(main)/settings/data-privacy`    | Step-up export and account deletion                             | profile menu                                        |
+| `/(main)/check-ins`, `/escalations`, `/loved-ones`, `/pairing` | `<Redirect href="/(main)" />` stubs         | not linked (legacy) — CB-066                        |
+| `app/(app)/`                       | Empty directory, no route files                                 | not linked (legacy)                                 |
+| `_layout.tsx` × 5 (root, `(auth)`, `auth`, `(main)`, `(main)/settings`) | Stacks; root adds `AuthProvider` + `ProtectedRoute` + deep links; `(main)` adds `DrawerProvider`, `Header`, `Sidebar`, `ProfileMenu` | n/a |
+
+## How to exercise it locally (fake mode)
+
+- Follow `docs/EMULATOR_RUNBOOK.md` §3 for the backend, then §4 for the app.
+- `apps/mobile/.env` (see `.env.example`): `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_BACKEND_URL`, and optionally `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID` (defaults to `nearby_access`).
+- Emulator: `npm run android` at the repo root (proxies to `npm --prefix apps/mobile run android` → `expo start --android`). Web: `npm --prefix apps/mobile run web`.
+- Pin the port when 8081 is busy: `npm --prefix apps/mobile run android -- --port 8082`.
+- Checks: `npm --prefix apps/mobile run type-check`, `npm --prefix apps/mobile run lint`, `npm test` at the root (runs the `mobile` vitest project; also `npx vitest run --project mobile`). Type-check and the `mobile` project pass as of 2026-09-06.
+- Metro port drift: Expo falls back to 8082/8083 when 8081 is taken. The backend CORS allow-list matches `http://localhost:80xx` and `http://127.0.0.1:80xx`, so requests still succeed, but Expo **web** storage is per-origin — a new port means a signed-out browser session and a fresh login.
+
+## Invariants — do not break
+
+- `backendRequest` in `services/backendApi.ts` is the only path to the backend. It requires a Supabase access token (throws `You need to sign in again` without one), sends `Authorization: Bearer <token>`, and on a non-2xx throws `BackendRequestError(message, status, code)` built from `message` → `error` → a status fallback. Screens branch on `isPaidAccessRequiredError` (403 + `PAID_ACCESS_REQUIRED`) for the paywall.
+- The Android host rewrite lives only in `resolveBackendUrl()`: `://localhost:` and `://127.0.0.1:` become `://10.0.2.2:` when `Platform.OS === 'android'`. Keep `.env` on `localhost` so iOS/web keep working; do not hardcode `10.0.2.2`.
+- `EXPO_PUBLIC_*` values are inlined at bundle time — changing `.env` needs a Metro restart, not a reload.
+- `pushNotifications.ts` must keep loading `expo-notifications` through `await import()` and must keep the `Platform.OS === 'android' && Constants.appOwnership === 'expo'` early return. A static or `require()` import crashed Expo Go after sign-in (SDK 53+ dropped remote push in Expo Go). `AuthContext` likewise dynamic-imports the module only once `session.user` exists.
+- RevenueCat is a no-op without a native build: `revenueCatAvailability()` returns unconfigured on web or with no platform key, and `loadPurchases()` returning null yields "RevenueCat native module is unavailable. Use a development or store build." Purchase/restore controls stay disabled — expected in Expo Go.
+- `Sidebar` and `ProfileMenu` render outside the `(main)` `Stack` so the drawers survive route changes; `DrawerContext` handlers stay wrapped in `useCallback`/`useMemo` because the provider wraps every authenticated route.
+- `ProtectedRoute` redirects authenticated users out of `(auth)` and unauthenticated users out of `(main)`. Adding an authenticated screen under `(auth)` makes it unreachable.
+- Screens import from specific modules (`services/backendApi`, `services/userData`, `data/countries`, …), never the `services`/`data` barrels — the barrels pull native-facing code into route bundles.
+- `metro.config.js` sets `watchFolders` to the workspace root, adds both `node_modules` paths, and sets `disableHierarchicalLookup = true`; this is what lets Metro resolve `expo-router/entry-classic` in the npm-workspaces monorepo.
+- `biometric.ts` guards every call with `isWebRuntime` and stores only `biometric_enabled` / `biometric_user_id` in SecureStore; it does not gate any login path.
+- `userData.ts` requires a step-up token for both `GET /account/export` and `DELETE /account`, and signs out locally after a successful delete.
+- `eas.json` is not build-ready: `env` blocks use `${VAR}` interpolation EAS does not expand, no profile carries `EXPO_PUBLIC_BACKEND_URL` or RevenueCat keys, `app.json` `extra.eas.projectId` is empty, `submit.production.android.serviceAccountKeyPath` points at `./google-services.json`, and there is no `versionCode`/`buildNumber`.
+
+## Known gaps
+
+- CB-027 — `eas.json`/`app.json` not store-buildable: `${VAR}` env interpolation, empty `projectId`, wrong submit key path, no `versionCode`/`buildNumber`.
+- CB-028 — Google/Apple sign-in rejects every callback with "Invalid authentication state" (custom `state` check).
+- CB-029 — Deep links processed twice (root layout + callback screen); no "check your email" state after signup; reset-password warm start fails.
+- CB-030 — Push: no foreground handler, no tap → deep link, tokens never unregistered on sign-out, no Time-Sensitive entitlement.
+- CB-031 — Android push impossible: no FCM `googleServicesFile`, no DND detection or guidance.
+- CB-032 — Dashboard swallows API errors (401/network renders "No receivers yet"); "Review receivers" quick action is a no-op.
+- CB-033 — Profile form seeded before load, phone read from an empty `authUser.phone`, Save blanks `full_name`, dead "Change photo".
+- CB-034 — Appearance, Language and the biometric toggle are placeholders; Terms/Privacy point at an unowned domain.
+- CB-035 — No "Test my siren" control and no DND/critical-alert status.
+- CB-036 — Receiver detail lacks 30-day history, escalation list and time-since-last-contact; pause has no end-date picker.
+- CB-037 — `backendRequest` has no timeout, no 401 handling, raw Nest text on 429, and refresh timers stall in background.
+- CB-038 — Siren asset is a 0.35 s, 8 kHz mono blip.
+- CB-039 — Admin drawer items are shown to every user; non-admins get a 403 screen.
+- CB-040 — expo-doctor 15/18: hoisted duplicate `react`/`react-native`, patch mismatches, metro overrides.
+- CB-041 — Billing: no post-purchase polling, `configure()` on user switch, wrong `userData.ts` export type keys.
+- CB-066 — Stale artefacts including the four mobile legacy redirect stubs.
+
+## History
+
+- Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §4 (lines 885–927, first Expo web smoke and the `receiver-setup` route fix), §5 (lines 928–1179, replacing the Supabase loved-one screens with backend receiver reads), §9 (lines 1400–1420, Android `10.0.2.2` rewrite and the `80xx` CORS pattern), §33 (lines 3340–3365, import splitting and drawer memoisation), Android Studio / Expo Go QA (lines 3440–3472, the Expo Go push crash fix). Known Issues at lines 766–779 record the still-open Expo web warnings: nested `auth/callback` and `auth/reset-password` route-name warnings, `Unexpected text node` on auth screens, and deprecated `shadow*` style props.
+- Feature detail lives in the auth, receivers, admin-operations and billing handoffs in `docs/handoffs/`.
