@@ -16,6 +16,8 @@
     "db:check-invariants": "node scripts/db/check-invariants.mjs",
     "db:drift-check": "node scripts/db/drift-check.mjs",
     "db:ensure-database": "node scripts/db/ensure-database.mjs",
+    "db:seed-caller-ids": "node scripts/db/seed-caller-ids.mjs",
+    "providers:check-voice-audio": "node scripts/providers/check-voice-audio.mjs",
     "lint": "eslint ."
   },
   "devDependencies": {

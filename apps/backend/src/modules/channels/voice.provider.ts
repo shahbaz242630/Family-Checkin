@@ -1,5 +1,12 @@
 import { Channel } from '@prisma/client';
-import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceCallOptions, VoiceScript } from './channel-provider';
+import type {
+  ChannelCallResult,
+  ChannelProvider,
+  ChannelSendResult,
+  TemplatedMessage,
+  VoiceCallOptions,
+  VoiceScript,
+} from './channel-provider';
 import { ChannelProviderConfigurationError } from './configured-provider-errors';
 import { FetchTwilioHttpClient, type TwilioHttpClient } from './twilio-http-client';
 import { renderTwilioVoiceTwiml } from './twilio-rendering';
@@ -36,7 +43,7 @@ export class VoiceProvider implements ChannelProvider {
         To: to,
         From: options?.fromNumber ?? config.fromNumber,
         Twiml: renderTwilioVoiceTwiml(script, {
-          actionUrl: `${publicApiBaseUrl}/provider-webhooks/twilio/voice`,
+          publicApiBaseUrl,
           audioBaseUrl: voiceAudioBaseUrl,
         }),
         MachineDetection: 'Enable',

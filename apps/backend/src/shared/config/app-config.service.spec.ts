@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AppConfigService } from './app-config.service';
+import { AppConfigService, parseTwilioWhatsappContentSids } from './app-config.service';
 
 function validEnv(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -7,7 +7,6 @@ function validEnv(overrides: Record<string, string | undefined> = {}) {
     KMS_MASTER_KEY_BASE64: Buffer.from('0123456789abcdef0123456789abcdef').toString('base64'),
     SUPABASE_URL: 'https://nearby-test-project.supabase.co',
     SUPABASE_ANON_KEY: 'anon-key',
-    SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
     OPERATIONS_CRON_SECRET: 'operations-cron-secret',
     ...overrides,
   };
@@ -19,17 +18,13 @@ describe('AppConfigService', () => {
       validEnv({
         PUBLIC_API_BASE_URL: 'https://api.nearby.test/',
         CHANNEL_PROVIDER_MODE: 'fake',
-        SMS_PROVIDER_API_KEY: 'sms-key',
         TWILIO_ACCOUNT_SID: 'AC123',
         TWILIO_SMS_FROM_NUMBER: '+15550001111',
         TWILIO_WHATSAPP_FROM_NUMBER: '+15550002222',
+        TWILIO_WHATSAPP_CONTENT_SIDS: '{"consent_request:en": " HX1 ", "checkin_daily": "HX2"}',
         TWILIO_VOICE_FROM_NUMBER: '+15550003333',
         VOICE_AUDIO_BASE_URL: 'https://cdn.nearby.test/voice/',
-        WHATSAPP_ACCESS_TOKEN: 'whatsapp-token',
-        WHATSAPP_PHONE_NUMBER_ID: 'phone-number-id',
         TWILIO_AUTH_TOKEN: 'twilio-auth-token',
-        CHANNEL_WEBHOOK_SECRET: 'provider-webhook-secret',
-        VOICE_PROVIDER_API_KEY: 'voice-key',
         PORT: '4000',
       }),
     );
@@ -38,22 +33,95 @@ describe('AppConfigService', () => {
     expect(config.kmsMasterKey).toEqual(Buffer.from('0123456789abcdef0123456789abcdef'));
     expect(config.supabaseUrl).toBe('https://nearby-test-project.supabase.co');
     expect(config.supabaseAnonKey).toBe('anon-key');
-    expect(config.supabaseServiceRoleKey).toBe('service-role-key');
     expect(config.operationsCronSecret).toBe('operations-cron-secret');
     expect(config.publicApiBaseUrl).toBe('https://api.nearby.test');
     expect(config.channelProviderMode).toBe('fake');
-    expect(config.smsProviderApiKey).toBe('sms-key');
     expect(config.twilioAccountSid).toBe('AC123');
     expect(config.twilioAuthToken).toBe('twilio-auth-token');
     expect(config.twilioSmsFromNumber).toBe('+15550001111');
     expect(config.twilioWhatsappFromNumber).toBe('+15550002222');
+    expect(config.twilioWhatsappContentSids).toEqual({ 'consent_request:en': 'HX1', checkin_daily: 'HX2' });
     expect(config.twilioVoiceFromNumber).toBe('+15550003333');
     expect(config.voiceAudioBaseUrl).toBe('https://cdn.nearby.test/voice');
-    expect(config.whatsappAccessToken).toBe('whatsapp-token');
-    expect(config.whatsappPhoneNumberId).toBe('phone-number-id');
-    expect(config.channelWebhookSecret).toBe('provider-webhook-secret');
-    expect(config.voiceProviderApiKey).toBe('voice-key');
     expect(config.port).toBe(4000);
+  });
+
+  it('boots without SUPABASE_SERVICE_ROLE_KEY and exposes no getter for it (CB-025)', () => {
+    const config = new AppConfigService(validEnv());
+
+    expect(config.supabaseAnonKey).toBe('anon-key');
+    expect('supabaseServiceRoleKey' in config).toBe(false);
+    // A key still present in an older `.env` is accepted and ignored.
+    expect(() => new AppConfigService(validEnv({ SUPABASE_SERVICE_ROLE_KEY: 'stale-service-role-key' }))).not.toThrow();
+  });
+
+  it('ignores the removed provider variables so a stale .env still boots (CB-019, CB-021, CB-022)', () => {
+    const config = new AppConfigService(
+      validEnv({
+        SMS_PROVIDER_API_KEY: 'sms-key',
+        SMS_PROVIDER_FROM_NUMBER: '+15550009999',
+        WHATSAPP_ACCESS_TOKEN: 'meta-token',
+        WHATSAPP_PHONE_NUMBER_ID: 'phone-number-id',
+        CHANNEL_WEBHOOK_SECRET: 'provider-webhook-secret',
+        VOICE_PROVIDER_API_KEY: 'voice-key',
+        VOICE_PROVIDER_FROM_NUMBER: '+15550008888',
+      }),
+    );
+
+    for (const removed of [
+      'smsProviderApiKey',
+      'smsProviderFromNumber',
+      'whatsappAccessToken',
+      'whatsappPhoneNumberId',
+      'channelWebhookSecret',
+      'voiceProviderApiKey',
+      'voiceProviderFromNumber',
+    ]) {
+      expect(removed in config, removed).toBe(false);
+    }
+  });
+
+  describe('TWILIO_WHATSAPP_CONTENT_SIDS (CB-020)', () => {
+    it('is undefined when absent or blank, in either mode', () => {
+      expect(
+        new AppConfigService(validEnv({ CHANNEL_PROVIDER_MODE: 'fake' })).twilioWhatsappContentSids,
+      ).toBeUndefined();
+      expect(
+        new AppConfigService(validEnv({ CHANNEL_PROVIDER_MODE: 'configured', TWILIO_WHATSAPP_CONTENT_SIDS: '  ' }))
+          .twilioWhatsappContentSids,
+      ).toBeUndefined();
+    });
+
+    it.each(['configured', 'fake'])(
+      'fails boot in %s mode on malformed JSON with a message that names the variable',
+      (mode) => {
+        expect(
+          () =>
+            new AppConfigService(
+              validEnv({ CHANNEL_PROVIDER_MODE: mode, TWILIO_WHATSAPP_CONTENT_SIDS: '{"consent_request:en": HX1}' }),
+            ),
+        ).toThrow(/Invalid backend environment: TWILIO_WHATSAPP_CONTENT_SIDS must be a JSON object .* not valid JSON/);
+      },
+    );
+
+    it.each([
+      ['an array', '["HX1"]', 'not a JSON object'],
+      ['a string', '"HX1"', 'not a JSON object'],
+      ['a numeric value', '{"consent_request:en": 1}', 'value for "consent_request:en" is not a non-empty string'],
+      ['a blank value', '{"consent_request:en": " "}', 'value for "consent_request:en" is not a non-empty string'],
+      ['a blank key', '{" ": "HX1"}', 'a key is blank'],
+    ])('rejects %s', (_label, raw, reason) => {
+      expect(() => parseTwilioWhatsappContentSids(raw)).toThrow(reason);
+      expect(() => new AppConfigService(validEnv({ TWILIO_WHATSAPP_CONTENT_SIDS: raw }))).toThrow(
+        'Invalid backend environment: TWILIO_WHATSAPP_CONTENT_SIDS',
+      );
+    });
+
+    it('trims keys and values', () => {
+      expect(parseTwilioWhatsappContentSids(' {" checkin_daily:ar ": " HX9 "} ')).toEqual({
+        'checkin_daily:ar': 'HX9',
+      });
+    });
   });
 
   it('defaults blank RevenueCat entitlement ids to the Nearby entitlement', () => {
@@ -76,7 +144,6 @@ describe('AppConfigService', () => {
           KMS_MASTER_KEY_BASE64: 'short',
           SUPABASE_URL: 'not-a-url',
           SUPABASE_ANON_KEY: '',
-          SUPABASE_SERVICE_ROLE_KEY: '',
           OPERATIONS_CRON_SECRET: '',
         }),
     ).toThrow('Invalid backend environment');

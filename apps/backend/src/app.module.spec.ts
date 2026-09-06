@@ -15,7 +15,7 @@ const bootEnv: Record<string, string> = {
   KMS_MASTER_KEY_BASE64: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
   SUPABASE_URL: 'https://example.supabase.co',
   SUPABASE_ANON_KEY: 'anon-key',
-  SUPABASE_SERVICE_ROLE_KEY: 'service-role-key',
+  // No SUPABASE_SERVICE_ROLE_KEY: the backend boots and runs without it (CB-025).
   OPERATIONS_CRON_SECRET: 'cron-secret',
 };
 
@@ -53,13 +53,11 @@ const configuredModeRoutes = [
   'POST /billing/revenuecat/webhook',
   'POST /device-tokens',
   'POST /operations/check-ins/run',
-  'POST /provider-webhooks/sms',
   'POST /provider-webhooks/twilio/messaging',
   'POST /provider-webhooks/twilio/messaging/status',
   'POST /provider-webhooks/twilio/voice',
   'POST /provider-webhooks/twilio/voice/amd',
   'POST /provider-webhooks/twilio/voice/status',
-  'POST /provider-webhooks/whatsapp',
   'POST /receivers',
   'POST /receivers/:receiverId/backup-contacts',
   'POST /receivers/:receiverId/consent/resend',
@@ -170,6 +168,8 @@ describe('AppModule', () => {
         replyService.escalationsService,
         'EscalationsService not injected into ReceiverReplyService',
       ).toBeDefined();
+      // CB-079: the STOP confirmation names the sender through UsersService, like the pause and delete messages.
+      expect(replyService.usersService, 'UsersService not injected into ReceiverReplyService').toBeDefined();
     });
 
     it('injects the optional collaborators the receiver routes depend on', async () => {

@@ -11,5 +11,7 @@ export * from './message-catalog.service';
 export * from './message-catalog.templates';
 export * from './prisma-channel-template.repository';
 export * from './sms.provider';
+export * from './twilio-rendering';
+export * from './twilio-request-error';
 export * from './voice.provider';
 export * from './whatsapp.provider';
