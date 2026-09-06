@@ -4,7 +4,9 @@ import type { Prisma } from '@prisma/client';
 export interface CheckInReceiverCandidate {
   id: string;
   userId: string;
+  nameEncrypted: string;
   phoneEncrypted: string;
+  personalNoteEncrypted?: string;
   countryCode: string;
   language: string;
   timezone: string;
@@ -56,6 +58,8 @@ export interface CheckInAttemptWithCheckInRecord extends CheckInAttemptRecord {
     receiverPhoneEncrypted: string;
     receiverCountryCode: string;
     receiverLanguage: string;
+    receiverNameEncrypted?: string;
+    receiverPersonalNoteEncrypted?: string;
   };
 }
 

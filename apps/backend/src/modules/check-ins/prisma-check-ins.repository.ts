@@ -24,7 +24,9 @@ type ReceiverDueForCheckIn = Pick<
   Receiver,
   | 'id'
   | 'userId'
+  | 'nameEncrypted'
   | 'phoneEncrypted'
+  | 'personalNoteEncrypted'
   | 'countryCode'
   | 'language'
   | 'timezone'
@@ -105,13 +107,33 @@ interface CheckInsPrismaClient {
         sentAt?: { lte: Date };
       };
       include: {
-        checkIn: { include: { receiver: { select: { phoneEncrypted: true; countryCode: true; language: true } } } };
+        checkIn: {
+          include: {
+            receiver: {
+              select: {
+                phoneEncrypted: true;
+                countryCode: true;
+                language: true;
+                nameEncrypted: true;
+                personalNoteEncrypted: true;
+              };
+            };
+          };
+        };
       };
       orderBy: Array<{ scheduledAt?: 'asc' } | { attemptNumber?: 'asc' }>;
     }): Promise<
       Array<
         CheckInAttempt & {
-          checkIn: CheckIn & { receiver: { phoneEncrypted: string; countryCode: string; language: string } };
+          checkIn: CheckIn & {
+            receiver: {
+              phoneEncrypted: string;
+              countryCode: string;
+              language: string;
+              nameEncrypted: string;
+              personalNoteEncrypted: string | null;
+            };
+          };
         }
       >
     >;
@@ -169,7 +191,9 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       .map((receiver) => ({
         id: receiver.id,
         userId: receiver.userId,
+        nameEncrypted: receiver.nameEncrypted,
         phoneEncrypted: receiver.phoneEncrypted,
+        personalNoteEncrypted: receiver.personalNoteEncrypted ?? undefined,
         countryCode: receiver.countryCode,
         language: receiver.language,
         timezone: receiver.timezone,
@@ -230,7 +254,19 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         scheduledAt: { lte: input.now },
       },
       include: {
-        checkIn: { include: { receiver: { select: { phoneEncrypted: true, countryCode: true, language: true } } } },
+        checkIn: {
+          include: {
+            receiver: {
+              select: {
+                phoneEncrypted: true,
+                countryCode: true,
+                language: true,
+                nameEncrypted: true,
+                personalNoteEncrypted: true,
+              },
+            },
+          },
+        },
       },
       orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
     });
@@ -245,7 +281,19 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         sentAt: { lte: input.now },
       },
       include: {
-        checkIn: { include: { receiver: { select: { phoneEncrypted: true, countryCode: true, language: true } } } },
+        checkIn: {
+          include: {
+            receiver: {
+              select: {
+                phoneEncrypted: true,
+                countryCode: true,
+                language: true,
+                nameEncrypted: true,
+                personalNoteEncrypted: true,
+              },
+            },
+          },
+        },
       },
       orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
     });
@@ -556,7 +604,15 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
 
   private toAttemptWithCheckInRecord(
     attempt: CheckInAttempt & {
-      checkIn: CheckIn & { receiver: { phoneEncrypted: string; countryCode: string; language: string } };
+      checkIn: CheckIn & {
+        receiver: {
+          phoneEncrypted: string;
+          countryCode: string;
+          language: string;
+          nameEncrypted: string;
+          personalNoteEncrypted: string | null;
+        };
+      };
     },
   ): CheckInAttemptWithCheckInRecord {
     return {
@@ -566,6 +622,8 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         receiverPhoneEncrypted: attempt.checkIn.receiver.phoneEncrypted,
         receiverCountryCode: attempt.checkIn.receiver.countryCode,
         receiverLanguage: attempt.checkIn.receiver.language,
+        receiverNameEncrypted: attempt.checkIn.receiver.nameEncrypted,
+        receiverPersonalNoteEncrypted: attempt.checkIn.receiver.personalNoteEncrypted ?? undefined,
       },
     };
   }

@@ -3,6 +3,8 @@ import { ActorType, Channel, CheckInStatus, ConsentStatus, TechProfile } from '@
 import { AuditService } from '../audit/audit.service';
 import { BillingService } from '../billing/billing.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
+import { renderingAuditMetadata, type MessageRendering } from '../channels/message-catalog.service';
+import { NEUTRAL_RECEIVER_GREETING_NAME, NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type { CheckInReceiverCandidate, CheckInsRepository } from './check-ins.repository';
@@ -124,6 +126,7 @@ export class CheckInsService {
           receiverId: receiver.id,
           channel: receiver.primaryChannel,
           providerStatus: providerResult.providerStatus,
+          ...renderingAuditMetadata(providerResult.rendering),
         },
       });
     }
@@ -271,7 +274,7 @@ export class CheckInsService {
 
   private async sendInitialCheckIn(
     receiver: CheckInReceiverCandidate,
-  ): Promise<{ providerId: string; providerStatus: string }> {
+  ): Promise<{ providerId: string; providerStatus: string; rendering?: MessageRendering }> {
     const to = this.cryptoService.decrypt(receiver.phoneEncrypted);
 
     if (receiver.primaryChannel === Channel.VOICE) {
@@ -295,12 +298,27 @@ export class CheckInsService {
     const result = await this.channelRouter.sendMessage(receiver.primaryChannel, to, {
       templateKey: 'checkin_daily',
       language: receiver.language,
-      variables: {},
+      variables: this.checkInMessageVariables(receiver.nameEncrypted, receiver.personalNoteEncrypted),
     });
 
     return {
       providerId: result.providerMessageId,
       providerStatus: result.providerStatus,
+      rendering: result.rendering,
+    };
+  }
+
+  /** Receiver-facing copy names the receiver, the sender (neutral until sender names are stored) and the note. */
+  private checkInMessageVariables(
+    nameEncrypted: string | undefined,
+    personalNoteEncrypted: string | undefined,
+  ): Record<string, string> {
+    const personalNote = personalNoteEncrypted ? this.cryptoService.decrypt(personalNoteEncrypted) : undefined;
+
+    return {
+      receiverName: nameEncrypted ? this.cryptoService.decrypt(nameEncrypted) : NEUTRAL_RECEIVER_GREETING_NAME,
+      senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME,
+      ...(personalNote ? { personalNote } : {}),
     };
   }
 
@@ -357,7 +375,10 @@ export class CheckInsService {
         : await this.channelRouter.sendMessage(attempt.channel, to, {
             templateKey: 'checkin_daily',
             language: attempt.checkIn.receiverLanguage,
-            variables: {},
+            variables: this.checkInMessageVariables(
+              attempt.checkIn.receiverNameEncrypted,
+              attempt.checkIn.receiverPersonalNoteEncrypted,
+            ),
           });
 
     await this.checkInsRepository.markAttemptSent({

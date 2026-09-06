@@ -1,12 +1,4 @@
-import type { TemplatedMessage, VoiceScript } from './channel-provider';
-
-export function renderTwilioMessage(message: TemplatedMessage): string {
-  const variables = Object.entries(message.variables)
-    .filter(([, value]) => value.length > 0)
-    .map(([key, value]) => `${key}: ${value}`);
-
-  return [message.templateKey, ...variables].join('\n');
-}
+import type { VoiceScript } from './channel-provider';
 
 export function renderTwilioVoiceTwiml(
   script: VoiceScript,

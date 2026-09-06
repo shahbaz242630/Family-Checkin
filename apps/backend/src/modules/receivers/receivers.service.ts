@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import type { CheckInsRepository } from '../check-ins/check-ins.repository';
 import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { ChannelRouterService } from '../channels/channel-router.service';
+import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
@@ -20,6 +21,9 @@ import { RECEIVERS_REPOSITORY } from './receivers.tokens';
 
 const USER_PAUSED_UNTIL = new Date('9999-12-31T23:59:59.999Z');
 const USER_PAUSED_REASON = 'USER_PAUSED';
+/** FR-REC-05: the personal note rides inside every check-in message, so it is capped at 50 characters. */
+export const MAX_PERSONAL_NOTE_LENGTH = 50;
+export const PERSONAL_NOTE_TOO_LONG_MESSAGE = `Receiver personal note must be ${MAX_PERSONAL_NOTE_LENGTH} characters or fewer`;
 
 export interface CreateReceiverForSenderInput {
   userId: string;
@@ -256,10 +260,7 @@ export class ReceiversService {
       actionName: 'pause',
       templateKey: 'receiver_checkins_paused',
       scriptKey: 'receiver_checkins_paused_voice',
-      variables: {
-        receiverId: receiver.id,
-        pausedUntil: pausedUntil.toISOString(),
-      },
+      variables: this.lifecycleMessageVariables(receiver),
     });
 
     await this.auditService.append({
@@ -321,9 +322,7 @@ export class ReceiversService {
       actionName: 'delete',
       templateKey: 'receiver_checkins_ended',
       scriptKey: 'receiver_checkins_ended_voice',
-      variables: {
-        receiverId: receiver.id,
-      },
+      variables: this.lifecycleMessageVariables(receiver),
     });
 
     await this.auditService.append({
@@ -503,6 +502,13 @@ export class ReceiversService {
     return typeof value === 'object' && value !== null && 'createPending' in value && 'createAttempts' in value;
   }
 
+  private lifecycleMessageVariables(receiver: ReceiverRecord): Record<string, string> {
+    return {
+      receiverName: this.cryptoService.decrypt(receiver.nameEncrypted),
+      senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME,
+    };
+  }
+
   private async notifyReceiverLifecycle(input: {
     receiver: ReceiverRecord;
     actionName: 'pause' | 'delete';
@@ -637,6 +643,10 @@ export class ReceiversService {
     if (!scheduleFrequency) {
       throw new Error('Receiver schedule frequency is required');
     }
+    const personalNote = input.personalNote?.trim() || undefined;
+    if (personalNote && Array.from(personalNote).length > MAX_PERSONAL_NOTE_LENGTH) {
+      throw new Error(PERSONAL_NOTE_TOO_LONG_MESSAGE);
+    }
 
     const resolvedPhone = normalizePhone(phone, input.phoneCountry);
     const channelPlan = await this.resolveChannelPlan({
@@ -657,7 +667,7 @@ export class ReceiversService {
       primaryChannel: channelPlan.primaryChannel,
       fallbackChannels: channelPlan.fallbackChannels,
       scheduleCustomCron: input.scheduleCustomCron?.trim() || undefined,
-      personalNote: input.personalNote?.trim() || undefined,
+      personalNote,
       channelDetectionStatus: channelPlan.detectionStatus,
       channelDetectionConfidence: channelPlan.detectionConfidence,
       unavailableChannels: channelPlan.unavailableChannels,

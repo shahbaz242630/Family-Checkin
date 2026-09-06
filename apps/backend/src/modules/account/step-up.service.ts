@@ -42,7 +42,7 @@ export class StepUpService {
       language: input.language,
       variables: {
         code,
-        action: input.action,
+        validityMinutes: String(OTP_TTL_MINUTES),
       },
     });
 

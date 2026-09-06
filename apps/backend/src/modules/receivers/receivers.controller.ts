@@ -21,9 +21,10 @@ import { SupabaseAuthService } from '../auth/supabase-auth.service';
 import { StepUpService } from '../account/step-up.service';
 import { BackupContactsService } from '../backup-contacts/backup-contacts.service';
 import { BillingService } from '../billing/billing.service';
+import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { UsersService } from '../users/users.service';
 import { ReceiverConsentService } from './receiver-consent.service';
-import { ReceiversService } from './receivers.service';
+import { PERSONAL_NOTE_TOO_LONG_MESSAGE, ReceiversService } from './receivers.service';
 
 const PAID_ACCESS_REQUIRED_CODE = 'PAID_ACCESS_REQUIRED';
 const PAID_ACCESS_REQUIRED_MESSAGE = 'Active subscription required to add receivers';
@@ -38,6 +39,7 @@ const RECEIVER_VALIDATION_MESSAGES = new Set([
   'Receiver timezone is required',
   'Receiver schedule frequency is required',
   'Invalid phone number',
+  PERSONAL_NOTE_TOO_LONG_MESSAGE,
 ]);
 
 interface CreateReceiverBody {
@@ -370,7 +372,8 @@ export class ReceiversController {
     await this.receiverConsentService.requestConsent({
       receiver,
       actorUserId: sender.id,
-      senderDisplayName: identity.email,
+      // The sender's own name is not stored yet (later CB-010 slice); the email must never reach a receiver.
+      senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME,
       ipAddress: this.firstForwardedIp(forwardedFor),
       userAgent,
     });

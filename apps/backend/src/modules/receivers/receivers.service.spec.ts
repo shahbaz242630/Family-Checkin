@@ -761,8 +761,8 @@ describe('ReceiversService', () => {
           templateKey: 'receiver_checkins_paused',
           language: 'en',
           variables: {
-            receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
-            pausedUntil: '2026-05-10T18:00:00.000Z',
+            receiverName: 'Fatima Parent',
+            senderDisplayName: 'your family member',
           },
         },
       },
@@ -904,7 +904,8 @@ describe('ReceiversService', () => {
           templateKey: 'receiver_checkins_ended',
           language: 'en',
           variables: {
-            receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+            receiverName: 'Fatima Parent',
+            senderDisplayName: 'your family member',
           },
         },
       },
@@ -1272,5 +1273,36 @@ describe('ReceiversService', () => {
         receiverId: 'missing-receiver',
       }),
     ).resolves.toBeNull();
+  });
+
+  it('rejects a personal note longer than 50 characters before anything is stored, and accepts exactly 50', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const crypto = new CryptoService(masterKey);
+    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService);
+    const input = {
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      name: 'Fatima Parent',
+      phone: '050 123 4567',
+      phoneCountry: 'AE',
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+    };
+
+    await expect(service.createForSender({ ...input, personalNote: `  ${'x'.repeat(51)}  ` })).rejects.toThrow(
+      'Receiver personal note must be 50 characters or fewer',
+    );
+    expect(repository.lastInput).toBeNull();
+    expect(audit.events).toEqual([]);
+
+    await service.createForSender({ ...input, personalNote: 'ع'.repeat(50) });
+    expect(crypto.decrypt(repository.lastInput?.personalNoteEncrypted ?? '')).toBe('ع'.repeat(50));
   });
 });

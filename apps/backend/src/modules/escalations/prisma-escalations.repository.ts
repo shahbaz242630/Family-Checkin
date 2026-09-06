@@ -6,21 +6,36 @@ import type {
   CreateEscalationEventInput,
   EscalationBackupContactRecord,
   EscalationEventRecord,
+  EscalationReceiverOwnerRecord,
   EscalationsRepository,
 } from './escalations.repository';
+
+interface ReceiverOwnerRow {
+  userId: string;
+  nameEncrypted: string;
+  language: string;
+  user: { phoneEncrypted: string };
+}
 
 interface EscalationsPrismaClient {
   receiver: {
     findFirst(args: {
       where: { id: string; deletedAt: null };
-      select: { userId: true; user: { select: { phoneEncrypted: true } } };
-    }): Promise<{ userId: string; user: { phoneEncrypted: string } } | null>;
+      select: { userId: true; nameEncrypted: true; language: true; user: { select: { phoneEncrypted: true } } };
+    }): Promise<ReceiverOwnerRow | null>;
   };
   backupContact: {
     findMany(args: {
       where: { receiverId: string; deletedAt: null };
       orderBy: [{ priorityOrder: 'asc' }, { createdAt: 'asc' }];
     }): Promise<BackupContact[]>;
+  };
+  checkInAttempt: {
+    findMany(args: {
+      where: { checkInId: string; sentAt: { not: null } };
+      orderBy: { attemptNumber: 'asc' };
+      select: { channel: true };
+    }): Promise<Array<{ channel: Channel }>>;
   };
   escalationEvent: {
     create(args: {
@@ -46,7 +61,7 @@ interface EscalationsPrismaClient {
 export class PrismaEscalationsRepository implements EscalationsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: EscalationsPrismaClient | PrismaService) {}
 
-  async findReceiverOwner(input: { receiverId: string }): Promise<{ userId: string; phoneEncrypted: string } | null> {
+  async findReceiverOwner(input: { receiverId: string }): Promise<EscalationReceiverOwnerRecord | null> {
     const receiver = (await this.prisma.receiver.findFirst({
       where: {
         id: input.receiverId,
@@ -54,15 +69,24 @@ export class PrismaEscalationsRepository implements EscalationsRepository {
       },
       select: {
         userId: true,
+        nameEncrypted: true,
+        language: true,
         user: {
           select: {
             phoneEncrypted: true,
           },
         },
       },
-    })) as { userId: string; user: { phoneEncrypted: string } } | null;
+    })) as ReceiverOwnerRow | null;
 
-    return receiver ? { userId: receiver.userId, phoneEncrypted: receiver.user.phoneEncrypted } : null;
+    return receiver
+      ? {
+          userId: receiver.userId,
+          phoneEncrypted: receiver.user.phoneEncrypted,
+          receiverNameEncrypted: receiver.nameEncrypted,
+          receiverLanguage: receiver.language,
+        }
+      : null;
   }
 
   async findActiveBackupContactsForReceiver(input: { receiverId: string }): Promise<EscalationBackupContactRecord[]> {
@@ -79,9 +103,23 @@ export class PrismaEscalationsRepository implements EscalationsRepository {
       receiverId: contact.receiverId,
       nameEncrypted: contact.nameEncrypted,
       phoneEncrypted: contact.phoneEncrypted,
+      locationInstructionsEncrypted: contact.locationInstructionsEncrypted ?? undefined,
       priorityOrder: contact.priorityOrder,
       createdAt: contact.createdAt,
     }));
+  }
+
+  async findChannelsTriedForCheckIn(input: { checkInId: string }): Promise<Channel[]> {
+    const attempts = (await this.prisma.checkInAttempt.findMany({
+      where: {
+        checkInId: input.checkInId,
+        sentAt: { not: null },
+      },
+      orderBy: { attemptNumber: 'asc' },
+      select: { channel: true },
+    })) as Array<{ channel: Channel }>;
+
+    return attempts.map((attempt) => attempt.channel);
   }
 
   async createEvent(input: CreateEscalationEventInput): Promise<EscalationEventRecord> {

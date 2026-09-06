@@ -33,10 +33,11 @@ describe('createChannelProviders', () => {
       router.sendMessage(Channel.WHATSAPP, '+971501234567', {
         templateKey: 'consent_request',
         language: 'en',
-        variables: {},
+        variables: { receiverName: 'Fatima', senderDisplayName: 'Ahmed' },
       }),
     ).resolves.toMatchObject({
       providerStatus: 'accepted',
+      rendering: { language: 'en', fallback: false },
     });
   });
 

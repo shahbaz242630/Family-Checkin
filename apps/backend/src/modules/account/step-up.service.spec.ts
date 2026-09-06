@@ -150,4 +150,39 @@ describe('StepUpService', () => {
       }),
     ).rejects.toThrow('Step-up verification is required');
   });
+
+  it('passes the code and its validity in minutes to the OTP template in the sender language', async () => {
+    const messages: Array<{ templateKey: string; language: string; variables: Record<string, string> }> = [];
+    const stepUp = new StepUpService(
+      repository,
+      {
+        sendMessage: async (_channel, _to, message) => {
+          messages.push(message);
+          return {
+            providerMessageId: 'sms-2',
+            acceptedAt: new Date('2026-05-01T10:00:00.000Z'),
+            providerStatus: 'accepted',
+          };
+        },
+      } as Pick<ChannelRouterService, 'sendMessage'>,
+      () => new Date('2026-05-01T10:00:00.000Z'),
+      () => '123456',
+      () => 'token-abc',
+    );
+
+    await stepUp.requestStepUp({
+      userId: 'user-1',
+      action: SensitiveAction.EXPORT_DATA,
+      phone: '+971501234567',
+      language: 'ar',
+    });
+
+    expect(messages).toEqual([
+      {
+        templateKey: 'account_step_up_otp',
+        language: 'ar',
+        variables: { code: '123456', validityMinutes: '10' },
+      },
+    ]);
+  });
 });

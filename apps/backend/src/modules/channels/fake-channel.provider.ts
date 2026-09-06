@@ -7,15 +7,27 @@ import type {
   VoiceCallOptions,
   VoiceScript,
 } from './channel-provider';
+import { MessageCatalogService } from './message-catalog.service';
 
 export interface FakeChannelProviderOptions {
   availableNumbers?: string[];
   now?: () => Date;
+  /** Defaults to the in-code catalog so fake sends fail on a missing variable exactly like a real send. */
+  catalog?: MessageCatalogService;
 }
 
 export interface SentFakeMessage {
   to: string;
   message: TemplatedMessage;
+}
+
+/** The text a real provider would have sent for the matching `sentMessages` entry. */
+export interface RenderedFakeMessage {
+  to: string;
+  templateKey: string;
+  body: string;
+  language: string;
+  fallback: boolean;
 }
 
 export interface FakeVoiceCall {
@@ -26,10 +38,12 @@ export interface FakeVoiceCall {
 
 export class FakeChannelProvider implements ChannelProvider {
   public readonly sentMessages: SentFakeMessage[] = [];
+  public readonly renderedMessages: RenderedFakeMessage[] = [];
   public readonly voiceCalls: FakeVoiceCall[] = [];
 
   private readonly availableNumbers?: Set<string>;
   private readonly now: () => Date;
+  private readonly catalog: MessageCatalogService;
 
   constructor(
     public readonly channel: Channel,
@@ -37,15 +51,19 @@ export class FakeChannelProvider implements ChannelProvider {
   ) {
     this.availableNumbers = options.availableNumbers ? new Set(options.availableNumbers) : undefined;
     this.now = options.now ?? (() => new Date());
+    this.catalog = options.catalog ?? new MessageCatalogService();
   }
 
   async sendMessage(to: string, message: TemplatedMessage): Promise<ChannelSendResult> {
+    const rendered = await this.catalog.render({ ...message, channel: this.channel });
     this.sentMessages.push({ to, message });
+    this.renderedMessages.push({ to, templateKey: message.templateKey, ...rendered });
 
     return {
       providerMessageId: `fake-${this.channel}-message-${this.sentMessages.length}`,
       acceptedAt: this.now(),
       providerStatus: 'accepted',
+      rendering: { language: rendered.language, fallback: rendered.fallback },
     };
   }
 

@@ -8,6 +8,7 @@ describe('PrismaEscalationsRepository', () => {
     const repository = new PrismaEscalationsRepository({
       receiver: { findFirst: vi.fn() },
       backupContact: { findMany },
+      checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
       checkIn: { update: vi.fn() },
     });
@@ -39,6 +40,7 @@ describe('PrismaEscalationsRepository', () => {
     const repository = new PrismaEscalationsRepository({
       receiver: { findFirst: vi.fn() },
       backupContact: { findMany: vi.fn() },
+      checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create },
       checkIn: { update: vi.fn() },
     });
@@ -69,10 +71,16 @@ describe('PrismaEscalationsRepository', () => {
   });
 
   it('finds the active receiver owner for sender push notifications', async () => {
-    const findFirst = vi.fn().mockResolvedValue({ userId: 'sender-1', user: { phoneEncrypted: 'encrypted-phone' } });
+    const findFirst = vi.fn().mockResolvedValue({
+      userId: 'sender-1',
+      nameEncrypted: 'encrypted-name',
+      language: 'ar',
+      user: { phoneEncrypted: 'encrypted-phone' },
+    });
     const repository = new PrismaEscalationsRepository({
       receiver: { findFirst },
       backupContact: { findMany: vi.fn() },
+      checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
       checkIn: { update: vi.fn() },
     });
@@ -80,6 +88,8 @@ describe('PrismaEscalationsRepository', () => {
     await expect(repository.findReceiverOwner({ receiverId: 'receiver-1' })).resolves.toEqual({
       userId: 'sender-1',
       phoneEncrypted: 'encrypted-phone',
+      receiverNameEncrypted: 'encrypted-name',
+      receiverLanguage: 'ar',
     });
     expect(findFirst).toHaveBeenCalledWith({
       where: {
@@ -88,6 +98,8 @@ describe('PrismaEscalationsRepository', () => {
       },
       select: {
         userId: true,
+        nameEncrypted: true,
+        language: true,
         user: {
           select: {
             phoneEncrypted: true,
@@ -97,11 +109,33 @@ describe('PrismaEscalationsRepository', () => {
     });
   });
 
+  it('lists the channels a check-in cascade already sent on, in attempt order', async () => {
+    const findMany = vi.fn().mockResolvedValue([{ channel: Channel.WHATSAPP }, { channel: Channel.SMS }]);
+    const repository = new PrismaEscalationsRepository({
+      receiver: { findFirst: vi.fn() },
+      backupContact: { findMany: vi.fn() },
+      checkInAttempt: { findMany },
+      escalationEvent: { create: vi.fn() },
+      checkIn: { update: vi.fn() },
+    });
+
+    await expect(repository.findChannelsTriedForCheckIn({ checkInId: 'check-in-1' })).resolves.toEqual([
+      Channel.WHATSAPP,
+      Channel.SMS,
+    ]);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { checkInId: 'check-in-1', sentAt: { not: null } },
+      orderBy: { attemptNumber: 'asc' },
+      select: { channel: true },
+    });
+  });
+
   it('marks a check-in escalated', async () => {
     const update = vi.fn().mockResolvedValue({ id: 'check-in-1', status: CheckInStatus.ESCALATED });
     const repository = new PrismaEscalationsRepository({
       receiver: { findFirst: vi.fn() },
       backupContact: { findMany: vi.fn() },
+      checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
       checkIn: { update },
     });
@@ -119,6 +153,7 @@ describe('PrismaEscalationsRepository', () => {
     const repository = new PrismaEscalationsRepository({
       receiver: { findFirst: vi.fn() },
       backupContact: { findMany: vi.fn() },
+      checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
       checkIn: { update },
     });
