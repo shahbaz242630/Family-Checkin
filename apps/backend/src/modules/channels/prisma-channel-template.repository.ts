@@ -24,7 +24,9 @@ export class PrismaChannelTemplateRepository implements ChannelTemplateRepositor
     const template = (await this.prisma.channelTemplate.findFirst({
       where: {
         templateKey: input.templateKey,
-        language: input.language,
+        // Seeded rows are lower-case base tags ("ar"); the catalog already normalises, this keeps a padded or
+        // upper-cased value from any other caller matching the same row (CB-075).
+        language: input.language.trim().toLowerCase(),
         channel: input.channel,
         active: true,
       },

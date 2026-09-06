@@ -3,6 +3,9 @@ import { Channel } from '@prisma/client';
 /**
  * In-code message copy, keyed by template key then language. This is the floor: an active `channel_templates`
  * row for the same (key, language, channel) wins, and any language without copy here falls back to English.
+ * The eight launch languages are seeded into `channel_templates` by migration
+ * `202609060103_seed_channel_templates_8_languages` (English rows identical to this copy, asserted by
+ * `message-catalog.seed.spec.ts`); this file stays as the last-resort fallback when the table is empty.
  *
  * Syntax (shared with database rows):
  *   {{name}}                 required variable; rendering fails closed when it is missing or blank

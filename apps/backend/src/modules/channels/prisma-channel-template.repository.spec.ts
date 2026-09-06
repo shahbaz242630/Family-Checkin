@@ -16,6 +16,18 @@ describe('PrismaChannelTemplateRepository', () => {
     });
   });
 
+  it('looks up the language trimmed and lower-cased so a padded char(5) value still matches the seeded row (CB-075)', async () => {
+    const findFirst = vi.fn().mockResolvedValue({ bodyText: 'Hola {{receiverName}}' });
+    const repository = new PrismaChannelTemplateRepository({ channelTemplate: { findFirst } });
+
+    await repository.findActive({ templateKey: 'checkin_daily', language: 'ES   ', channel: Channel.SMS });
+
+    expect(findFirst).toHaveBeenCalledWith({
+      where: { templateKey: 'checkin_daily', language: 'es', channel: Channel.SMS, active: true },
+      select: { bodyText: true },
+    });
+  });
+
   it('returns null when no active row exists', async () => {
     const repository = new PrismaChannelTemplateRepository({
       channelTemplate: { findFirst: vi.fn().mockResolvedValue(null) },

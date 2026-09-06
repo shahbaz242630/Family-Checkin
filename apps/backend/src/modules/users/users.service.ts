@@ -3,6 +3,9 @@ import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
 import type { SenderRecord, UsersRepository } from './users.repository';
 
+/** Written when the identity carries no usable language; matches `SupabaseAuthService`'s default. */
+const DEFAULT_PREFERRED_LANGUAGE = 'en';
+
 export interface UpsertSupabaseSenderInput {
   authProviderId: string;
   email: string;
@@ -31,9 +34,20 @@ export class UsersService {
       phoneEncrypted: this.cryptoService.encrypt(phone),
       phoneHash: this.cryptoService.hashForLookup(phone),
       country: input.country,
-      preferredLanguage: input.preferredLanguage,
+      preferredLanguage: this.normalizePreferredLanguage(input.preferredLanguage),
       timezone: input.timezone,
     });
+  }
+
+  /**
+   * Language codes are stored as-is in a `varchar(8)` column (CB-075). Trimming here means a padded or
+   * whitespace-wrapped value from client metadata can never be written, and a blank one becomes English rather
+   * than an empty string that no template lookup would ever match.
+   */
+  private normalizePreferredLanguage(language: string): string {
+    const normalized = language.trim();
+
+    return normalized || DEFAULT_PREFERRED_LANGUAGE;
   }
 
   private normalizeEmail(email: string): string {

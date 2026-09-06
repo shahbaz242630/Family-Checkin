@@ -46,6 +46,39 @@ describe('UsersService', () => {
     expect(crypto.decrypt(repository.lastInput?.phoneEncrypted ?? '')).toBe('+919876543210');
   });
 
+  it('stores the preferred language trimmed so a padded char(5) value can never round-trip (CB-075)', async () => {
+    const repository = new InMemoryUsersRepository();
+    const service = new UsersService(repository, new CryptoService(masterKey));
+
+    const sender = await service.upsertFromSupabaseIdentity({
+      authProviderId: 'supabase-user-123',
+      email: 'sender@example.com',
+      phone: '+971501234567',
+      country: 'AE',
+      preferredLanguage: ' en   ',
+      timezone: 'Asia/Dubai',
+    });
+
+    expect(repository.lastInput?.preferredLanguage).toBe('en');
+    expect(sender.preferredLanguage).toBe('en');
+  });
+
+  it('defaults a blank preferred language to English instead of writing an empty string', async () => {
+    const repository = new InMemoryUsersRepository();
+    const service = new UsersService(repository, new CryptoService(masterKey));
+
+    await service.upsertFromSupabaseIdentity({
+      authProviderId: 'supabase-user-123',
+      email: 'sender@example.com',
+      phone: '+971501234567',
+      country: 'AE',
+      preferredLanguage: '   ',
+      timezone: 'Asia/Dubai',
+    });
+
+    expect(repository.lastInput?.preferredLanguage).toBe('en');
+  });
+
   it('requires a verified email and phone to create an app user', async () => {
     const repository = new InMemoryUsersRepository();
     const service = new UsersService(repository, new CryptoService(masterKey));

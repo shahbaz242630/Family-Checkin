@@ -1,14 +1,14 @@
 # Channels and providers — feature handoff
 
-Status: Built · Last verified: 2026-09-06 (acceptance run)
-BRD: FR-CHN-01, FR-CHN-02, FR-CHN-03, FR-CHN-03a, FR-CHN-03b, FR-CHN-03c-1, FR-LNG-02, BRD-6.6, BRD-6.11, BRD-7 · Open backlog: CB-010 (remaining slices), CB-016, CB-019, CB-020, CB-021, CB-022, CB-046, CB-047
-Per area: fake-mode send, English catalog rendering, fake-route gating, signed voice-status webhook — 2026-09-06 (acceptance run); Twilio request shapes, WhatsApp Content SIDs, TwiML Gather, `channel_templates` override — 2026-09-06 (specs). No live Twilio or Meta credentials exist; nothing has been sent to a real phone.
+Status: Built · Last verified: 2026-09-06 (acceptance run; eight-language seed on a throwaway Postgres)
+BRD: FR-CHN-01, FR-CHN-02, FR-CHN-03, FR-CHN-03a, FR-CHN-03b, FR-CHN-03c-1, FR-LNG-02, BRD-6.6, BRD-6.11, BRD-7 · Open backlog: CB-010 (sender display name, `checkin_retry` caller), CB-016, CB-019, CB-020, CB-021, CB-022, CB-046, CB-047
+Per area: fake-mode send, English catalog rendering, fake-route gating, signed voice-status webhook — 2026-09-06 (acceptance run); Twilio request shapes, WhatsApp Content SIDs, TwiML Gather, `channel_templates` override, seeded eight-language rows — 2026-09-06 (specs). No live Twilio or Meta credentials exist; nothing has been sent to a real phone. Non-English copy is machine-translated and unreviewed (`docs/handoffs/message-copy-review.md`).
 
 ## What it does
 
 - Every outbound message and call goes through one vendor-neutral `ChannelProvider` (`sendMessage`, `makeVoiceCall`, `isAvailableForNumber`) per `Channel` (`WHATSAPP`, `SMS`, `VOICE`), so cascade, consent and escalation logic never names a vendor.
 - `CHANNEL_PROVIDER_MODE` decides the implementations at boot: `fake` yields three `FakeChannelProvider`s that record sends in memory; `configured` yields the Twilio-backed `WhatsappProvider`, `SmsProvider` and `VoiceProvider`.
-- `MessageCatalogService` turns a template key + language + variables into the text a person reads: an active `channel_templates` row wins, then in-code English copy, then English with `fallback: true`; a missing or blank required variable throws.
+- `MessageCatalogService` turns a template key + language + variables into the text a person reads: an active `channel_templates` row wins (seeded for en, ar, es, hi, ur, ml, ta, bn on SMS and WhatsApp), then in-code English copy, then English with `fallback: true`; a missing or blank required variable throws.
 - `ChannelRouterService` dispatches by channel and resolves a reachable plan for a phone number (`PRIMARY_AVAILABLE` / `FALLBACK_SELECTED` / `MANUAL_REQUIRED`); the tech profile decides the cascade shape upstream in `CheckInsService`.
 - Signed Twilio webhooks bring inbound replies (SMS/WhatsApp text and quick-reply buttons, voice DTMF/speech) and call outcomes (status, AMD) back into `ReceiverReplyService` and `CheckInsService`.
 - In fake mode only, `POST /receiver-replies/fake` drives the real reply pipeline with no provider involved, and `GET /receiver-replies/fake/outbound` lists what the fake providers sent; every fake send also prints a `[fake-provider]` line in the terminal.
@@ -21,8 +21,8 @@ Per area: fake-mode send, English catalog rendering, fake-route gating, signed v
 | Backend | `apps/backend/src/modules/provider-webhooks/` (controller, module, `provider-webhook-events.repository.ts`, `prisma-provider-webhook-events.repository.ts`); `apps/backend/src/modules/receivers/receiver-replies.controller.ts` + `receiver-replies.module.ts`; `apps/backend/src/shared/config/app-config.service.ts`; `apps/backend/src/shared/auth/bearer-secret.ts` |
 | Callers | `check-ins.service.ts` (`checkInMessageVariables`, `buildCascadeAttempts`, `voiceCallOptions`), `receiver-consent.service.ts`, `receivers.service.ts` (`lifecycleMessageVariables`), `escalations.service.ts` (`backupAlertContext`), `account/step-up.service.ts`                                  |
 | Mobile  | none — this feature has no mobile surface                                                                                                                                                                                                                                                         |
-| Data    | `channel_templates` (`schema.prisma:463`, 0 rows: no seed migration yet), `provider_webhook_events` (`schema.prisma:337`), `voice_caller_id_pool` (`schema.prisma:213`, never written — CB-022)                                                                                                    |
-| Tests   | `channel-providers.factory.spec.ts`, `configured-channel-providers.spec.ts`, `fake-channel.provider.spec.ts`, `fake-outbound-recorder.spec.ts`, `channel-router.service.spec.ts`, `message-catalog.service.spec.ts`, `prisma-channel-template.repository.spec.ts`, `provider-webhooks.controller.spec.ts`, `prisma-provider-webhook-events.repository.spec.ts`, `receiver-replies.controller.spec.ts`, `app.module.spec.ts`, `app-config.service.spec.ts` |
+| Data    | `channel_templates` (`schema.prisma:449`; 144 rows seeded by `202609060103_seed_channel_templates_8_languages`: 9 keys × 8 languages × SMS/WHATSAPP, `active = true`, `approvedAt` NULL until native review; `language` is `varchar(8)` since `202609060102_language_columns_varchar`), `provider_webhook_events` (`schema.prisma:337`), `voice_caller_id_pool` (`schema.prisma:213`, never written — CB-022) |
+| Tests   | `channel-providers.factory.spec.ts`, `configured-channel-providers.spec.ts`, `fake-channel.provider.spec.ts`, `fake-outbound-recorder.spec.ts`, `channel-router.service.spec.ts`, `message-catalog.service.spec.ts`, `message-catalog.seed.spec.ts`, `prisma-channel-template.repository.spec.ts`, `provider-webhooks.controller.spec.ts`, `prisma-provider-webhook-events.repository.spec.ts`, `receiver-replies.controller.spec.ts`, `app.module.spec.ts`, `app-config.service.spec.ts` |
 
 Env var names per mode (names only; all are read in `app-config.service.ts`, validated with zod at boot):
 
@@ -60,7 +60,9 @@ Message template keys and the variables each requires (`{{var}}` required, `{{#v
 | `backup_contact_help_alert`             | `contactName`, `receiverName`, `senderDisplayName` | `channelsTried`, `locationInstructions` | `escalations.service.ts` |
 | `backup_contact_sender_requested_alert` | `contactName`, `receiverName`, `senderDisplayName` | `channelsTried`, `locationInstructions` | `escalations.service.ts` |
 
-Voice uses `scriptKey`, not the catalog: `checkin_daily_voice`, `consent_request_voice`, `receiver_checkins_paused_voice`, `receiver_checkins_ended_voice`, `sender_escalation_siren_voice`. Only English copy exists in `IN_CODE_MESSAGE_TEMPLATES`; every other language falls back to English with `renderFallback: true` in the audit metadata.
+Voice uses `scriptKey`, not the catalog: `checkin_daily_voice`, `consent_request_voice`, `receiver_checkins_paused_voice`, `receiver_checkins_ended_voice`, `sender_escalation_siren_voice`.
+
+Languages: `channel_templates` holds every key above for `en`, `ar`, `es`, `hi`, `ur`, `ml`, `ta`, `bn` on `SMS` and `WHATSAPP` (the WhatsApp row is the text to submit as the Content Template; its `externalId` is where the approved Content SID belongs, CB-020). The English rows are identical to `IN_CODE_MESSAGE_TEMPLATES`, which stays as the last-resort fallback. Any other language (`fr`, `tl`, …) falls back to English with `renderFallback: true` in the audit metadata. Every non-English body is a machine translation with `approvedAt` NULL; review status and instructions live in `docs/handoffs/message-copy-review.md`. `{{channelsTried}}` is still filled in English by `describeChannelsTried`.
 
 ## How to exercise it locally (fake mode)
 
@@ -68,7 +70,7 @@ Voice uses `scriptKey`, not the catalog: `checkin_daily_voice`, `consent_request
 - Drive an inbound reply: `POST /receiver-replies/fake` with `Authorization: Bearer <OPERATIONS_CRON_SECRET>` and `{"fromPhone":"+44...","channel":"SMS","body":"YES"}`. Without the bearer it is 401; with `CHANNEL_PROVIDER_MODE=configured` the route is 404.
 - Drive an outbound send: `POST /operations/check-ins/run` (cron-secret bearer). The `check_in.sent` audit row carries `renderedLanguage` and `renderFallback`; the rendered body prints in the backend terminal as a `[fake-provider]` line and is returned by `GET /receiver-replies/fake/outbound` (cron-secret bearer).
 - Exercise a Twilio route locally by setting `TWILIO_AUTH_TOKEN` and `PUBLIC_API_BASE_URL` to test values and computing the HMAC-SHA1 signature the same way `computeTwilioSignature` does; an unsigned request is 401.
-- To see a `channel_templates` override, insert an active row for `(templateKey, language, channel)` — it wins over the in-code copy on the next send.
+- To see another language, create the receiver with `language: "ar"` (or any seeded code): the next check-in body is Arabic with the personal note in it and `renderFallback: false`. To override copy, `UPDATE channel_templates SET "bodyText" = …` for the `(templateKey, language, channel)` — the row already wins over the in-code copy.
 
 ## Invariants — do not break
 
@@ -80,6 +82,8 @@ Voice uses `scriptKey`, not the catalog: `checkin_daily_voice`, `consent_request
 - Twilio inbound is stored **after** successful processing, keyed `(provider, eventType, providerEventId)`, so a transient failure leaves nothing behind and Twilio's retry is processed rather than mistaken for a replay (CB-015).
 - `provider_webhook_events.payload` for inbound messaging stays PII-free — `MessageSid`, `channel`, `bodyLength`, `hasButtonPayload`. Never the phone or the body.
 - Rendering fails closed: a missing or blank required variable throws `MissingMessageVariableError`, and a body can never leave with `{{…}}` still in it (`MalformedMessageTemplateError`). Variable values are inserted verbatim and never re-scanned, so a name containing braces cannot inject a placeholder.
+- Seed copy contract (`message-catalog.seed.spec.ts` parses the seed migration): every language row keeps the English row's placeholder set and optional sections, keeps `YES`/`HELP`/`STOP`/`REPORT`/`DONE` in Latin letters, has no emoji, and renders to ≤ 320 characters with every optional section filled. Corrections after native review go in a new migration (`UPDATE … SET "bodyText", "approvedAt"`), never by editing the seed file — the seed is `ON CONFLICT DO NOTHING` and would not re-apply anyway.
+- Language codes are stored as `varchar(8)` and looked up trimmed and lower-cased; never reintroduce `char(n)` for a code column — `char` pads to width and the padding leaks into API responses and into `templateKey:language` keys (CB-075).
 - `ChannelSendResult.rendering` is present only when the provider rendered the body (SMS, fake) and absent for provider-side templates (WhatsApp Content SIDs); `renderingAuditMetadata` must keep tolerating `undefined`.
 - Phones are decrypted only at the moment of the provider call, never earlier and never into an audit row.
 - `WhatsappProvider.isAvailableForNumber` asserts configuration and therefore throws when credentials are absent; `resolveReachablePlan` catches that and returns `MANUAL_REQUIRED` rather than silently dropping the channel.
@@ -87,10 +91,10 @@ Voice uses `scriptKey`, not the catalog: `checkin_daily_voice`, `consent_request
 
 ## Known gaps
 
-- CB-010 — English copy only; per-language seed migration, a real sender display name, and `checkin_retry` on later attempts are still outstanding.
+- CB-010 — a real sender display name (receivers still read "your family member") and `checkin_retry` on later attempts are outstanding; the eight-language seed landed but is unreviewed by native speakers.
 - CB-016 — no `StatusCallback` on SMS/WhatsApp and no `/twilio/messaging/status` route, so an undelivered message looks "sent" for the rest of the cascade window; the `provider_webhook_events` dedupe index is non-unique.
 - CB-019 — Twilio error `code`/`message` are discarded by `twilio-http-client.ts`; dead `SMS_PROVIDER_*` config and the internal `/provider-webhooks/sms` route should go; the inbound URL is undocumented.
-- CB-020 — `char(5)` language padding breaks Content-SID lookup (`"en   "`); the 8 templates × languages are unapproved; `TWILIO_WHATSAPP_CONTENT_SIDS` is parsed lazily instead of at boot.
+- CB-020 — the 8 templates × languages are unapproved by Meta; `TWILIO_WHATSAPP_CONTENT_SIDS` is parsed lazily instead of at boot; `docs/providers/whatsapp.md` does not exist. The `char(5)` padding that broke the `templateKey:language` lookup is gone (CB-075).
 - CB-021 — the Meta WhatsApp Cloud API path is half-built: env parsed, no client, no `hub.challenge` GET, custom header instead of `X-Hub-Signature-256`.
 - CB-022 — `/twilio/voice` answers JSON where Twilio expects `text/xml` (Twilio 12100); digit `9`/"stop" unmapped; no hosted audio at `VOICE_AUDIO_BASE_URL`; only 5 language folders in `languagePath`; `voice_caller_id_pool` has no writer; dead `VOICE_PROVIDER_*` config.
 - CB-046 — no timeout on the Twilio fetch, so a stalled socket can hang an attempt.
@@ -100,5 +104,5 @@ Voice uses `scriptKey`, not the catalog: `checkin_daily_voice`, `consent_request
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` "Backend Foundation" (lines 184–700: `ChannelProvider` contract and `createChannelProviders` at 338–353, env names at 379–386, voice research and the Twilio credential-readiness / AMD / caller-ID / status-persistence slices at 392–570), §29 (2234–2332, provider webhook adapters), §34 slice 2 (3383–3399, WhatsApp Content Templates), §0a (793–804, sprint 1).
 - Acceptance: `docs/audits/2026-09-06/sprint1-acceptance.md` — S1 (fake route gating, configured boot 404), S3 (catalog rendering and fail-closed), S4 (signed messaging webhook, replay, never 500), S8 (signed voice status callback), defect D1, and the "configured" row of the boot table.
-- PRs: #17 (CB-015 inbound idempotency by `MessageSid`), #18 (CB-001 fake route gated to fake mode plus cron-secret bearer), #19 (CB-010 English catalog; `renderTwilioMessage` deleted).
+- PRs: #17 (CB-015 inbound idempotency by `MessageSid`), #18 (CB-001 fake route gated to fake mode plus cron-secret bearer), #19 (CB-010 English catalog; `renderTwilioMessage` deleted), #PR_NUMBER (CB-010 eight-language seed; CB-075 `varchar(8)` language columns).
 - Related handoffs: `docs/handoffs/escalations-and-notifications.md` (backup alert fan-out that consumes these templates), `docs/handoffs/backup-contacts.md`.

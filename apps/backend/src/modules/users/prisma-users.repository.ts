@@ -38,7 +38,9 @@ export class PrismaUsersRepository implements UsersRepository {
       phoneEncrypted: user.phoneEncrypted,
       phoneHash: user.phoneHash,
       country: user.country,
-      preferredLanguage: user.preferredLanguage,
+      // Trimmed on read as well: a database that has not yet run 202609060102_language_columns_varchar still
+      // holds a space-padded char(5) value, and the API must answer "en" either way (CB-075).
+      preferredLanguage: user.preferredLanguage.trim(),
       timezone: user.timezone,
     };
   }
