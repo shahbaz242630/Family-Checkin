@@ -6,10 +6,9 @@ import { renderingAuditMetadata } from '../channels/message-catalog.service';
 import { UsersService } from '../users/users.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import {
-  addDays,
   auditSafeErrorMessage,
-  CONSENT_REQUEST_MIN_INTERVAL_DAYS,
   ConsentNotPendingError,
+  consentResendAllowedAt,
   ConsentResendLimitError,
   OptOutCooldownError,
 } from './receiver-policy';
@@ -36,6 +35,8 @@ export interface ResendReceiverConsentResult {
   receiver: ReceiverRecord;
   /** False when the provider refused the send; `consentRequestedAt` is then left as it was. */
   sent: boolean;
+  /** When the next resend opens for the returned receiver; null when nothing restricts it (CB-081). */
+  consentResendAllowedAt: Date | null;
 }
 
 interface ConsentSendOutcome {
@@ -125,8 +126,9 @@ export class ReceiverConsentService {
 
   /**
    * Sender-triggered re-invitation. Only a receiver who has not answered can be re-asked, never inside a STOP
-   * cooldown, and at most one invitation per 7 days counting the first one (BRD: "one per week max").
-   * Returns null when the receiver is not the sender's.
+   * cooldown, and only once the resend window is open: 24 hours after the first invitation, then 7 days after
+   * each resend (`consentResendAllowedAt`, CB-081; BRD: "one per week max"). Returns null when the receiver is
+   * not the sender's.
    */
   async resendConsent(input: ResendReceiverConsentInput): Promise<ResendReceiverConsentResult | null> {
     const userId = input.userId.trim();
@@ -144,11 +146,9 @@ export class ReceiverConsentService {
     if (cooldown && cooldown.cooldownUntil > now) {
       throw new OptOutCooldownError(cooldown.cooldownUntil);
     }
-    if (receiver.consentRequestedAt) {
-      const nextAllowedAt = addDays(receiver.consentRequestedAt, CONSENT_REQUEST_MIN_INTERVAL_DAYS);
-      if (nextAllowedAt > now) {
-        throw new ConsentResendLimitError(nextAllowedAt);
-      }
+    const nextAllowedAt = consentResendAllowedAt(receiver);
+    if (nextAllowedAt && nextAllowedAt > now) {
+      throw new ConsentResendLimitError(nextAllowedAt);
     }
 
     const sent = await this.trySendConsentRequest(receiver, input.senderDisplayName);
@@ -168,7 +168,7 @@ export class ReceiverConsentService {
         userAgent: input.userAgent,
       });
 
-      return { receiver, sent: false };
+      return { receiver, sent: false, consentResendAllowedAt: nextAllowedAt };
     }
 
     const updatedReceiver = await this.receiversRepository.markConsentRequested({
@@ -183,6 +183,9 @@ export class ReceiverConsentService {
           ...sent.outcome.transcript,
         }),
       ),
+      // A "resend" after a failed first send is the first invitation the receiver actually gets, so it opens
+      // the 24-hour window rather than the 7-day one (CB-081).
+      resend: Boolean(receiver.consentRequestedAt),
     });
 
     await this.auditService.append({
@@ -196,12 +199,13 @@ export class ReceiverConsentService {
         templateKey: sent.outcome.templateKey,
         providerStatus: sent.outcome.providerStatus,
         previousRequestAt: receiver.consentRequestedAt?.toISOString(),
+        resendCount: updatedReceiver.consentResendCount ?? receiver.consentResendCount ?? 0,
       },
       ipAddress: input.ipAddress,
       userAgent: input.userAgent,
     });
 
-    return { receiver: updatedReceiver, sent: true };
+    return { receiver: updatedReceiver, sent: true, consentResendAllowedAt: consentResendAllowedAt(updatedReceiver) };
   }
 
   private async trySendConsentRequest(

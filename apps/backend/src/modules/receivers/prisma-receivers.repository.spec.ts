@@ -755,6 +755,87 @@ function clientWith(overrides: {
   };
 }
 
+describe('PrismaReceiversRepository counts consent resends in the database (CB-081)', () => {
+  const row = {
+    id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+    nameEncrypted: 'encrypted-name',
+    phoneEncrypted: 'encrypted-phone',
+    phoneHash: 'phone-hash',
+    countryCode: 'AE',
+    relationshipType: RelationshipType.PARENT,
+    language: 'en',
+    timezone: 'Asia/Dubai',
+    techProfile: TechProfile.WHATSAPP,
+    primaryChannel: Channel.WHATSAPP,
+    fallbackChannels: [Channel.SMS],
+    scheduleFrequency: 'daily',
+    scheduleTimeWindow: { start: '09:00', end: '11:00' },
+    scheduleCustomCron: null,
+    scheduleInvalidAt: null,
+    personalNoteEncrypted: null,
+    consentStatus: ConsentStatus.PENDING,
+    consentRequestedAt: new Date('2026-09-07T10:00:00.000Z'),
+    consentResendCount: 1,
+    consentGrantedAt: null,
+    consentRevokedAt: null,
+    consentTranscript: 'encrypted-transcript',
+    pausedUntil: null,
+    pausedReason: null,
+    deletedAt: null,
+    createdAt: new Date('2026-09-06T10:00:00.000Z'),
+    updatedAt: new Date('2026-09-07T10:00:00.000Z'),
+  };
+
+  function repositoryWith(update: Mock) {
+    return new PrismaReceiversRepository({
+      receiver: { create: vi.fn(), findFirst: vi.fn(), findMany: vi.fn(), update, updateMany: vi.fn() },
+      abuseReport: { create: vi.fn() },
+      optOutCooldown: { findFirst: vi.fn(), upsert: vi.fn() },
+    });
+  }
+
+  it('increments consentResendCount atomically on a resend and reads it back', async () => {
+    const update = vi.fn().mockResolvedValue(row);
+
+    const record = await repositoryWith(update).markConsentRequested({
+      receiverId: row.id,
+      consentRequestedAt: new Date('2026-09-07T10:00:00.000Z'),
+      consentTranscript: 'encrypted-transcript',
+      resend: true,
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: row.id },
+      data: {
+        consentRequestedAt: new Date('2026-09-07T10:00:00.000Z'),
+        consentTranscript: 'encrypted-transcript',
+        consentResendCount: { increment: 1 },
+      },
+    });
+    expect(record.consentResendCount).toBe(1);
+  });
+
+  it('leaves the counter alone for a first invitation', async () => {
+    const update = vi.fn().mockResolvedValue({ ...row, consentResendCount: 0 });
+
+    const record = await repositoryWith(update).markConsentRequested({
+      receiverId: row.id,
+      consentRequestedAt: new Date('2026-09-07T10:00:00.000Z'),
+      consentTranscript: 'encrypted-transcript',
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: row.id },
+      data: {
+        consentRequestedAt: new Date('2026-09-07T10:00:00.000Z'),
+        consentTranscript: 'encrypted-transcript',
+      },
+    });
+    expect(record.consentResendCount).toBe(0);
+  });
+});
+
 describe('PrismaReceiversRepository resolves a shared phone hash (CB-014)', () => {
   const openStatuses = [CheckInStatus.PENDING, CheckInStatus.SENT, CheckInStatus.NEEDS_ATTENTION];
 

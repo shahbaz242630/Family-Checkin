@@ -3,21 +3,55 @@
  * from BRD v2.1: an opted-out receiver cannot be re-invited for 7 days and invitations are rate-limited to one
  * per receiver per week (FR-SAF-07, BRD-4.5); "try later" retries the check-in two hours on (BRD-4.3).
  */
+import { ConsentStatus } from '@prisma/client';
 
 /** Days a STOP keeps the phone off-limits for new consent invitations (CB-009). */
 export const OPT_OUT_COOLDOWN_DAYS = 7;
-/** Minimum days between two consent invitations to the same receiver, the first one included (CB-009). */
-export const CONSENT_REQUEST_MIN_INTERVAL_DAYS = 7;
+/**
+ * Hours after the first consent invitation before the sender may resend it once. The first invitation does not
+ * count toward the weekly cap (founder decision 2026-09-06, CB-081).
+ */
+export const CONSENT_FIRST_RESEND_DELAY_HOURS = 24;
+/** Days between consent resends once one has been used: the BRD's "one per week max" (CB-009, CB-081). */
+export const CONSENT_RESEND_MIN_INTERVAL_DAYS = 7;
 /** Sender "try later" schedules the retry cascade this many minutes ahead (CB-017). */
 export const TRY_LATER_RETRY_OFFSET_MINUTES = 120;
 /** FR-CSC-06: the sender's resolution note is short free text, encrypted at rest (CB-018). */
 export const MAX_RESOLUTION_NOTE_LENGTH = 200;
 export const RESOLUTION_NOTE_TOO_LONG_MESSAGE = `Resolution note must be ${MAX_RESOLUTION_NOTE_LENGTH} characters or fewer`;
 
-export const DAY_IN_MS = 24 * 60 * 60 * 1000;
+export const HOUR_IN_MS = 60 * 60 * 1000;
+export const DAY_IN_MS = 24 * HOUR_IN_MS;
 
 export function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * DAY_IN_MS);
+}
+
+export function addHours(date: Date, hours: number): Date {
+  return new Date(date.getTime() + hours * HOUR_IN_MS);
+}
+
+/** The consent fields the resend rule reads; `consentResendCount` is how many resends already went out. */
+export interface ConsentResendState {
+  consentStatus: ConsentStatus;
+  consentRequestedAt?: Date;
+  consentResendCount?: number;
+}
+
+/**
+ * When the sender may next resend the consent invitation (CB-081): 24 hours after the first invitation, then
+ * 7 days after each resend. `null` means nothing restricts a resend: consent is no longer PENDING (there is
+ * nothing to resend), or no invitation ever left (the first send failed), so the sender may try right away.
+ * A time in the past also means "now"; callers compare against their clock.
+ */
+export function consentResendAllowedAt(state: ConsentResendState): Date | null {
+  if (state.consentStatus !== ConsentStatus.PENDING || !state.consentRequestedAt) {
+    return null;
+  }
+
+  return (state.consentResendCount ?? 0) > 0
+    ? addDays(state.consentRequestedAt, CONSENT_RESEND_MIN_INTERVAL_DAYS)
+    : addHours(state.consentRequestedAt, CONSENT_FIRST_RESEND_DELAY_HOURS);
 }
 
 /**
@@ -84,10 +118,10 @@ export class ConsentNotPendingError extends ReceiverRequestError {
   }
 }
 
-/** 429: one consent invitation per receiver per 7 days (CB-009). */
+/** 429: the resend window has not opened yet; `nextAllowedAt` says when it does (CB-009, CB-081). */
 export class ConsentResendLimitError extends ReceiverRequestError {
   constructor(readonly nextAllowedAt: Date) {
-    super('CONSENT_RESEND_LIMIT', 'A consent request was sent to this receiver in the last 7 days', 429, {
+    super('CONSENT_RESEND_LIMIT', 'A consent invitation was sent to this receiver recently', 429, {
       nextAllowedAt: nextAllowedAt.toISOString(),
     });
     this.name = 'ConsentResendLimitError';

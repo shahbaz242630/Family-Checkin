@@ -55,6 +55,7 @@ interface ReceiversPrismaClient {
       where: { id: string };
       data: Partial<{
         consentRequestedAt: Date;
+        consentResendCount: { increment: number };
         consentTranscript: string;
         consentStatus: Receiver['consentStatus'];
         consentGrantedAt: Date;
@@ -413,12 +414,15 @@ export class PrismaReceiversRepository implements ReceiversRepository {
     receiverId: string;
     consentRequestedAt: Date;
     consentTranscript: string;
+    resend?: boolean;
   }): Promise<ReceiverRecord> {
     const receiver = await this.prisma.receiver.update({
       where: { id: input.receiverId },
       data: {
         consentRequestedAt: input.consentRequestedAt,
         consentTranscript: input.consentTranscript,
+        // Counted in the database so two resends racing each other cannot both read count 0 (CB-081).
+        ...(input.resend ? { consentResendCount: { increment: 1 } } : {}),
       },
     });
 
@@ -507,6 +511,7 @@ export class PrismaReceiversRepository implements ReceiversRepository {
       personalNoteEncrypted: receiver.personalNoteEncrypted ?? undefined,
       consentStatus: receiver.consentStatus,
       consentRequestedAt: receiver.consentRequestedAt ?? undefined,
+      consentResendCount: receiver.consentResendCount,
       consentGrantedAt: receiver.consentGrantedAt ?? undefined,
       consentRevokedAt: receiver.consentRevokedAt ?? undefined,
       consentTranscript: receiver.consentTranscript ?? undefined,

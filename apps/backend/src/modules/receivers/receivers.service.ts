@@ -20,6 +20,7 @@ import {
 } from '../../shared/schedule/receiver-schedule';
 import {
   CheckInInProgressError,
+  consentResendAllowedAt,
   MAX_RESOLUTION_NOTE_LENGTH,
   OptOutCooldownError,
   ReceiverAlreadyMonitoredError,
@@ -78,6 +79,11 @@ export interface ReceiverSummary {
   scheduleTimeWindow: Prisma.InputJsonObject;
   consentStatus: ConsentStatus;
   consentGrantedAt?: string;
+  /**
+   * When the sender may next resend the consent invitation: 24 hours after the first one, 7 days after a resend
+   * (CB-081). `null` when consent is no longer PENDING or no invitation has gone out yet (resend allowed now).
+   */
+  consentResendAllowedAt: string | null;
   pausedUntil?: string;
   pausedReason?: string;
   /**
@@ -963,6 +969,7 @@ export class ReceiversService {
       scheduleTimeWindow: receiver.scheduleTimeWindow,
       consentStatus: receiver.consentStatus,
       consentGrantedAt: receiver.consentGrantedAt?.toISOString(),
+      consentResendAllowedAt: consentResendAllowedAt(receiver)?.toISOString() ?? null,
       pausedUntil: receiver.pausedUntil?.toISOString(),
       pausedReason: receiver.pausedReason,
       scheduleInvalidAt: receiver.scheduleInvalidAt?.toISOString() ?? null,

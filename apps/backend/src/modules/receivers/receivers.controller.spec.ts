@@ -74,6 +74,7 @@ class FakeReceiversService {
         scheduleFrequency: 'daily',
         scheduleTimeWindow: { start: '09:00', end: '11:00' },
         consentStatus: ConsentStatus.GRANTED,
+        consentResendAllowedAt: null,
         scheduleInvalidAt: null,
         createdAt: '2026-04-26T08:00:00.000Z',
         updatedAt: '2026-04-27T10:02:00.000Z',
@@ -97,6 +98,7 @@ class FakeReceiversService {
       scheduleFrequency: 'daily',
       scheduleTimeWindow: { start: '09:00', end: '11:00' },
       consentStatus: ConsentStatus.GRANTED,
+      consentResendAllowedAt: null,
       scheduleInvalidAt: '2026-09-06T07:10:00.000Z',
       backupContacts: [],
       escalation: {
@@ -242,13 +244,18 @@ class FakeReceiverConsentService {
   /** When set, `requestConsent` behaves like a failed provider send: the receiver comes back unmarked. */
   public consentSendFails = false;
   public nextResendError: Error | null = null;
-  public resendResult: { receiver: Record<string, unknown>; sent: boolean } | null = {
+  public resendResult: {
+    receiver: Record<string, unknown>;
+    sent: boolean;
+    consentResendAllowedAt: Date | null;
+  } | null = {
     receiver: {
       id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
       consentStatus: ConsentStatus.PENDING,
       consentRequestedAt: new Date('2026-05-01T10:00:00.000Z'),
     },
     sent: true,
+    consentResendAllowedAt: new Date('2026-05-08T10:00:00.000Z'),
   };
 
   async requestConsent(input: { receiver: Record<string, unknown> } & Record<string, unknown>) {
@@ -331,12 +338,35 @@ describe('ReceiversController', () => {
           scheduleFrequency: 'daily',
           scheduleTimeWindow: { start: '09:00', end: '11:00' },
           consentStatus: ConsentStatus.GRANTED,
+          consentResendAllowedAt: null,
           scheduleInvalidAt: null,
           createdAt: '2026-04-26T08:00:00.000Z',
           updatedAt: '2026-04-27T10:02:00.000Z',
         },
       ],
     });
+  });
+
+  it('passes consentResendAllowedAt through on the detail so the app can hold "Resend invitation" (CB-081)', async () => {
+    class PendingReceiversService extends FakeReceiversService {
+      override async getForSender(input: { userId: string; receiverId: string }) {
+        return {
+          ...(await super.getForSender(input)),
+          consentStatus: ConsentStatus.PENDING,
+          consentResendAllowedAt: '2026-09-07T10:00:00.000Z',
+        };
+      }
+    }
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      new PendingReceiversService() as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    const response = await controller.detail('Bearer access-token', '1aef91f9-64c9-4548-baa5-d70b52386efb');
+
+    expect(response.receiver.consentResendAllowedAt).toBe('2026-09-07T10:00:00.000Z');
   });
 
   it('passes scheduleInvalidAt through on the detail so the app can flag the schedule (CB-069)', async () => {
@@ -1026,12 +1056,13 @@ describe('ReceiversController resends a consent request (CB-009)', () => {
         consentStatus: ConsentStatus.PENDING,
         consentRequestStatus: 'requested',
         consentRequestedAt: '2026-05-01T10:00:00.000Z',
+        consentResendAllowedAt: '2026-05-08T10:00:00.000Z',
       },
     });
     expect(JSON.stringify(consentService.resendInput)).not.toContain('sender@example.com');
   });
 
-  it('returns 429 CONSENT_RESEND_LIMIT with the next allowed time inside the 7-day window', async () => {
+  it('returns 429 CONSENT_RESEND_LIMIT with the next allowed time while the resend window is closed', async () => {
     const consentService = new FakeReceiverConsentService();
     consentService.nextResendError = new ConsentResendLimitError(new Date('2026-05-08T10:00:00.000Z'));
 
@@ -1048,7 +1079,7 @@ describe('ReceiversController resends a consent request (CB-009)', () => {
     expect((error as HttpException).getStatus()).toBe(429);
     expect((error as HttpException).getResponse()).toEqual({
       code: 'CONSENT_RESEND_LIMIT',
-      message: 'A consent request was sent to this receiver in the last 7 days',
+      message: 'A consent invitation was sent to this receiver recently',
       nextAllowedAt: '2026-05-08T10:00:00.000Z',
     });
   });
