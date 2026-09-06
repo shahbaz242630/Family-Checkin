@@ -88,19 +88,19 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 
 ## Current state (2026-09-06)
 
-- Sprint 1 of the backlog is merged (PRs #17 to #21): CB-001 to CB-008, CB-015 and the English slice of CB-010. `master` CI is green at `2b315fb`.
-- Backend: 51 spec files, 356 tests pass; the compiled build boots; the HTTP acceptance run in fake mode passed 9 of 9 scenarios (`docs/audits/2026-09-06/sprint1-acceptance.md`).
-- Mobile: type-check and the vitest project pass. Emulator acceptance on 2026-09-06 drove every runbook scenario through the app against the sprint-1 backend: 12 of 12 pass after one backend wiring fix (CB-070, receiver removal was a 403 in the real DI graph); findings CB-071 to CB-078 opened (`docs/audits/2026-09-06/emulator-acceptance.md`).
-- Hosted Supabase database: schema applied by hand (no `_prisma_migrations`); partition RLS fix applied 2026-09-05.
+- Sprint 1 (PRs #17 to #21) and sprint 2 (PRs #25 to #31, the rest of Phase 1) are merged. Phase 1 is complete except CB-078 (needs approval to touch a protected auth file). `master` CI is green at `4a58dfc`.
+- Backend: 54 spec files, 490 tests pass (609 across all projects); the compiled build boots. Acceptance reports: `docs/audits/2026-09-06/sprint1-acceptance.md`, `emulator-acceptance.md` (sprint 1 on the device) and `sprint2-acceptance.md` (sprint 2 on the device: regression 12/12, 12 new checks, findings CB-079 to CB-082).
+- Mobile: type-check and the vitest project (14 files / 86 tests) pass. The most important open device finding is CB-080: responses occasionally reach the app with an empty body, so a verify or delete can succeed on the server while the app shows a parse error.
+- Hosted Supabase database: schema applied by hand (no `_prisma_migrations`); partition RLS fix applied 2026-09-05. The six migrations added since (202609050001, 202609060101, 0102, 0103, 0201, 0202) are NOT applied there yet; the founder will supply the rotated `DATABASE_URL` at hosting time.
 - Nothing is hosted. The scheduler workflow is disabled. No Twilio, RevenueCat, FCM or EAS credentials exist.
 - 11 Dependabot PRs are open, deferred until after emulator testing.
 
 ## Next session opener
 
 1. On `master`: `git status --short --branch`, then `npm run verify`.
-2. Sprint 2 = the rest of Phase 1: CB-009, CB-011 to CB-014, CB-016 to CB-018, the remaining CB-010 slices (per-language seed, sender display name, `checkin_retry`), CB-068, CB-069, CB-074, CB-075, plus the mobile findings from the emulator run (CB-071, CB-072, CB-073, CB-077, CB-078; Phase 3 but small and already reproduced). One worktree and one PR per wave; update the touched feature handoffs in the same PR. Next free backlog id: CB-079.
-3. Re-run `docs/EMULATOR_RUNBOOK.md` after sprint 2 (same method as the 2026-09-06 report) before starting Phase 2.
-4. Then Dependabot triage, then the one-off Prettier formatting commit and the `format:check` CI gate.
+2. Sprint 3 = Phase 2 provider readiness (CB-019 to CB-026) plus the launch-blocking hardening items CB-042 (body validation), CB-045 (cron lock), CB-047 (logging), CB-048 (health), plus CB-080 (empty response bodies on the device) and the two small sprint-2 follow-ups CB-079 and CB-081 (needs the founder's decision). Run it as 3 parallel worktree agents (not 5: the machine ran out of memory once), disjoint file ownership per agent, rebase before push, background CI watchers. Next free backlog id: CB-083.
+3. Re-run `docs/EMULATOR_RUNBOOK.md` after sprint 3 (ask the founder before starting the emulator or Docker; they render video on this machine).
+4. Then sprint 4 = Phase 3 mobile completion; then Dependabot triage (11 PRs), the one-off Prettier formatting commit and the `format:check` CI gate.
 
 ## Gotchas
 
@@ -111,7 +111,8 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 - Emulator. Host is `10.0.2.2`. Expo Go cannot receive remote push. The Pixel_7 AVD is shared with other projects and may resume showing another app. `adb shell input text` works when the right field is focused first (`uiautomator dump` for bounds); earlier "corruption" was taps landing in the wrong field.
 - Environment shadowing. Expo and dotenv never override a variable that already exists in the process environment. A Windows user-level `EXPO_PUBLIC_SUPABASE_URL` from another project silently pointed the app at the wrong Supabase project on 2026-09-06; it was deleted. Keep all `EXPO_PUBLIC_*`, `SUPABASE_*` and `DATABASE_URL` values in the per-project `.env` files only.
 - Local `apps/backend/.env` carries no `DATABASE_URL` or KMS key and a placeholder service-role key (unused, CB-025); supply the run-time values through the shell, as the runbook does. The Supabase anon keys in both env files are valid and identical.
-- Worktrees. Launch worktree agents only with the shell at the repo root (a nested worktree was created once). The local gitleaks hook is skipped inside linked worktrees.
+- Worktrees. Launch worktree agents only with the shell at the repo root (a nested worktree was created once). The local gitleaks hook is skipped inside linked worktrees. Agents stop when a background verify is running: nudge them to finish. GitHub runs no CI on a PR that conflicts with master: rebase first. Remove finished worktrees with `Remove-Item -LiteralPath "\\?\<path>" -Recurse -Force` then `git worktree prune` (each holds ~800 MB of `node_modules`). Agents sharing one scratchpad overwrite each other's files: tell them to use unique file names.
+- Metro. Start with `--clear` after pulling new code; `CI=1` mode served a stale screen module once. Two "Remove" buttons exist on the receiver detail (backup row and receiver).
 - Hooks. Pre-commit formats staged files with Prettier and scans them for secrets; pre-push runs gitleaks via Docker, lint and type-check.
 - Timestamps read through node `pg` from `timestamp(3)` columns appear shifted by the local UTC offset; the database stores UTC.
 
