@@ -17,32 +17,41 @@ class FakeAdminAuthService {
 }
 
 describe('AuthController', () => {
-  it('syncs the authenticated Supabase user into the encrypted sender profile', async () => {
+  it('syncs the authenticated Supabase user into the encrypted sender profile through the one upserting path (CB-024)', async () => {
+    const tokens: string[] = [];
     const supabaseAuth = {
-      verifyAccessToken: async () => ({
-        authProviderId: 'supabase-user-123',
-        email: 'sender@example.com',
-        phone: '+971501234567',
-        country: 'AE',
-        preferredLanguage: 'en',
-        timezone: 'Asia/Dubai',
-      }),
+      verifyAccessToken: async (token: string) => {
+        tokens.push(token);
+        return {
+          authProviderId: 'supabase-user-123',
+          email: 'sender@example.com',
+          phone: '+971501234567',
+          displayName: 'Sam Malik',
+          country: 'AE',
+          preferredLanguage: 'en',
+          timezone: 'Asia/Dubai',
+        };
+      },
     } satisfies Pick<SupabaseAuthService, 'verifyAccessToken'>;
+    const synced: unknown[] = [];
     const users = {
-      upsertFromSupabaseIdentity: async (input) => ({
-        id: 'sender-id',
-        authProviderId: input.authProviderId,
-        emailEncrypted: 'encrypted-email',
-        emailHash: 'email-hash',
-        phoneEncrypted: 'encrypted-phone',
-        phoneHash: 'phone-hash',
-        country: input.country,
-        preferredLanguage: input.preferredLanguage,
-        timezone: input.timezone,
-      }),
-    } satisfies Pick<UsersService, 'upsertFromSupabaseIdentity'>;
+      syncProfileFromSupabaseIdentity: async (input) => {
+        synced.push(input);
+        return {
+          id: 'sender-id',
+          authProviderId: input.authProviderId,
+          emailEncrypted: 'encrypted-email',
+          emailHash: 'email-hash',
+          phoneEncrypted: 'encrypted-phone',
+          phoneHash: 'phone-hash',
+          country: input.country,
+          preferredLanguage: input.preferredLanguage,
+          timezone: input.timezone,
+        };
+      },
+    } satisfies Pick<UsersService, 'syncProfileFromSupabaseIdentity'>;
     const controller = new AuthController(
-      supabaseAuth as unknown as SupabaseAuthService,
+      supabaseAuth,
       users as UsersService,
       new FakeAdminAuthService() as unknown as AdminAuthService,
     );
@@ -55,6 +64,10 @@ describe('AuthController', () => {
         timezone: 'Asia/Dubai',
       },
     });
+    expect(tokens).toEqual(['access-token']);
+    expect(synced).toEqual([
+      expect.objectContaining({ authProviderId: 'supabase-user-123', displayName: 'Sam Malik' }),
+    ]);
   });
 
   it('requires a bearer token', async () => {

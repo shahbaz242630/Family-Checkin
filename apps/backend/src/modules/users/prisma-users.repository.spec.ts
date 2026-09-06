@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { PrismaService } from '../../shared/prisma/prisma.service';
 import { PrismaUsersRepository } from './prisma-users.repository';
+import { SenderUniqueConflictError } from './users.repository';
 
 const storedUser = {
   id: '17b5a1ef-6ab4-47c7-8ed7-8f061eb54827',
@@ -30,7 +31,54 @@ function repositoryWith(user: Record<string, ReturnType<typeof vi.fn>>): PrismaU
   return new PrismaUsersRepository({ user } as unknown as PrismaService);
 }
 
+function uniqueViolation(): Error {
+  return Object.assign(new Error('Unique constraint failed on the fields: (`phoneHash`)'), {
+    code: 'P2002',
+    clientVersion: 'test',
+  });
+}
+
 describe('PrismaUsersRepository', () => {
+  describe('read path for authenticated routes (CB-024)', () => {
+    it('finds a sender by authProviderId with a single read and no write', async () => {
+      const findUnique = vi.fn().mockResolvedValueOnce(storedUser).mockResolvedValueOnce(null);
+      const create = vi.fn();
+      const upsert = vi.fn();
+      const repository = repositoryWith({ findUnique, create, upsert });
+
+      await expect(repository.findSenderByAuthProviderId('supabase-user-123')).resolves.toMatchObject({
+        id: storedUser.id,
+        authProviderId: 'supabase-user-123',
+        preferredLanguage: 'en',
+      });
+      await expect(repository.findSenderByAuthProviderId('supabase-user-unknown')).resolves.toBeNull();
+
+      expect(findUnique).toHaveBeenCalledWith({ where: { authProviderId: 'supabase-user-123' } });
+      expect(create).not.toHaveBeenCalled();
+      expect(upsert).not.toHaveBeenCalled();
+    });
+
+    it('inserts a never-synced sender with the display name column explicit', async () => {
+      const create = vi.fn().mockResolvedValue({ ...storedUser, displayNameEncrypted: 'enc-name' });
+
+      const sender = await repositoryWith({ create }).createSender({ ...identity, displayNameEncrypted: 'enc-name' });
+
+      expect(sender.displayNameEncrypted).toBe('enc-name');
+      expect(create).toHaveBeenCalledWith({ data: { ...identity, displayNameEncrypted: 'enc-name' } });
+    });
+
+    it('reports a unique-index rejection of the insert as SenderUniqueConflictError and rethrows anything else', async () => {
+      const create = vi
+        .fn()
+        .mockRejectedValueOnce(uniqueViolation())
+        .mockRejectedValueOnce(new Error('connection reset'));
+      const repository = repositoryWith({ create });
+
+      await expect(repository.createSender(identity)).rejects.toBeInstanceOf(SenderUniqueConflictError);
+      await expect(repository.createSender(identity)).rejects.toThrow('connection reset');
+    });
+  });
+
   it('returns the sender exactly as stored once the language column is varchar (CB-075)', async () => {
     const upsert = vi.fn().mockResolvedValue(storedUser);
 
@@ -59,6 +107,14 @@ describe('PrismaUsersRepository', () => {
 
     await expect(repositoryWith({ upsert }).upsertSenderByAuthProviderId(identity)).rejects.toThrow(
       'Sender record is missing auth provider id',
+    );
+  });
+
+  it('reports a unique-index rejection of the upsert as SenderUniqueConflictError', async () => {
+    const upsert = vi.fn().mockRejectedValue(uniqueViolation());
+
+    await expect(repositoryWith({ upsert }).upsertSenderByAuthProviderId(identity)).rejects.toBeInstanceOf(
+      SenderUniqueConflictError,
     );
   });
 

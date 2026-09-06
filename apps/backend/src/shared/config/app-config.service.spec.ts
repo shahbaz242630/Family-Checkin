@@ -145,4 +145,12 @@ describe('AppConfigService', () => {
 
     expect(config.corsAllowedOrigins).toEqual([]);
   });
+
+  it('exposes SUPABASE_JWT_SECRET only when set and non-blank (CB-024)', () => {
+    expect(new AppConfigService(validEnv()).supabaseJwtSecret).toBeUndefined();
+    expect(new AppConfigService(validEnv({ SUPABASE_JWT_SECRET: 'legacy-jwt-secret' })).supabaseJwtSecret).toBe(
+      'legacy-jwt-secret',
+    );
+    expect(() => new AppConfigService(validEnv({ SUPABASE_JWT_SECRET: '' }))).toThrow('Invalid backend environment');
+  });
 });
