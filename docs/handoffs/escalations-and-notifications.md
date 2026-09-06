@@ -64,6 +64,7 @@ Audit actions this feature writes: `escalation.backup_contact_alerted`, `escalat
 - CB-038 — the bundled siren is a 0.35 s, 8 kHz blip; needs a real ≤ 30 s, 44.1 kHz siren at the same filename.
 - CB-058 — no 5-minute sender-acknowledgement timeout that auto-alerts backups.
 - CB-068 — `sender_push.*` and `sender_voice_fallback.sent` audit rows omit the `deepLink`, so the deep-link clause is proven only by unit specs (acceptance defect D2).
+- CB-074 — a sender-requested backup alert with zero backup contacts gives the app no feedback and still fires the sender siren (`reason: sender_requested`); emulator acceptance 2026-09-06 D4.
 
 ## History
 

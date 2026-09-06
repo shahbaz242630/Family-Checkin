@@ -9,6 +9,9 @@ Nothing here needs Twilio, WhatsApp, or RevenueCat credentials. Real Supabase au
 - Docker Desktop running, Node 22, Android emulator installed (AVD created in Android Studio).
 - `npm ci` done at the repo root, `npm run prisma:generate` done (needs any `DATABASE_URL`).
 - Local env files exist and are gitignored: `apps/backend/.env`, `apps/mobile/.env`. Never commit them.
+- No `EXPO_PUBLIC_*`, `SUPABASE_*` or `DATABASE_URL` variables at the Windows user or machine level. Expo and dotenv never override an existing variable, so a leftover from another project silently wins over the `.env` files (this pointed the app at the Sandoq Kin project on 2026-09-06). Check with PowerShell: `[Environment]::GetEnvironmentVariables('User').Keys | Where-Object { $_ -match 'EXPO|SUPABASE|DATABASE' }`.
+- The Pixel_7 AVD is shared with other projects and may resume showing another app; press Home before `npm run android`.
+- A Supabase account to sign in with: the founder's test account (credentials given in chat, never written into the repo). Creating a fresh account is impractical: Supabase rejects test-domain addresses and email confirmation is on.
 
 ## 2. Throwaway database
 
@@ -23,7 +26,7 @@ Reset between runs with `docker rm -f nearby-dev-pg` and repeat.
 
 ## 3. Backend in fake-provider mode
 
-Set these in `apps/backend/.env` for the session (keep the real `SUPABASE_URL` and `SUPABASE_ANON_KEY`; the service-role key is required by the schema but unused):
+Set these for the session. Prefer the shell environment over editing `apps/backend/.env` (dotenv does not override shell values, and the file currently carries no `DATABASE_URL` or KMS key); keep the real `SUPABASE_URL` and `SUPABASE_ANON_KEY` from the file. The service-role key is required by the schema but unused, so a placeholder is fine:
 
 ```
 DATABASE_URL=postgresql://ci:ci@localhost:56432/ci
@@ -59,7 +62,7 @@ Start the emulator from Android Studio (or `emulator -avd <name>`), then:
 npm.cmd --prefix apps/mobile run android
 ```
 
-Metro logs go to the terminal; the handoff's older runs used `expo-android*.log` files at the repo root (gitignored).
+Metro logs go to the terminal; the handoff's older runs used `expo-android*.log` files at the repo root (gitignored). For an unattended run, `CI=1 npx expo start --android --port 8081` avoids the interactive prompts (reloads are then manual: force-stop Expo Go and reopen `exp://<host>:8081`). To drive the UI from a script, `adb shell uiautomator dump` gives every element's text and bounds; see `docs/audits/2026-09-06/emulator-acceptance.md` for the method that worked.
 
 ## 5. Driving the flows
 
@@ -95,5 +98,7 @@ Scenario list (each maps to a sprint-1 item; expected outcome in brackets):
 Known-open mobile items to NOT chase (backlog Phase 3): social login (CB-028), push registration and tap handling (CB-030/031), dashboard error state (CB-032), placeholder settings screens (CB-034), siren asset (CB-038).
 
 ## 6. Recording results
+
+Last run: `docs/audits/2026-09-06/emulator-acceptance.md` (12/12 scenarios, one backend defect fixed as CB-070, findings CB-071 to CB-078).
 
 Write `docs/audits/<date>/emulator-acceptance.md` with pass/fail per scenario and the backend log lines that prove each outcome; open backlog items for anything that fails, with the next free `CB-` id.

@@ -1,6 +1,6 @@
 # Admin operations and abuse review — feature handoff
 
-Status: Built · Last verified: routes 2026-09-06 (specs) · review-safe unpausing 2026-09-06 (acceptance run, via service) · mobile admin screens 2026-05-18 (emulator: Admin Operations and Abuse Reports loaded for the super-admin account)
+Status: Built · Last verified: 2026-09-06 (emulator acceptance: Abuse Reports "Mark safe" unpaused a reported receiver end to end; Admin Operations summary and check-in detail loaded; `docs/audits/2026-09-06/emulator-acceptance.md`)
 BRD: FR-ADM-01, FR-ADM-02 (admin surface), FR-SAF-05 (abuse review) · Open backlog: CB-039, CB-062
 
 ## What it does
@@ -60,6 +60,7 @@ Provisioning an admin: there is no invite endpoint, seed or script. Insert a row
 ## Known gaps
 
 - CB-039 — the drawer lists `Admin Operations` and `Abuse Reports` for every signed-in user; a non-admin reaches the screen and gets the access-denied state instead of never seeing the entry. Fix is to gate `MENU_ITEMS` on a cached `getAdminMe` result.
+- CB-077 — a check-in SKIPPED because the receiver opted out is counted under "No backup available" in the status counts.
 - CB-062 — no health metrics beyond check-in counts (receivers, channel error rates, abuse, billing), no reviewer note, no report-content view, and no pause-account / contact-sender abuse actions.
 - Founder decision 4 (`docs/COMPLETION_BACKLOG.md`) is open: keep the admin screens inside the sender app or build a separate Next.js panel. It shapes both CB-039 and CB-062.
 - No admin provisioning, invite or deactivation endpoint; `admin_users` rows are inserted and edited by hand.

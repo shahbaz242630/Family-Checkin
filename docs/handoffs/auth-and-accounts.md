@@ -71,6 +71,7 @@ Further invariants the code now relies on:
 - Supabase client options stay `flowType: 'pkce'`, `persistSession: true`, `autoRefreshToken: true`, `detectSessionInUrl: false`.
 - The app never reads Supabase tables directly; all product data goes through the backend REST client in `backendApi.ts`, which attaches `Authorization: Bearer ${session.access_token}`.
 - Step-up tokens are hashed at rest, single-use, action-bound and 10-minute TTL; `exportAccount`/`deleteAccount` consume the token before touching data.
+- `AccountModule` must keep exporting `StepUpService` and `ReceiversModule` must keep importing `AccountModule`: the receiver-remove step-up consumes its token through `ReceiversController`'s `@Optional()` dependency, and when it was unresolvable every removal was a 403 while the unit spec stayed green (CB-070). `app.module.spec.ts` asserts the injection.
 - `AdminAuthService` never auto-creates admin rows from sender auth and never selects admin email, encrypted email or email hash.
 - Sender email and phone are encrypted (AES-256-GCM) with a separate deterministic hash for lookup; no raw PII goes into audit metadata.
 - `Credentials.xlsx` in the repo root must not be read unless the user explicitly asks for it.
@@ -90,4 +91,5 @@ Further invariants the code now relies on:
 ## History
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` — Protected Auth Boundary (lines 44–83), Backend Foundation (lines 184–700, auth/users services and the 2026-04-27 `@Inject` DI fix), §10 Android auth/session persistence fix (lines 1468–1497), §23 admin auth foundation (lines 1917–1963), §29d account data privacy and step-up (lines 2364–2383), §29f stale-surface cleanup (lines 2439–2476), §34 Android Studio / Expo Go QA (lines 3440–3472).
-- PRs: none of the sprint-1 PRs recorded in the archive (#17–#20) touch this feature; the auth and account work predates them.
+- PRs: none of the sprint-1 PRs recorded in the archive (#17–#20) touch this feature; the auth and account work predates them. #24 (CB-070: `StepUpService` exported to `ReceiversModule`; emulator acceptance report).
+- Emulator acceptance 2026-09-06 (`docs/audits/2026-09-06/emulator-acceptance.md`): login, export with OTP and remove-receiver with OTP verified on the device; profile screen gaps (CB-033) confirmed.

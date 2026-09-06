@@ -77,6 +77,7 @@ This feature owns scripts, not HTTP routes. All run from `apps/backend` and read
 - CB-054 — audit `ipAddress` comes from a spoofable `x-forwarded-for`; admin reads, step-up and export are not audited.
 - CB-056 — nothing schedules partition maintenance: months past the pre-created 24 fall into `_default` and the helper then fails; `archive_operational_logs_before` is never called.
 - CB-059 — no retention job: no soft-delete window, no hard-delete purge, no 6-year audit archive.
+- CB-075 — `char(5)` language columns leak trailing spaces into API responses (`"en   "`); shares its root cause with CB-020.
 
 ## History
 

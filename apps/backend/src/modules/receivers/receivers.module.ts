@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AccountModule } from '../account/account.module';
 import { AuditModule } from '../audit/audit.module';
 import { AuthModule } from '../auth/auth.module';
 import { BackupContactsModule } from '../backup-contacts/backup-contacts.module';
@@ -27,6 +28,8 @@ import { ReceiversService } from './receivers.service';
     EscalationsModule,
     BackupContactsModule,
     BillingModule,
+    // Provides StepUpService for the remove-receiver step-up (REMOVE_RECEIVER token consumption).
+    AccountModule,
   ],
   // The fake reply route lives in ReceiverRepliesModule so it can be left out entirely in configured mode.
   controllers: [ReceiversController],
