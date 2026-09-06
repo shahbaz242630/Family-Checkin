@@ -9,7 +9,7 @@ BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open
 - A phone that replied `STOP` cannot be added again by anyone until its 7-day cooldown lapses (409 `OPT_OUT_COOLDOWN`), and a phone another sender already monitors cannot be added a second time (409 `RECEIVER_ALREADY_MONITORED`; co-monitoring is a later BRD phase).
 - The sender can resend the consent request to a `PENDING` receiver once 24 hours have passed since the first invitation, then once every 7 days; the first invitation never counts toward the weekly cap (founder decision 2026-09-06, CB-081). Outside the window the API answers 429 `CONSENT_RESEND_LIMIT` with `nextAllowedAt`, and every summary and detail carries `consentResendAllowedAt` so the app can hold the button.
 - The receiver replies `YES` to grant consent or `NO` to decline. No check-in is ever sent before `GRANTED`. A `YES` inside the STOP cooldown is ignored and audited.
-- `STOP` revokes consent, writes a 7-day opt-out cooldown row, cancels any attempt still queued for today and sends the receiver one `receiver_checkins_ended` confirmation on the channel the STOP arrived on.
+- `STOP` revokes consent, writes a 7-day opt-out cooldown row, cancels any attempt still queued for today and sends the receiver one `receiver_checkins_ended` confirmation on the channel the STOP arrived on, naming the sender (`UsersService.senderDisplayNameFor`) or using the neutral wording in the receiver's own language (CB-079).
 - Consent answers, STOP and a backup contact's DONE each send the sender a quiet push (default sound, no siren channel) deep-linking to the receiver.
 - `REPORT` files an abuse report and pauses the receiver until an admin reviews it; the open check-in and its pending attempts are cancelled.
 - The sender can pause (optionally until a date), resume, edit and remove a receiver. Remove is a soft delete behind an SMS step-up code; pause and remove send the receiver a best-effort lifecycle message.
@@ -41,7 +41,7 @@ All `/receivers` routes require a Supabase bearer token (`Authorization: Bearer 
 - `DELETE /receivers/:receiverId` — sender **and** header `x-nearby-step-up-token`, consumed for `SensitiveAction.REMOVE_RECEIVER`; a missing header or an unavailable `StepUpService` is a 403. Soft-deletes (`deletedAt`).
 - `PATCH /receivers/:receiverId/check-ins/:checkInId/{resolve,alert-backup,try-later}` — sender actions on the latest check-in; the cascade semantics belong to the check-in scheduler handoff. `resolve` accepts `{ note? }` (≤200 characters, else 400; blank means none), encrypted into `check_ins.resolutionNote`, audited only as `resolutionTextPresent`. `alert-backup` and `try-later` answer `409 { code: "CHECK_IN_IN_PROGRESS" }` while the latest check-in is `PENDING` or `SENT` (a second cascade would double-message the receiver); `try-later` schedules the retry `now + 120 min` (`TRY_LATER_RETRY_OFFSET_MINUTES`) and passes `retryOf` to `createPending`. `resolve` and `try-later` answer `{ receiver }`; `alert-backup` answers `{ receiver, backupAlert: { outcome, alerted, failed } }` with `outcome` one of `alerted`, `no_backup_contacts`, `all_failed` — the result `EscalationsService.escalateSenderRequestedBackup` returns, so the app can say what happened (CB-074).
 - `POST /receiver-replies/fake` — **not** Supabase: `Authorization: Bearer <operations cron secret>`, and the controller is only registered when the channel provider mode is `fake` (404 otherwise). Body `{ fromPhone, channel, body, providerMessageId? }`.
-- Real inbound replies arrive on `POST /provider-webhooks/{sms,whatsapp,twilio/messaging,twilio/voice}` (signature-checked; owned by the provider-webhooks feature) and call the same `ReceiverReplyService.handleInboundReply`.
+- Real inbound replies arrive on `POST /provider-webhooks/twilio/{messaging,voice}` (signature-checked; owned by the provider-webhooks feature, which maps voice digits `1`/`2`/`9` to `YES`/`HELP`/`STOP` before calling in) and call the same `ReceiverReplyService.handleInboundReply`.
 
 ### Reply keywords
 
@@ -107,11 +107,10 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 - CB-069 — the audit-once stamp and the app's "Schedule needs attention" state are done; the sender quiet push for an invalid schedule (via CB-012) is still pending.
 - The wave-B mobile changes (resend, resolution note, backup-alert outcome, typed error copy, schedule chip) have not been driven through the emulator yet; they are on the post-sprint-2 runbook pass.
 - `REPORT` is applied to the resolved row only; with several rows sharing a phone, the other rows are not paused for review.
-- The STOP confirmation reuses `receiver_checkins_ended` ("has ended your Nearby check-ins"); a dedicated opt-out template is a CB-010 copy slice.
+- The STOP confirmation reuses `receiver_checkins_ended` ("has ended your Nearby check-ins"); a dedicated opt-out template is a CB-010 copy slice. The neutral sender phrases it falls back to are machine translations (`docs/handoffs/message-copy-review.md`).
 
 ## Known gaps (added after the sprint-2 acceptance run)
 
-- CB-079 — the STOP confirmation still uses the neutral English fallback inside non-English copy and never names the sender.
 - CB-080 — code done (#34): server keep-alive/no-store/no ETag and a client that explains a cut-off body and retries GETs once; the device re-check (ten consecutive detail loads, two remove flows) is pending on the next emulator pass. See `docs/audits/2026-09-06/sprint2-acceptance.md` F2.
 
 ## History
