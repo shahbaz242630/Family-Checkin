@@ -166,6 +166,7 @@ model Receiver {
   scheduleFrequency     String
   scheduleTimeWindow    Json
   scheduleCustomCron    String?
+  scheduleInvalidAt     DateTime?
   personalNoteEncrypted String?
   consentStatus         ConsentStatus    @default(PENDING)
   consentRequestedAt    DateTime?
@@ -268,6 +269,8 @@ model CheckIn {
   id                 String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   receiverId         String        @db.Uuid
   scheduledAt        DateTime
+  scheduledLocalDate DateTime      @db.Date
+  retryOf            String?       @db.Uuid
   status             CheckInStatus @default(PENDING)
   channelUsed        Channel?
   sentAt             DateTime?

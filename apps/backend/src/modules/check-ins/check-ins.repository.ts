@@ -19,6 +19,11 @@ export interface CheckInReceiverCandidate {
   consentStatus: ConsentStatus;
   pausedUntil?: Date;
   deletedAt?: Date;
+  /**
+   * The receiver's local schedule day (`YYYY-MM-DD`) the pending check-in belongs to, evaluated in the receiver's
+   * own timezone by the repository. Stored on the check-in as the daily dedupe key with `id` (CB-013).
+   */
+  scheduledLocalDate: string;
 }
 
 export interface ScheduleInvalidReceiver {
@@ -34,12 +39,25 @@ export interface ReceiversDueForCheckIn {
    * audits each one so a bad row is visible instead of silently stalling every receiver (CB-004).
    */
   skipped: ScheduleInvalidReceiver[];
+  /**
+   * Receivers stamped `scheduleInvalidAt` on an earlier tick whose schedule evaluates again (the sender fixed the
+   * timezone or window). The service clears the stamp so a later bad value is audited afresh (CB-069). Optional
+   * only so in-memory doubles in other modules keep compiling; `PrismaCheckInsRepository` always sets it.
+   */
+  recovered?: string[];
 }
 
 export interface CheckInRecord {
   id: string;
   receiverId: string;
   scheduledAt: Date;
+  /**
+   * `YYYY-MM-DD` in the receiver's timezone. The column is NOT NULL; the field is optional only so in-memory
+   * test doubles in other modules need not know about it.
+   */
+  scheduledLocalDate?: string;
+  /** The check-in this row retries (sender try-later); retry rows are outside the daily dedupe (CB-013). */
+  retryOf?: string;
   status: CheckInStatus;
   channelUsed?: Channel;
   sentAt?: Date;
@@ -82,6 +100,31 @@ export interface CheckInAttemptWithCheckInRecord extends CheckInAttemptRecord {
 export interface CreatePendingCheckInInput {
   receiverId: string;
   scheduledAt: Date;
+  /**
+   * The receiver's local schedule day (`YYYY-MM-DD`; `localDateInTimeZone(scheduledAt, receiver.timezone)` or the
+   * candidate's `scheduledLocalDate`). Defaults to the UTC calendar day of `scheduledAt` when omitted.
+   */
+  scheduledLocalDate?: string;
+  /**
+   * Set on a sender try-later row: the id of the check-in being retried. A row with `retryOf` never takes part in
+   * the once-per-local-day dedupe and is exempt from its unique index (CB-013).
+   */
+  retryOf?: string;
+}
+
+/**
+ * Thrown by `createPending` when the receiver already has a non-retry check-in for that local day: the partial
+ * unique index on `(receiverId, scheduledLocalDate)` rejected the insert, which means an overlapping tick (or a
+ * caller that forgot `retryOf`) got there first. The service counts it as skipped and moves on (CB-013).
+ */
+export class CheckInAlreadyScheduledError extends Error {
+  constructor(
+    public readonly receiverId: string,
+    public readonly scheduledLocalDate: string,
+  ) {
+    super(`Receiver ${receiverId} already has a check-in for ${scheduledLocalDate}`);
+    this.name = 'CheckInAlreadyScheduledError';
+  }
 }
 
 export interface CreateCheckInAttemptInput {
@@ -181,6 +224,15 @@ export const OPEN_CHECK_IN_STATUSES: readonly CheckInStatus[] = [CheckInStatus.P
  */
 export interface CheckInsRepository {
   findReceiversDueForCheckIn(now: Date): Promise<ReceiversDueForCheckIn>;
+  /**
+   * Stamps `Receiver.scheduleInvalidAt` when it is still null; `true` only when this call set it, so the caller
+   * audits a bad schedule once per version instead of once per tick (CB-069). Optional, like `recovered`, only for
+   * doubles in other modules: a repository without it is audited on every tick, the pre-CB-069 behaviour.
+   */
+  markScheduleInvalid?(input: { receiverId: string; seenAt: Date }): Promise<boolean>;
+  /** Clears `Receiver.scheduleInvalidAt` for the given receivers; returns how many were still stamped. */
+  clearScheduleInvalid?(input: { receiverIds: string[] }): Promise<number>;
+  /** Throws `CheckInAlreadyScheduledError` when a non-retry check-in for that receiver and local day exists. */
   createPending(input: CreatePendingCheckInInput): Promise<CheckInRecord>;
   createAttempts(input: CreateCheckInAttemptInput[]): Promise<CheckInAttemptRecord[]>;
   /** PENDING or SENT -> SENT. */

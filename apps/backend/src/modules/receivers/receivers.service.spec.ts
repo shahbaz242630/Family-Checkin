@@ -1670,10 +1670,16 @@ describe('ReceiversService refuses to invite a phone that opted out or is monito
 
 describe('ReceiversService sender check-in actions respect the running cascade (CB-017)', () => {
   class InMemoryCheckInsRepository {
-    public pending: Array<{ receiverId: string; scheduledAt: Date; retryOf?: string }> = [];
+    public pending: Array<{ receiverId: string; scheduledAt: Date; retryOf?: string; scheduledLocalDate?: string }> =
+      [];
     public attempts: Array<{ checkInId: string; attemptNumber: number; channel: Channel; scheduledAt: Date }> = [];
 
-    async createPending(input: { receiverId: string; scheduledAt: Date; retryOf?: string }) {
+    async createPending(input: {
+      receiverId: string;
+      scheduledAt: Date;
+      retryOf?: string;
+      scheduledLocalDate?: string;
+    }) {
       this.pending.push(input);
       return {
         id: 'retry-check-in-1',
@@ -1729,11 +1735,14 @@ describe('ReceiversService sender check-in actions respect the running cascade (
     });
 
     expect(receiver?.latestCheckIn?.id).toBe('check-in-1');
+    // The retry row is exempt from the once-per-local-day dedupe through `retryOf` and records the receiver's own
+    // day (12:00Z is 16:00 in Asia/Dubai), not the UTC default (CB-013).
     expect(checkIns.pending).toEqual([
       {
         receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
         scheduledAt: new Date('2026-04-30T12:00:00.000Z'),
         retryOf: 'check-in-1',
+        scheduledLocalDate: '2026-04-30',
       },
     ]);
     expect(checkIns.attempts[0]).toMatchObject({

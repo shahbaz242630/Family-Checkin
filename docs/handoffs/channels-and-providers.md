@@ -1,7 +1,7 @@
 # Channels and providers — feature handoff
 
 Status: Built · Last verified: 2026-09-06 (acceptance run; eight-language seed on a throwaway Postgres)
-BRD: FR-CHN-01, FR-CHN-02, FR-CHN-03, FR-CHN-03a, FR-CHN-03b, FR-CHN-03c-1, FR-LNG-02, BRD-6.6, BRD-6.11, BRD-7 · Open backlog: CB-010 (sender display name, `checkin_retry` caller), CB-016, CB-019, CB-020, CB-021, CB-022, CB-046, CB-047
+BRD: FR-CHN-01, FR-CHN-02, FR-CHN-03, FR-CHN-03a, FR-CHN-03b, FR-CHN-03c-1, FR-LNG-02, BRD-6.6, BRD-6.11, BRD-7 · Open backlog: CB-010 (sender display name), CB-016, CB-019, CB-020, CB-021, CB-022, CB-046, CB-047
 Per area: fake-mode send, English catalog rendering, fake-route gating, signed voice-status webhook — 2026-09-06 (acceptance run); Twilio request shapes, WhatsApp Content SIDs, TwiML Gather, `channel_templates` override, seeded eight-language rows — 2026-09-06 (specs). No live Twilio or Meta credentials exist; nothing has been sent to a real phone. Non-English copy is machine-translated and unreviewed (`docs/handoffs/message-copy-review.md`).
 
 ## What it does
@@ -52,7 +52,7 @@ Message template keys and the variables each requires (`{{var}}` required, `{{#v
 | --------------------------------------- | ------------------------------------ | -------------------- | -------------------------------- |
 | `consent_request`                       | `receiverName`, `senderDisplayName`  | `personalNote`       | `receiver-consent.service.ts`    |
 | `checkin_daily`                         | `receiverName`, `senderDisplayName`  | `personalNote`       | `check-ins.service.ts`           |
-| `checkin_retry`                         | `receiverName`, `senderDisplayName`  | `personalNote`       | no caller yet (CB-010 remainder) |
+| `checkin_retry`                         | `receiverName`, `senderDisplayName`  | `personalNote`       | `check-ins.service.ts` (attempt 2+) |
 | `receiver_checkins_paused`              | `receiverName`, `senderDisplayName`  | —                    | `receivers.service.ts`           |
 | `receiver_checkins_ended`               | `receiverName`, `senderDisplayName`  | —                    | `receivers.service.ts`           |
 | `account_step_up_otp`                   | `code`, `validityMinutes`            | —                    | `account/step-up.service.ts`     |
@@ -91,7 +91,7 @@ Languages: `channel_templates` holds every key above for `en`, `ar`, `es`, `hi`,
 
 ## Known gaps
 
-- CB-010 — a real sender display name (receivers still read "your family member") and `checkin_retry` on later attempts are outstanding; the eight-language seed landed but is unreviewed by native speakers.
+- CB-010 — a real sender display name (receivers still read "your family member") is outstanding; `checkin_retry` on attempt 2+ landed in #28; the eight-language seed landed but is unreviewed by native speakers.
 - CB-016 — no `StatusCallback` on SMS/WhatsApp and no `/twilio/messaging/status` route, so an undelivered message looks "sent" for the rest of the cascade window; the `provider_webhook_events` dedupe index is non-unique.
 - CB-019 — Twilio error `code`/`message` are discarded by `twilio-http-client.ts`; dead `SMS_PROVIDER_*` config and the internal `/provider-webhooks/sms` route should go; the inbound URL is undocumented.
 - CB-020 — the 8 templates × languages are unapproved by Meta; `TWILIO_WHATSAPP_CONTENT_SIDS` is parsed lazily instead of at boot; `docs/providers/whatsapp.md` does not exist. The `char(5)` padding that broke the `templateKey:language` lookup is gone (CB-075).

@@ -1,12 +1,20 @@
 import { Channel, CheckInAttemptStatus, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
+import { CheckInAlreadyScheduledError } from './check-ins.repository';
 import { PrismaCheckInsRepository } from './prisma-check-ins.repository';
+
+function receiverMock() {
+  return {
+    findMany: vi.fn(),
+    updateMany: vi.fn(),
+  };
+}
 
 function checkInMock() {
   return {
     create: vi.fn(),
     findFirst: vi.fn(),
-    findMany: vi.fn(),
+    findMany: vi.fn().mockResolvedValue([]),
     updateMany: vi.fn(),
   };
 }
@@ -36,6 +44,7 @@ function receiverRow(overrides: Record<string, unknown> = {}) {
     consentStatus: ConsentStatus.GRANTED,
     pausedUntil: null,
     deletedAt: null,
+    scheduleInvalidAt: null,
     ...overrides,
   };
 }
@@ -45,6 +54,8 @@ function checkInRow(overrides: Record<string, unknown> = {}) {
     id: 'check-in-1',
     receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
     scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+    scheduledLocalDate: new Date('2026-04-27T00:00:00.000Z'),
+    retryOf: null,
     status: CheckInStatus.SENT,
     channelUsed: Channel.WHATSAPP,
     sentAt: new Date('2026-04-27T05:30:00.000Z'),
@@ -79,35 +90,53 @@ function attemptRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** The Los Angeles receiver from CB-013: a 16:00-18:00 local window is 23:00-01:00Z in summer. */
+function losAngelesEvening(overrides: Record<string, unknown> = {}) {
+  return receiverRow({
+    id: 'receiver-la',
+    timezone: 'America/Los_Angeles',
+    scheduleTimeWindow: { start: '16:00', end: '18:00' },
+    ...overrides,
+  });
+}
+
+function localDay(date: string): Date {
+  return new Date(`${date}T00:00:00.000Z`);
+}
+
+function uniqueViolation(): Error {
+  return Object.assign(new Error('Unique constraint failed on the fields: (`receiverId`,`scheduledLocalDate`)'), {
+    code: 'P2002',
+    clientVersion: 'test',
+  });
+}
+
 describe('PrismaCheckInsRepository', () => {
   it('returns granted, unpaused receivers whose schedule is due in their local timezone', async () => {
-    const findMany = vi.fn().mockResolvedValue([receiverRow()]);
+    const receiver = receiverMock();
+    receiver.findMany.mockResolvedValue([receiverRow()]);
+    const checkIn = checkInMock();
     const repository = new PrismaCheckInsRepository({
-      receiver: {
-        findMany,
-      },
-      checkIn: checkInMock(),
+      receiver,
+      checkIn,
       checkInAttempt: checkInAttemptMock(),
     });
 
     const due = await repository.findReceiversDueForCheckIn(new Date('2026-04-27T05:30:00.000Z'));
 
-    expect(findMany).toHaveBeenCalledWith({
+    expect(receiver.findMany).toHaveBeenCalledWith({
       where: {
         consentStatus: ConsentStatus.GRANTED,
         deletedAt: null,
         OR: [{ pausedUntil: null }, { pausedUntil: { lte: new Date('2026-04-27T05:30:00.000Z') } }],
         scheduleFrequency: { in: ['daily'] },
-        NOT: {
-          checkIns: {
-            some: {
-              scheduledAt: {
-                gte: new Date('2026-04-27T00:00:00.000Z'),
-                lt: new Date('2026-04-28T00:00:00.000Z'),
-              },
-            },
-          },
-        },
+      },
+    });
+    // The dedupe looks for a non-retry check-in on the receiver's own calendar day, not the UTC day (CB-013).
+    expect(checkIn.findMany).toHaveBeenCalledWith({
+      where: {
+        retryOf: null,
+        OR: [{ receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb', scheduledLocalDate: localDay('2026-04-27') }],
       },
     });
     expect(due).toEqual({
@@ -127,26 +156,37 @@ describe('PrismaCheckInsRepository', () => {
           consentStatus: ConsentStatus.GRANTED,
           pausedUntil: undefined,
           deletedAt: undefined,
+          scheduledLocalDate: '2026-04-27',
         },
       ],
       skipped: [],
+      recovered: [],
     });
   });
 
+  it('does not look up check-ins when no receiver is inside its window', async () => {
+    const receiver = receiverMock();
+    receiver.findMany.mockResolvedValue([receiverRow({ scheduleTimeWindow: { start: '18:00', end: '20:00' } })]);
+    const checkIn = checkInMock();
+    const repository = new PrismaCheckInsRepository({ receiver, checkIn, checkInAttempt: checkInAttemptMock() });
+
+    const due = await repository.findReceiversDueForCheckIn(new Date('2026-04-27T05:30:00.000Z'));
+
+    expect(due).toEqual({ candidates: [], skipped: [], recovered: [] });
+    expect(checkIn.findMany).not.toHaveBeenCalled();
+  });
+
   it('skips rows whose timezone or schedule window cannot be evaluated and keeps every other receiver (CB-004)', async () => {
-    const findMany = vi
-      .fn()
-      .mockResolvedValue([
-        receiverRow({ id: 'receiver-bad-timezone', timezone: 'Dubai' }),
-        receiverRow({ id: 'receiver-bad-window', scheduleTimeWindow: { start: '9:00', end: '17:00' } }),
-        receiverRow({ id: 'receiver-array-window', scheduleTimeWindow: [] }),
-        receiverRow({ id: 'receiver-outside-window', scheduleTimeWindow: { start: '18:00', end: '20:00' } }),
-        receiverRow({ id: 'receiver-good' }),
-      ]);
+    const receiver = receiverMock();
+    receiver.findMany.mockResolvedValue([
+      receiverRow({ id: 'receiver-bad-timezone', timezone: 'Dubai' }),
+      receiverRow({ id: 'receiver-bad-window', scheduleTimeWindow: { start: '9:00', end: '17:00' } }),
+      receiverRow({ id: 'receiver-array-window', scheduleTimeWindow: [] }),
+      receiverRow({ id: 'receiver-outside-window', scheduleTimeWindow: { start: '18:00', end: '20:00' } }),
+      receiverRow({ id: 'receiver-good' }),
+    ]);
     const repository = new PrismaCheckInsRepository({
-      receiver: {
-        findMany,
-      },
+      receiver,
       checkIn: checkInMock(),
       checkInAttempt: checkInAttemptMock(),
     });
@@ -161,14 +201,226 @@ describe('PrismaCheckInsRepository', () => {
     ]);
   });
 
+  describe('dedupes on the receiver local day (CB-013)', () => {
+    it('gives a Los Angeles evening window one check-in even though it straddles UTC midnight', async () => {
+      const receiver = receiverMock();
+      receiver.findMany.mockResolvedValue([losAngelesEvening()]);
+      const checkIn = checkInMock();
+      const repository = new PrismaCheckInsRepository({ receiver, checkIn, checkInAttempt: checkInAttemptMock() });
+
+      // 16:30 PDT on 5 September: nothing yet for that local day.
+      const firstTick = await repository.findReceiversDueForCheckIn(new Date('2026-09-05T23:30:00.000Z'));
+      expect(firstTick.candidates.map((candidate) => [candidate.id, candidate.scheduledLocalDate])).toEqual([
+        ['receiver-la', '2026-09-05'],
+      ]);
+
+      // 17:10 PDT, still 5 September locally but already 6 September in UTC: the row from 16:30 blocks a second one.
+      checkIn.findMany.mockResolvedValue([{ receiverId: 'receiver-la', scheduledLocalDate: localDay('2026-09-05') }]);
+      const secondTick = await repository.findReceiversDueForCheckIn(new Date('2026-09-06T00:10:00.000Z'));
+
+      expect(checkIn.findMany).toHaveBeenLastCalledWith({
+        where: { retryOf: null, OR: [{ receiverId: 'receiver-la', scheduledLocalDate: localDay('2026-09-05') }] },
+      });
+      expect(secondTick.candidates).toEqual([]);
+    });
+
+    it('keeps one check-in per local day on the day daylight saving ends', async () => {
+      const receiver = receiverMock();
+      receiver.findMany.mockResolvedValue([losAngelesEvening()]);
+      const checkIn = checkInMock();
+      const repository = new PrismaCheckInsRepository({ receiver, checkIn, checkInAttempt: checkInAttemptMock() });
+
+      // 16:30 PST on 1 November (clocks went back at 02:00 that morning); yesterday's row is for 31 October.
+      checkIn.findMany.mockResolvedValue([{ receiverId: 'receiver-la', scheduledLocalDate: localDay('2026-10-31') }]);
+      const afternoon = await repository.findReceiversDueForCheckIn(new Date('2026-11-02T00:30:00.000Z'));
+      expect(checkIn.findMany).toHaveBeenLastCalledWith({
+        where: { retryOf: null, OR: [{ receiverId: 'receiver-la', scheduledLocalDate: localDay('2026-11-01') }] },
+      });
+      expect(afternoon.candidates.map((candidate) => candidate.scheduledLocalDate)).toEqual(['2026-11-01']);
+
+      // 17:45 PST the same evening: the 1 November row now exists.
+      checkIn.findMany.mockResolvedValue([{ receiverId: 'receiver-la', scheduledLocalDate: localDay('2026-11-01') }]);
+      const evening = await repository.findReceiversDueForCheckIn(new Date('2026-11-02T01:45:00.000Z'));
+      expect(evening.candidates).toEqual([]);
+    });
+
+    it('assigns the small hours of a window that wraps midnight to the day it opened', async () => {
+      const receiver = receiverMock();
+      receiver.findMany.mockResolvedValue([receiverRow({ scheduleTimeWindow: { start: '22:00', end: '06:00' } })]);
+      const repository = new PrismaCheckInsRepository({
+        receiver,
+        checkIn: checkInMock(),
+        checkInAttempt: checkInAttemptMock(),
+      });
+
+      // 01:30 in Dubai on 27 April belongs to the window that opened at 22:00 on 26 April.
+      const due = await repository.findReceiversDueForCheckIn(new Date('2026-04-26T21:30:00.000Z'));
+
+      expect(due.candidates.map((candidate) => candidate.scheduledLocalDate)).toEqual(['2026-04-26']);
+    });
+
+    it('ignores retry rows when deciding whether today is already covered', async () => {
+      const receiver = receiverMock();
+      receiver.findMany.mockResolvedValue([receiverRow()]);
+      const checkIn = checkInMock();
+      const repository = new PrismaCheckInsRepository({ receiver, checkIn, checkInAttempt: checkInAttemptMock() });
+
+      await repository.findReceiversDueForCheckIn(new Date('2026-04-27T05:30:00.000Z'));
+
+      expect(checkIn.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ retryOf: null }) }),
+      );
+    });
+
+    it('stores the local day and the retried check-in on create, defaulting to the UTC day when none is given', async () => {
+      const checkIn = checkInMock();
+      checkIn.create
+        .mockResolvedValueOnce(checkInRow({ status: CheckInStatus.PENDING, channelUsed: null, sentAt: null }))
+        .mockResolvedValueOnce(
+          checkInRow({
+            id: 'check-in-retry',
+            status: CheckInStatus.PENDING,
+            channelUsed: null,
+            sentAt: null,
+            scheduledAt: new Date('2026-04-27T05:45:00.000Z'),
+            scheduledLocalDate: localDay('2026-04-27'),
+            retryOf: 'check-in-1',
+          }),
+        );
+      const repository = new PrismaCheckInsRepository({
+        receiver: receiverMock(),
+        checkIn,
+        checkInAttempt: checkInAttemptMock(),
+      });
+
+      const scheduled = await repository.createPending({
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+        scheduledLocalDate: '2026-04-27',
+      });
+      const retry = await repository.createPending({
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        scheduledAt: new Date('2026-04-27T05:45:00.000Z'),
+        retryOf: 'check-in-1',
+      });
+
+      expect(checkIn.create).toHaveBeenNthCalledWith(1, {
+        data: {
+          receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+          scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+          scheduledLocalDate: localDay('2026-04-27'),
+          retryOf: null,
+          status: CheckInStatus.PENDING,
+        },
+      });
+      expect(checkIn.create).toHaveBeenNthCalledWith(2, {
+        data: {
+          receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+          scheduledAt: new Date('2026-04-27T05:45:00.000Z'),
+          scheduledLocalDate: localDay('2026-04-27'),
+          retryOf: 'check-in-1',
+          status: CheckInStatus.PENDING,
+        },
+      });
+      expect(scheduled).toMatchObject({ id: 'check-in-1', scheduledLocalDate: '2026-04-27', retryOf: undefined });
+      expect(retry).toMatchObject({ id: 'check-in-retry', scheduledLocalDate: '2026-04-27', retryOf: 'check-in-1' });
+    });
+
+    it('reports a unique-index rejection as CheckInAlreadyScheduledError and rethrows anything else', async () => {
+      const checkIn = checkInMock();
+      checkIn.create.mockRejectedValueOnce(uniqueViolation()).mockRejectedValueOnce(new Error('connection reset'));
+      const repository = new PrismaCheckInsRepository({
+        receiver: receiverMock(),
+        checkIn,
+        checkInAttempt: checkInAttemptMock(),
+      });
+      const input = {
+        receiverId: 'receiver-la',
+        scheduledAt: new Date('2026-09-06T00:10:00.000Z'),
+        scheduledLocalDate: '2026-09-05',
+      };
+
+      await expect(repository.createPending(input)).rejects.toEqual(
+        expect.objectContaining({
+          name: 'CheckInAlreadyScheduledError',
+          receiverId: 'receiver-la',
+          scheduledLocalDate: '2026-09-05',
+        }),
+      );
+      await expect(repository.createPending(input)).rejects.not.toBeInstanceOf(CheckInAlreadyScheduledError);
+    });
+  });
+
+  describe('stamps an invalid schedule once per version (CB-069)', () => {
+    it('marks the receiver only while the stamp is null and clears it in bulk', async () => {
+      const receiver = receiverMock();
+      receiver.updateMany
+        .mockResolvedValueOnce({ count: 1 })
+        .mockResolvedValueOnce({ count: 0 })
+        .mockResolvedValueOnce({ count: 2 });
+      const repository = new PrismaCheckInsRepository({
+        receiver,
+        checkIn: checkInMock(),
+        checkInAttempt: checkInAttemptMock(),
+      });
+      const seenAt = new Date('2026-09-06T08:00:00.000Z');
+
+      await expect(repository.markScheduleInvalid({ receiverId: 'receiver-dubai', seenAt })).resolves.toBe(true);
+      await expect(repository.markScheduleInvalid({ receiverId: 'receiver-dubai', seenAt })).resolves.toBe(false);
+      await expect(
+        repository.clearScheduleInvalid({ receiverIds: ['receiver-dubai', 'receiver-fixed'] }),
+      ).resolves.toBe(2);
+      await expect(repository.clearScheduleInvalid({ receiverIds: [] })).resolves.toBe(0);
+
+      expect(receiver.updateMany).toHaveBeenNthCalledWith(1, {
+        where: { id: 'receiver-dubai', scheduleInvalidAt: null },
+        data: { scheduleInvalidAt: seenAt },
+      });
+      expect(receiver.updateMany).toHaveBeenNthCalledWith(3, {
+        where: { id: { in: ['receiver-dubai', 'receiver-fixed'] }, scheduleInvalidAt: { not: null } },
+        data: { scheduleInvalidAt: null },
+      });
+      expect(receiver.updateMany).toHaveBeenCalledTimes(3);
+    });
+
+    it('reports stamped receivers whose schedule evaluates again, whether or not they are due', async () => {
+      const receiver = receiverMock();
+      receiver.findMany.mockResolvedValue([
+        receiverRow({
+          id: 'receiver-fixed-outside-window',
+          scheduleInvalidAt: new Date('2026-09-05T08:00:00.000Z'),
+          scheduleTimeWindow: { start: '18:00', end: '20:00' },
+        }),
+        receiverRow({ id: 'receiver-fixed-due', scheduleInvalidAt: new Date('2026-09-05T08:00:00.000Z') }),
+        receiverRow({
+          id: 'receiver-still-bad',
+          scheduleInvalidAt: new Date('2026-09-05T08:00:00.000Z'),
+          timezone: 'Dubai',
+        }),
+        receiverRow({ id: 'receiver-never-bad' }),
+      ]);
+      const repository = new PrismaCheckInsRepository({
+        receiver,
+        checkIn: checkInMock(),
+        checkInAttempt: checkInAttemptMock(),
+      });
+
+      const due = await repository.findReceiversDueForCheckIn(new Date('2026-04-27T05:30:00.000Z'));
+
+      expect(due.recovered).toEqual(['receiver-fixed-outside-window', 'receiver-fixed-due']);
+      expect(due.skipped).toEqual([{ receiverId: 'receiver-still-bad', reason: 'invalid_timezone' }]);
+      expect(due.candidates.map((candidate) => candidate.id)).toEqual(['receiver-fixed-due', 'receiver-never-bad']);
+      // Reporting is read-only; the service decides when to clear the stamp.
+      expect(receiver.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
   it('creates pending check-in records and marks them sent only while they are still open', async () => {
     const checkIn = checkInMock();
     checkIn.create.mockResolvedValue(checkInRow({ status: CheckInStatus.PENDING, channelUsed: null, sentAt: null }));
     checkIn.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
     const repository = new PrismaCheckInsRepository({
-      receiver: {
-        findMany: vi.fn(),
-      },
+      receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
     });
@@ -192,6 +444,8 @@ describe('PrismaCheckInsRepository', () => {
       data: {
         receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
         scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+        scheduledLocalDate: localDay('2026-04-27'),
+        retryOf: null,
         status: 'PENDING',
       },
     });
@@ -217,9 +471,7 @@ describe('PrismaCheckInsRepository', () => {
     );
     checkIn.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
     const repository = new PrismaCheckInsRepository({
-      receiver: {
-        findMany: vi.fn(),
-      },
+      receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
     });
@@ -276,9 +528,7 @@ describe('PrismaCheckInsRepository', () => {
       );
     checkIn.updateMany.mockResolvedValue({ count: 1 });
     const repository = new PrismaCheckInsRepository({
-      receiver: {
-        findMany: vi.fn(),
-      },
+      receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
     });
@@ -333,9 +583,7 @@ describe('PrismaCheckInsRepository', () => {
     const checkIn = checkInMock();
     checkIn.updateMany.mockResolvedValueOnce({ count: 0 }).mockResolvedValueOnce({ count: 1 });
     const repository = new PrismaCheckInsRepository({
-      receiver: {
-        findMany: vi.fn(),
-      },
+      receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
     });
@@ -357,9 +605,7 @@ describe('PrismaCheckInsRepository', () => {
     const checkIn = checkInMock();
     checkIn.findMany.mockResolvedValue([checkInRow({ status: CheckInStatus.PENDING })]);
     const repository = new PrismaCheckInsRepository({
-      receiver: {
-        findMany: vi.fn(),
-      },
+      receiver: receiverMock(),
       checkIn,
       checkInAttempt: checkInAttemptMock(),
     });
@@ -373,7 +619,9 @@ describe('PrismaCheckInsRepository', () => {
       },
       orderBy: { scheduledAt: 'asc' },
     });
-    expect(open).toEqual([expect.objectContaining({ id: 'check-in-1', status: CheckInStatus.PENDING })]);
+    expect(open).toEqual([
+      expect.objectContaining({ id: 'check-in-1', status: CheckInStatus.PENDING, scheduledLocalDate: '2026-04-27' }),
+    ]);
   });
 
   it('times out, fails and skips attempts only from the status each transition expects', async () => {
@@ -383,9 +631,7 @@ describe('PrismaCheckInsRepository', () => {
       .mockResolvedValueOnce({ count: 0 })
       .mockResolvedValueOnce({ count: 2 });
     const repository = new PrismaCheckInsRepository({
-      receiver: {
-        findMany: vi.fn(),
-      },
+      receiver: receiverMock(),
       checkIn: checkInMock(),
       checkInAttempt,
     });
@@ -439,9 +685,7 @@ describe('PrismaCheckInsRepository', () => {
     checkInAttempt.findFirst.mockResolvedValue(attemptRow());
     checkInAttempt.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
     const repository = new PrismaCheckInsRepository({
-      receiver: {
-        findMany: vi.fn(),
-      },
+      receiver: receiverMock(),
       checkIn: checkInMock(),
       checkInAttempt,
     });

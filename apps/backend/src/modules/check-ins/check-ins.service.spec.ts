@@ -5,7 +5,12 @@ import type { ChannelProvider, TemplatedMessage, VoiceScript } from '../channels
 import { FakeChannelProvider } from '../channels/fake-channel.provider';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { createRealAuditService } from '../../shared/testing/real-audit';
-import { CHECK_IN_ALLOWED_FROM, CHECK_IN_ATTEMPT_ALLOWED_FROM, OPEN_CHECK_IN_STATUSES } from './check-ins.repository';
+import {
+  CHECK_IN_ALLOWED_FROM,
+  CHECK_IN_ATTEMPT_ALLOWED_FROM,
+  CheckInAlreadyScheduledError,
+  OPEN_CHECK_IN_STATUSES,
+} from './check-ins.repository';
 import type {
   CheckInRecord,
   CheckInReceiverCandidate,
@@ -33,19 +38,53 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
   public needsAttentionCheckInIds: string[] = [];
   /** Check-ins with explicit state; any other id behaves like a SENT check-in of receiver-1. */
   public checkIns = new Map<string, CheckInRecord>();
+  /** Receivers the repository would report as valid again after a `scheduleInvalidAt` stamp (CB-069). */
+  public recovered: string[] = [];
+  /** `Receiver.scheduleInvalidAt` per receiver id (CB-069). */
+  public scheduleInvalidAt = new Map<string, Date>();
 
-  async findReceiversDueForCheckIn(
-    _now: Date,
-  ): Promise<{ candidates: CheckInReceiverCandidate[]; skipped: ScheduleInvalidReceiver[] }> {
-    return { candidates: this.candidates, skipped: this.invalidSchedules };
+  async findReceiversDueForCheckIn(_now: Date): Promise<{
+    candidates: CheckInReceiverCandidate[];
+    skipped: ScheduleInvalidReceiver[];
+    recovered: string[];
+  }> {
+    return { candidates: this.candidates, skipped: this.invalidSchedules, recovered: this.recovered };
+  }
+
+  async markScheduleInvalid(input: { receiverId: string; seenAt: Date }): Promise<boolean> {
+    if (this.scheduleInvalidAt.has(input.receiverId)) {
+      return false;
+    }
+    this.scheduleInvalidAt.set(input.receiverId, input.seenAt);
+    return true;
+  }
+
+  async clearScheduleInvalid(input: { receiverIds: string[] }): Promise<number> {
+    return input.receiverIds.filter((receiverId) => this.scheduleInvalidAt.delete(receiverId)).length;
   }
 
   async createPending(input: CreatePendingCheckInInput): Promise<CheckInRecord> {
+    const scheduledLocalDate = input.scheduledLocalDate ?? input.scheduledAt.toISOString().slice(0, 10);
+    // The partial unique index on (receiverId, scheduledLocalDate) WHERE retryOf IS NULL (CB-013).
+    if (
+      !input.retryOf &&
+      [...this.checkIns.values()].some(
+        (checkIn) =>
+          checkIn.receiverId === input.receiverId &&
+          checkIn.scheduledLocalDate === scheduledLocalDate &&
+          !checkIn.retryOf,
+      )
+    ) {
+      throw new CheckInAlreadyScheduledError(input.receiverId, scheduledLocalDate);
+    }
+
     this.created.push(input);
     const checkIn: CheckInRecord = {
       id: `check-in-${this.created.length}`,
       receiverId: input.receiverId,
       scheduledAt: input.scheduledAt,
+      scheduledLocalDate,
+      retryOf: input.retryOf,
       status: CheckInStatus.PENDING,
       createdAt: input.scheduledAt,
       updatedAt: input.scheduledAt,
@@ -377,6 +416,7 @@ describe('CheckInsService', () => {
       {
         receiverId: 'receiver-1',
         scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+        scheduledLocalDate: '2026-04-27',
       },
     ]);
     expect(whatsapp.sentMessages).toEqual([
@@ -1183,6 +1223,174 @@ describe('CheckInsService cancels open check-ins for a receiver (CB-008)', () =>
   });
 });
 
+describe('CheckInsService dedupes on the receiver local day (CB-013)', () => {
+  it('stores the local day the repository evaluated and skips a receiver whose day an overlapping tick already claimed', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    // 16:30 in Los Angeles on 5 September is already 6 September in UTC; the day comes from the repository, not the clock.
+    repository.candidates = [
+      {
+        ...receiverCandidate(crypto),
+        id: 'receiver-la',
+        timezone: 'America/Los_Angeles',
+        scheduleTimeWindow: { start: '16:00', end: '18:00' },
+        scheduledLocalDate: '2026-09-05',
+      },
+      {
+        ...receiverCandidate(crypto),
+        id: 'receiver-claimed',
+        phoneEncrypted: crypto.encrypt('+971507654321'),
+        scheduledLocalDate: '2026-09-06',
+      },
+    ];
+    // Another tick inserted receiver-claimed's check-in for 6 September between our lookup and our insert.
+    repository.checkIns.set('check-in-other-tick', {
+      ...repository.checkInRecord('check-in-other-tick'),
+      receiverId: 'receiver-claimed',
+      scheduledLocalDate: '2026-09-06',
+    });
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([whatsapp]),
+      auditService,
+      undefined,
+      () => new Date('2026-09-05T23:30:00.000Z'),
+      billing,
+    );
+
+    const result = await service.sendDueCheckIns();
+
+    expect(result).toEqual({ created: 1, sent: 1, skipped: 1, failed: 0 });
+    expect(repository.created).toEqual([
+      {
+        receiverId: 'receiver-la',
+        scheduledAt: new Date('2026-09-05T23:30:00.000Z'),
+        scheduledLocalDate: '2026-09-05',
+      },
+    ]);
+    expect(repository.checkInRecord('check-in-1')).toMatchObject({
+      receiverId: 'receiver-la',
+      scheduledLocalDate: '2026-09-05',
+      retryOf: undefined,
+      status: CheckInStatus.SENT,
+    });
+    expect(whatsapp.sentMessages.map((sent) => sent.to)).toEqual(['+971501234567']);
+    expect(audit.events.map((event) => [event.action, event.entityId])).toEqual([
+      ['check_in.created', 'check-in-1'],
+      ['check_in.sent', 'check-in-1'],
+    ]);
+  });
+});
+
+describe('CheckInsService audits an invalid schedule once per schedule version (CB-069)', () => {
+  it('writes one check_in.schedule_invalid row across ticks, keeps counting the row as failed, and audits again only after the schedule recovered', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    repository.invalidSchedules = [{ receiverId: 'receiver-dubai', reason: 'invalid_timezone' }];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([]),
+      auditService,
+      undefined,
+      () => new Date('2026-09-06T08:00:00.000Z'),
+    );
+
+    expect(await service.sendDueCheckIns()).toEqual({ created: 0, sent: 0, skipped: 0, failed: 1 });
+    expect(await service.sendDueCheckIns()).toEqual({ created: 0, sent: 0, skipped: 0, failed: 1 });
+    expect(audit.events).toEqual([
+      {
+        entityType: 'receiver',
+        entityId: 'receiver-dubai',
+        action: 'check_in.schedule_invalid',
+        actorType: ActorType.SYSTEM,
+        metadata: { receiverId: 'receiver-dubai', reason: 'invalid_timezone' },
+      },
+    ]);
+    expect(repository.scheduleInvalidAt.get('receiver-dubai')).toEqual(new Date('2026-09-06T08:00:00.000Z'));
+
+    // The sender fixes the timezone: the next tick reports the receiver as recovered and the stamp is cleared.
+    repository.invalidSchedules = [];
+    repository.recovered = ['receiver-dubai'];
+    expect(await service.sendDueCheckIns()).toEqual({ created: 0, sent: 0, skipped: 0, failed: 0 });
+    expect(repository.scheduleInvalidAt.has('receiver-dubai')).toBe(false);
+
+    // A second bad version is a new event.
+    repository.invalidSchedules = [{ receiverId: 'receiver-dubai', reason: 'invalid_schedule_time_window' }];
+    repository.recovered = [];
+    await service.sendDueCheckIns();
+    await service.sendDueCheckIns();
+    expect(audit.events.map((event) => event.metadata)).toEqual([
+      { receiverId: 'receiver-dubai', reason: 'invalid_timezone' },
+      { receiverId: 'receiver-dubai', reason: 'invalid_schedule_time_window' },
+    ]);
+  });
+});
+
+describe('CheckInsService renders checkin_retry for later attempts of a check-in (CB-010)', () => {
+  it('sends checkin_daily on attempt 1 and checkin_retry with the same variables from attempt 2, while voice keeps its script', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService } = createRealAuditService();
+    const sms = new FakeChannelProvider(Channel.SMS);
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
+    const voice = new FakeChannelProvider(Channel.VOICE);
+    repository.attempts = [
+      pendingAttempt({
+        id: 'attempt-1',
+        checkInId: 'check-in-retry-later',
+        attemptNumber: 1,
+        channel: Channel.WHATSAPP,
+        scheduledAt: new Date('2026-04-27T05:45:00.000Z'),
+      }),
+      pendingAttempt({
+        id: 'attempt-2',
+        checkInId: 'check-in-1',
+        attemptNumber: 2,
+        channel: Channel.SMS,
+        scheduledAt: new Date('2026-04-27T05:45:00.000Z'),
+      }),
+      pendingAttempt({
+        id: 'attempt-3',
+        checkInId: 'check-in-2',
+        attemptNumber: 3,
+        channel: Channel.VOICE,
+        scheduledAt: new Date('2026-04-27T05:45:00.000Z'),
+      }),
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms, whatsapp, voice]),
+      auditService,
+      undefined,
+      () => new Date('2026-04-27T05:46:00.000Z'),
+    );
+
+    const result = await service.processCascadeAttempts();
+
+    expect(result).toEqual({ sent: 3, timedOut: 0, failed: 0, needsAttention: 0, skipped: 0 });
+    expect(whatsapp.sentMessages[0]?.message).toEqual({
+      templateKey: 'checkin_daily',
+      language: 'en',
+      variables: { receiverName: 'there', senderDisplayName: 'your family member' },
+    });
+    expect(sms.sentMessages[0]?.message).toEqual({
+      templateKey: 'checkin_retry',
+      language: 'en',
+      variables: { receiverName: 'there', senderDisplayName: 'your family member' },
+    });
+    expect(sms.renderedMessages[0]?.body).toMatch(/^Hi there, we have not heard back from you yet\./);
+    expect(voice.voiceCalls[0]?.script).toMatchObject({ scriptKey: 'checkin_daily_voice', language: 'en' });
+  });
+});
+
 function receiverCandidate(crypto: CryptoService): CheckInReceiverCandidate {
   return {
     id: 'receiver-1',
@@ -1201,6 +1409,7 @@ function receiverCandidate(crypto: CryptoService): CheckInReceiverCandidate {
       end: '11:00',
     },
     consentStatus: ConsentStatus.GRANTED,
+    scheduledLocalDate: '2026-04-27',
   };
 }
 
