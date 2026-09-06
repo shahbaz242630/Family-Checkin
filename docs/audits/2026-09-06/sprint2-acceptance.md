@@ -78,6 +78,8 @@ Every check below was confirmed in the database the backend writes to (rows, sta
 
 ## Cleanup
 
-Backend, Metro and the emulator stopped after the run; `nearby-dev-pg` removed. Hosted Supabase received nothing: the six sprint-2
-migrations (`202609060101`, `0102`, `0103`, `0201`, `0202` and the sprint-1 `202609050001`) still have to be applied there by hand before
-hosting, as recorded in `docs/handoffs/data-security-and-privacy.md`.
+Backend, Metro and the emulator stopped after the run; `nearby-dev-pg` removed. Hosted Supabase: the founder then applied the five
+sprint-2 migrations (`202609060101`, `0102`, `0103`, `0201`, `0202`) through the Supabase management API (`202609050001` was already
+there). Verified afterwards: the new columns exist, language columns are `varchar(8)`, `channel_templates` holds 144 rows (18 per
+language), `provider_webhook_event_keys` exists with RLS on and no client policies, and the seven existing receivers and check-ins were
+preserved. Recorded in `docs/handoffs/data-security-and-privacy.md`.
