@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 
+const channelProviderModeSchema = z.enum(['configured', 'fake']).default('configured');
+
 const envSchema = z.object({
   DATABASE_URL: z.string().url(),
   KMS_MASTER_KEY_BASE64: z.string().min(1),
@@ -9,7 +11,7 @@ const envSchema = z.object({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
   OPERATIONS_CRON_SECRET: z.string().min(1),
   PUBLIC_API_BASE_URL: z.string().url().optional(),
-  CHANNEL_PROVIDER_MODE: z.enum(['configured', 'fake']).default('configured'),
+  CHANNEL_PROVIDER_MODE: channelProviderModeSchema,
   SMS_PROVIDER_API_KEY: z.string().optional(),
   SMS_PROVIDER_FROM_NUMBER: z.string().optional(),
   TWILIO_ACCOUNT_SID: z.string().optional(),
@@ -35,6 +37,21 @@ const envSchema = z.object({
 
 export type BackendEnv = Record<string, string | undefined>;
 export type TrustProxySetting = boolean | number | string;
+export type ChannelProviderMode = z.infer<typeof channelProviderModeSchema>;
+
+/**
+ * Reads only `CHANNEL_PROVIDER_MODE`, for wiring that must be decided before the DI container exists (which
+ * controllers a module registers). Same parsing and default as `AppConfigService.channelProviderMode`.
+ */
+export function channelProviderModeFromEnv(source: BackendEnv = process.env): ChannelProviderMode {
+  const parsed = channelProviderModeSchema.safeParse(source.CHANNEL_PROVIDER_MODE);
+
+  if (!parsed.success) {
+    throw new Error('Invalid backend environment: CHANNEL_PROVIDER_MODE must be "configured" or "fake"');
+  }
+
+  return parsed.data;
+}
 
 @Injectable()
 export class AppConfigService {

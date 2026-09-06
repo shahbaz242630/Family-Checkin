@@ -1,5 +1,7 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { Channel, ConsentStatus } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
+import type { AppConfigService } from '../../shared/config/app-config.service';
 import type { HandleInboundReceiverReplyInput } from './receiver-reply.service';
 import { ReceiverRepliesController } from './receiver-replies.controller';
 
@@ -16,12 +18,15 @@ class FakeReceiverReplyService {
   }
 }
 
+const config = { operationsCronSecret: 'operations-cron-secret' } as AppConfigService;
+
 describe('ReceiverRepliesController', () => {
-  it('accepts fake inbound replies for local provider-free testing', async () => {
+  it('accepts fake inbound replies for local provider-free testing with the operations cron bearer', async () => {
     const service = new FakeReceiverReplyService();
-    const controller = new ReceiverRepliesController(service as never);
+    const controller = new ReceiverRepliesController(service as never, config);
 
     const response = await controller.handleFakeInboundReply(
+      'Bearer operations-cron-secret',
       {
         fromPhone: '+971501234567',
         channel: Channel.WHATSAPP,
@@ -48,5 +53,20 @@ describe('ReceiverRepliesController', () => {
         userAgent: 'ExpoLocalTest/1.0',
       },
     ]);
+  });
+
+  it('requires the operations cron bearer token before touching any receiver', async () => {
+    const service = new FakeReceiverReplyService();
+    const controller = new ReceiverRepliesController(service as never, config);
+    const body = { fromPhone: '+971501234567', channel: Channel.SMS, body: 'STOP' };
+
+    await expect(controller.handleFakeInboundReply(undefined, body)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(controller.handleFakeInboundReply('Basic operations-cron-secret', body)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    await expect(controller.handleFakeInboundReply('Bearer wrong-secret', body)).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(service.handled).toEqual([]);
   });
 });

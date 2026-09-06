@@ -11,7 +11,6 @@ import { AppConfigService } from '../../shared/config/app-config.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { PrismaReceiversRepository } from './prisma-receivers.repository';
-import { ReceiverRepliesController } from './receiver-replies.controller';
 import { ReceiverReplyService } from './receiver-reply.service';
 import { ReceiverConsentService } from './receiver-consent.service';
 import { ReceiversController } from './receivers.controller';
@@ -29,7 +28,8 @@ import { ReceiversService } from './receivers.service';
     BackupContactsModule,
     BillingModule,
   ],
-  controllers: [ReceiversController, ReceiverRepliesController],
+  // The fake reply route lives in ReceiverRepliesModule so it can be left out entirely in configured mode.
+  controllers: [ReceiversController],
   providers: [
     PrismaService,
     {
