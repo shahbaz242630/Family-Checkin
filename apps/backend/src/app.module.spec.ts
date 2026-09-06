@@ -152,6 +152,19 @@ describe('AppModule', () => {
       ).rejects.toThrow('Audit metadata must not contain raw PII');
     });
 
+    it('injects the optional collaborators the STOP, REPORT and HELP paths depend on', async () => {
+      // These are @Optional() so lightweight spec fakes compile; in the real graph they must resolve, otherwise
+      // STOP/REPORT stop cancelling in-flight attempts (CB-008) and HELP stops escalating, silently.
+      const { ReceiverReplyService } = await import('./modules/receivers/receiver-reply.service');
+      const replyService = booted.app.get(ReceiverReplyService) as unknown as Record<string, unknown>;
+
+      expect(replyService.checkInsService, 'CheckInsService not injected into ReceiverReplyService').toBeDefined();
+      expect(
+        replyService.escalationsService,
+        'EscalationsService not injected into ReceiverReplyService',
+      ).toBeDefined();
+    });
+
     it('maps every expected route plus the fake reply route', () => {
       expect(mappedRoutes(booted.app)).toEqual([...configuredModeRoutes, ...fakeModeOnlyRoutes].sort());
     });
