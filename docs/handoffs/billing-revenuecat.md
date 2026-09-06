@@ -1,7 +1,7 @@
 # Billing — RevenueCat (Apple IAP / Google Play Billing) — feature handoff
 
 Status: Partially built (code complete, no live store products) · Last verified: backend 2026-09-06 (specs); mobile billing screen 2026-05-18 (emulator: opened, purchase controls disabled without SDK keys)
-BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and do not match what is built) · Open backlog: CB-026, CB-027, CB-041, CB-061, CB-066
+BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and do not match what is built) · Open backlog: CB-027, CB-041, CB-061, CB-066
 
 ## What it does
 
@@ -23,7 +23,7 @@ BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and d
 ## Routes and contracts
 
 - `GET /billing/status` — signed-in sender only (Supabase bearer, verified then synced through `UsersService.upsertFromSupabaseIdentity`). Returns `entitled`, `revenueCatAppUserId` (the canonical backend `users.id`), and the latest subscription (tier, status, `billingInterval`, `store`, `currentPeriodEnd`, `willRenew`) or `null`.
-- `POST /billing/revenuecat/webhook` — RevenueCat only, no user session. Auth header: `Authorization`, falling back to `x-revenuecat-authorization`; a `Bearer ` prefix is stripped and the remainder compared to `REVENUECAT_WEBHOOK_AUTH_TOKEN`. Missing token, missing config or mismatch → `401`; a payload missing `type`, `id`, `app_user_id`, `product_id`, `transaction_id` or `purchased_at_ms` also throws `401` today (CB-026).
+- `POST /billing/revenuecat/webhook` — RevenueCat only, no user session. Auth header: `Authorization`, falling back to `x-revenuecat-authorization`; a `Bearer ` prefix is stripped and the remainder compared in constant time (`isMatchingSecret`, `shared/auth/bearer-secret.ts`) to `REVENUECAT_WEBHOOK_AUTH_TOKEN`. Missing token, missing config or mismatch → `401`. Auth is checked first; then a payload missing or mistyping `type`, `id`, `app_user_id`, `product_id`, `transaction_id` (non-empty strings) or `purchased_at_ms` (finite number > 0) → `400` (CB-026). Non-string `entitlement_ids` entries are dropped.
 - Webhook idempotency key: `revenuecat:<event.id>`, written to `idempotency_keys` with scope `billing.revenuecat_webhook` and a 90-day `expiresAt`. A `P2002` on that insert means "already processed" and the handler returns `{ processed: false }` without touching subscriptions or audit.
 - Paid access is enforced in exactly two backend places, both through `BillingService.getBillingStatus(...).entitled`: `POST /receivers` (before receiver creation and its consent side effects) and `CheckInsService.sendDueCheckIns` (after receiver eligibility, before creating the check-in, its attempts, any provider send, or any check-in audit row; unpaid senders count as `skipped`). No other route is gated.
 
@@ -49,7 +49,6 @@ BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and d
 
 ## Known gaps
 
-- CB-026 — webhook token compared with `!==` rather than `timingSafeEqual`, and payload/schema errors return `401` instead of `400`.
 - CB-027 — the app is not store-buildable: `apps/mobile/eas.json` uses `${VAR}` interpolation, declares no `EXPO_PUBLIC_REVENUECAT_*` or `EXPO_PUBLIC_BACKEND_URL` in any profile, has no `versionCode`/`buildNumber`, and points `submit.production.android.serviceAccountKeyPath` at `./google-services.json`; `apps/mobile/app.json` has an empty `extra.eas.projectId` and no billing-related entry in `plugins`.
 - CB-041 — the billing screen does not poll `/billing/status` after a purchase, and `revenueCat.ts` re-`configure()`s on user switch instead of using `Purchases.logIn` / `logOut`.
 - CB-061 — tier comes from a regex over the product id (`tier_2|plus` → `TIER_2`, `tier_3|premium|family` → `TIER_3`, else `TIER_1`); there are no per-tier receiver/backup limits, and the BRD's three-retries-over-7-days / suspend-after-14-days-unpaid state is not modelled. The store paid-through period is the only grace window and `SUSPENDED` is never written.
@@ -61,4 +60,4 @@ BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and d
 ## History
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §29i (lines 2583–2666, foundation and provider decision), §29j (lines 2667–3036, compliance research, both paid-access gates, `PAST_DUE` grace, webhook idempotency, `appUserID` alignment, entitlement-config normalisation), and the 2026-05-18 emulator QA note (lines 3440–3472).
-- PRs: the archive records no PR numbers for the billing slices; they predate the numbered-PR flow that starts at #17.
+- PRs: the archive records no PR numbers for the billing slices; they predate the numbered-PR flow that starts at #17. #34 (CB-026 constant-time webhook token comparison, 400 on payload errors).
