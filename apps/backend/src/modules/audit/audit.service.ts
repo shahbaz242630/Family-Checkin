@@ -3,6 +3,9 @@ import type { AppendAuditLogInput, AuditLogRecord, AuditMetadata, AuditRepositor
 import { AUDIT_REPOSITORY } from './audit.tokens';
 
 const sensitiveKeyPattern = /(email|phone|name|address|note|transcript|location|contact)/i;
+// Identifier keys (`backupContactId`, `receiverIds`, `contactRef`) reference a row rather than carry the
+// person's data, so the key name alone is not a leak; their values still go through the shape check.
+const identifierKeyPattern = /(Id|Ids|Ref)$/;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const phonePattern = /^\+?[0-9][0-9\s().-]{7,}[0-9]$/;
 
@@ -56,7 +59,7 @@ export class AuditService {
 
     if (value && typeof value === 'object') {
       Object.entries(value).forEach(([key, nestedValue]) => {
-        if (sensitiveKeyPattern.test(key)) {
+        if (this.isSensitiveKey(key)) {
           throw new Error('Audit metadata must not contain raw PII');
         }
         this.walkMetadata(nestedValue, [...path, key]);
@@ -67,6 +70,10 @@ export class AuditService {
     if (typeof value === 'string' && this.looksLikeRawPii(value)) {
       throw new Error('Audit metadata must not contain raw PII');
     }
+  }
+
+  private isSensitiveKey(key: string): boolean {
+    return sensitiveKeyPattern.test(key) && !identifierKeyPattern.test(key);
   }
 
   private looksLikeRawPii(value: string): boolean {

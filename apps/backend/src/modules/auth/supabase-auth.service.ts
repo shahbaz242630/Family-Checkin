@@ -1,4 +1,4 @@
-import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, Optional, UnauthorizedException } from '@nestjs/common';
 import { AppConfigService } from '../../shared/config/app-config.service';
 
 export interface SupabaseSenderIdentity {
@@ -29,7 +29,7 @@ export class SupabaseAuthService {
   constructor(
     @Inject(AppConfigService)
     private readonly config: AppConfigService,
-    private readonly fetchFn: Fetch = fetch,
+    @Optional() private readonly fetchFn: Fetch = fetch,
   ) {}
 
   async verifyAccessToken(accessToken: string): Promise<SupabaseSenderIdentity> {

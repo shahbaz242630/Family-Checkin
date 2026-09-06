@@ -56,7 +56,7 @@ export class ReceiverReplyService {
     @Optional()
     @Inject(BACKUP_CONTACTS_REPOSITORY)
     private readonly backupContactsRepository?: Pick<BackupContactsRepository, 'findActiveByPhoneHash'>,
-    private readonly now: () => Date = () => new Date(),
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   async handleInboundReply(input: HandleInboundReceiverReplyInput): Promise<HandleInboundReceiverReplyResult> {

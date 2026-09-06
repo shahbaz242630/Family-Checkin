@@ -1,5 +1,5 @@
 import { createHash, randomInt, randomUUID } from 'crypto';
-import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable, Optional } from '@nestjs/common';
 import { Channel, type SensitiveAction } from '@prisma/client';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import type { AccountRepository, StepUpChallengeRecord } from './account.repository';
@@ -16,9 +16,9 @@ export class StepUpService {
     private readonly accountRepository: AccountRepository,
     @Inject(ChannelRouterService)
     private readonly channelRouter: Pick<ChannelRouterService, 'sendMessage'>,
-    private readonly now: () => Date = () => new Date(),
-    private readonly generateCode: () => string = () => randomInt(0, 1_000_000).toString().padStart(6, '0'),
-    private readonly generateToken: () => string = () => randomUUID(),
+    @Optional() private readonly now: () => Date = () => new Date(),
+    @Optional() private readonly generateCode: () => string = () => randomInt(0, 1_000_000).toString().padStart(6, '0'),
+    @Optional() private readonly generateToken: () => string = () => randomUUID(),
   ) {}
 
   async requestStepUp(input: {
@@ -99,7 +99,11 @@ export class StepUpService {
     }
   }
 
-  private assertChallengeUsable(challenge: StepUpChallengeRecord | null, userId: string, now: Date): asserts challenge is StepUpChallengeRecord {
+  private assertChallengeUsable(
+    challenge: StepUpChallengeRecord | null,
+    userId: string,
+    now: Date,
+  ): asserts challenge is StepUpChallengeRecord {
     if (!challenge || challenge.userId !== userId || challenge.consumedAt || challenge.verifiedAt) {
       throw new ForbiddenException('Step-up challenge is invalid');
     }

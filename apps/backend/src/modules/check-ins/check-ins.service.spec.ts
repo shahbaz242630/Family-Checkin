@@ -1,10 +1,9 @@
 import { ActorType, Channel, CheckInAttemptStatus, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
-import type { AppendAuditLogInput } from '../audit/audit.repository';
-import type { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { FakeChannelProvider } from '../channels/fake-channel.provider';
 import { CryptoService } from '../../shared/crypto/crypto.service';
+import { createRealAuditService } from '../../shared/testing/real-audit';
 import type {
   CheckInRecord,
   CheckInReceiverCandidate,
@@ -111,7 +110,11 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     });
   }
 
-  async markAttemptFailed(input: { attemptId: string; completedAt: Date; failureReason: string }): Promise<CheckInAttemptRecord> {
+  async markAttemptFailed(input: {
+    attemptId: string;
+    completedAt: Date;
+    failureReason: string;
+  }): Promise<CheckInAttemptRecord> {
     return this.updateAttempt(input.attemptId, {
       status: CheckInAttemptStatus.FAILED,
       completedAt: input.completedAt,
@@ -153,7 +156,10 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     });
   }
 
-  async markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }): Promise<CheckInAttemptRecord | null> {
+  async markLatestSentAttemptResponded(input: {
+    checkInId: string;
+    completedAt: Date;
+  }): Promise<CheckInAttemptRecord | null> {
     const attempt = [...this.attempts]
       .filter((candidate) => candidate.checkInId === input.checkInId && candidate.status === CheckInAttemptStatus.SENT)
       .sort((left, right) => right.attemptNumber - left.attemptNumber)[0];
@@ -167,7 +173,11 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     });
   }
 
-  async skipPendingAttemptsForCheckIn(input: { checkInId: string; completedAt: Date; failureReason: string }): Promise<number> {
+  async skipPendingAttemptsForCheckIn(input: {
+    checkInId: string;
+    completedAt: Date;
+    failureReason: string;
+  }): Promise<number> {
     const attempts = this.attempts.filter(
       (attempt) => attempt.checkInId === input.checkInId && attempt.status === CheckInAttemptStatus.PENDING,
     );
@@ -267,19 +277,6 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
   }
 }
 
-class InMemoryAuditService {
-  public events: AppendAuditLogInput[] = [];
-
-  async append(input: AppendAuditLogInput) {
-    this.events.push(input);
-    return {
-      id: `audit-${this.events.length}`,
-      createdAt: new Date('2026-04-27T05:30:00.000Z'),
-      ...input,
-    };
-  }
-}
-
 class InMemoryEscalationsService {
   public nextStatus: CheckInStatus = CheckInStatus.ESCALATED;
   public missedEscalations: {
@@ -334,7 +331,7 @@ describe('CheckInsService', () => {
   it('creates, sends, marks sent, and audits a due receiver with granted consent', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
       now: () => new Date('2026-04-27T05:30:00.000Z'),
     });
@@ -345,7 +342,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([whatsapp]),
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       () => new Date('2026-04-27T05:30:00.000Z'),
       billing,
@@ -407,7 +404,7 @@ describe('CheckInsService', () => {
   it('skips candidates that are not currently eligible for a check-in', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
     repository.candidates = [
       { ...receiverCandidate(crypto), id: 'pending-receiver', consentStatus: ConsentStatus.PENDING },
@@ -418,7 +415,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([whatsapp]),
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       () => new Date('2026-04-27T05:30:00.000Z'),
     );
@@ -435,7 +432,7 @@ describe('CheckInsService', () => {
   it('skips due receivers whose sender does not have paid access', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
     const billing = new InMemoryBillingService();
     repository.candidates = [receiverCandidate(crypto)];
@@ -443,7 +440,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([whatsapp]),
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       () => new Date('2026-04-27T05:30:00.000Z'),
       billing,
@@ -463,7 +460,7 @@ describe('CheckInsService', () => {
   it('delegates overdue sent check-ins after the 30 minute response window', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService } = createRealAuditService();
     const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
     const escalations = new InMemoryEscalationsService();
     repository.overdueCheckIns = [
@@ -482,7 +479,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([whatsapp]),
-      audit as unknown as AuditService,
+      auditService,
       escalations,
       () => new Date('2026-04-29T10:31:00.000Z'),
     );
@@ -513,7 +510,7 @@ describe('CheckInsService', () => {
   it('counts terminal missed escalation failures separately from skipped outcomes', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService } = createRealAuditService();
     const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
     const escalations = new InMemoryEscalationsService();
     escalations.nextStatus = CheckInStatus.FAILED;
@@ -533,7 +530,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([whatsapp]),
-      audit as unknown as AuditService,
+      auditService,
       escalations,
       () => new Date('2026-04-29T10:31:00.000Z'),
     );
@@ -551,7 +548,7 @@ describe('CheckInsService', () => {
   it('uses the sticky caller ID when sending an initial voice check-in', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService } = createRealAuditService();
     const voice = new FakeChannelProvider(Channel.VOICE);
     const billing = new InMemoryBillingService();
     const callerIds = new InMemoryVoiceCallerIds();
@@ -569,7 +566,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([voice]),
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       () => new Date('2026-04-27T05:30:00.000Z'),
       billing,
@@ -585,7 +582,7 @@ describe('CheckInsService', () => {
   it('creates two scheduled voice retries for voice-only receivers', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService } = createRealAuditService();
     const voice = new FakeChannelProvider(Channel.VOICE);
     const billing = new InMemoryBillingService();
     billing.entitledByUserId.set('sender-user-1', true);
@@ -601,7 +598,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([voice]),
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       () => new Date('2026-04-27T05:30:00.000Z'),
       billing,
@@ -609,11 +606,13 @@ describe('CheckInsService', () => {
 
     await service.sendDueCheckIns();
 
-    expect(repository.attempts.map((attempt) => ({
-      attemptNumber: attempt.attemptNumber,
-      channel: attempt.channel,
-      scheduledAt: attempt.scheduledAt,
-    }))).toEqual([
+    expect(
+      repository.attempts.map((attempt) => ({
+        attemptNumber: attempt.attemptNumber,
+        channel: attempt.channel,
+        scheduledAt: attempt.scheduledAt,
+      })),
+    ).toEqual([
       {
         attemptNumber: 1,
         channel: Channel.VOICE,
@@ -637,7 +636,7 @@ describe('CheckInsService', () => {
   it('does not send a retry attempt before its scheduled retry time', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService } = createRealAuditService();
     const voice = new FakeChannelProvider(Channel.VOICE);
     repository.attempts = [
       {
@@ -668,7 +667,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([voice]),
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       () => new Date('2026-04-27T06:00:00.000Z'),
     );
@@ -688,7 +687,7 @@ describe('CheckInsService', () => {
   it('marks sent voice attempts failed from terminal Twilio provider callbacks', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService } = createRealAuditService();
     const voice = new FakeChannelProvider(Channel.VOICE);
     repository.attempts = [
       {
@@ -709,7 +708,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([voice]),
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       () => new Date('2026-04-27T05:31:00.000Z'),
     );
@@ -731,7 +730,7 @@ describe('CheckInsService', () => {
   it('marks the check-in needs attention when the final voice attempt fails from Twilio callback', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService, audit } = createRealAuditService();
     const voice = new FakeChannelProvider(Channel.VOICE);
     repository.attempts = [
       {
@@ -752,7 +751,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([voice]),
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       () => new Date('2026-04-27T06:16:00.000Z'),
     );
@@ -780,7 +779,7 @@ describe('CheckInsService', () => {
   it('falls back to configured voice caller ID when no sticky assignment is available', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
-    const audit = new InMemoryAuditService();
+    const { auditService } = createRealAuditService();
     const voice = new FakeChannelProvider(Channel.VOICE);
     const billing = new InMemoryBillingService();
     const callerIds = new InMemoryVoiceCallerIds();
@@ -797,7 +796,7 @@ describe('CheckInsService', () => {
       repository,
       crypto,
       new ChannelRouterService([voice]),
-      audit as unknown as AuditService,
+      auditService,
       undefined,
       () => new Date('2026-04-27T05:30:00.000Z'),
       billing,

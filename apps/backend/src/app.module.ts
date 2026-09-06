@@ -13,10 +13,11 @@ import { EscalationsModule } from './modules/escalations/escalations.module';
 import { OperationsModule } from './modules/operations/operations.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ProviderWebhooksModule } from './modules/provider-webhooks/provider-webhooks.module';
+import { ReceiverRepliesModule } from './modules/receivers/receiver-replies.module';
 import { ReceiversModule } from './modules/receivers/receivers.module';
 import { UsersModule } from './modules/users/users.module';
 import { AppConfigModule } from './shared/config/app-config.module';
-import { AppConfigService } from './shared/config/app-config.service';
+import { AppConfigService, channelProviderModeFromEnv } from './shared/config/app-config.service';
 import { throttlerOptionsFromConfig } from './shared/http/http-hardening';
 
 @Module({
@@ -32,6 +33,9 @@ import { throttlerOptionsFromConfig } from './shared/http/http-hardening';
     AuthModule,
     AuditModule,
     ReceiversModule,
+    // Read from the environment here (not via DI) because the fake reply route must be absent, not guarded,
+    // in configured mode, and controllers can only be chosen while the module graph is being built.
+    ReceiverRepliesModule.register({ channelProviderMode: channelProviderModeFromEnv() }),
     BackupContactsModule,
     BillingModule,
     ChannelsModule,

@@ -1,4 +1,3 @@
-import { timingSafeEqual } from 'node:crypto';
 import {
   Controller,
   Get,
@@ -12,6 +11,7 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import { AdminAuthService } from '../auth/admin-auth.service';
 import { CheckInsService } from '../check-ins/check-ins.service';
+import { assertBearerSecret } from '../../shared/auth/bearer-secret';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import { OperationsVisibilityService } from './operations-visibility.service';
 
@@ -84,21 +84,6 @@ export class OperationsController {
   }
 
   private assertOperationsCronBearer(authorization: string | undefined): void {
-    const [scheme, token] = authorization?.split(' ') ?? [];
-
-    if (scheme !== 'Bearer' || !token || !this.isMatchingSecret(token, this.config.operationsCronSecret)) {
-      throw new UnauthorizedException('Operations cron bearer token is required');
-    }
-  }
-
-  private isMatchingSecret(provided: string, expected: string): boolean {
-    const providedBuffer = Buffer.from(provided);
-    const expectedBuffer = Buffer.from(expected);
-
-    if (providedBuffer.length !== expectedBuffer.length) {
-      return false;
-    }
-
-    return timingSafeEqual(providedBuffer, expectedBuffer);
+    assertBearerSecret(authorization, this.config.operationsCronSecret, 'Operations cron bearer token is required');
   }
 }

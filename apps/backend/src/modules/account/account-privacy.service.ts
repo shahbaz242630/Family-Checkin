@@ -1,5 +1,5 @@
 import { ActorType, SensitiveAction } from '@prisma/client';
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { AuditService } from '../audit/audit.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type { AccountExportRecord, AccountRepository } from './account.repository';
@@ -39,7 +39,7 @@ export class AccountPrivacyService {
     private readonly cryptoService: CryptoService,
     @Inject(AuditService)
     private readonly auditService: AuditService,
-    private readonly now: () => Date = () => new Date(),
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   async exportAccount(input: { userId: string; stepUpToken: string }): Promise<AccountExportResponse> {
@@ -145,7 +145,9 @@ export class AccountPrivacyService {
         displayName: this.cryptoService.decrypt(contact.nameEncrypted),
         phone: this.cryptoService.decrypt(contact.phoneEncrypted),
         relationshipToReceiver: contact.relationshipToReceiver,
-        locationInstructions: contact.locationInstructionsEncrypted ? this.cryptoService.decrypt(contact.locationInstructionsEncrypted) : undefined,
+        locationInstructions: contact.locationInstructionsEncrypted
+          ? this.cryptoService.decrypt(contact.locationInstructionsEncrypted)
+          : undefined,
         priorityOrder: contact.priorityOrder,
         createdAt: contact.createdAt.toISOString(),
       })),

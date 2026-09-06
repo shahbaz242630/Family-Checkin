@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { CheckInStatus } from '@prisma/client';
 import type { OperationsVisibilityRepository } from './operations-visibility.repository';
 import { OPERATIONS_VISIBILITY_REPOSITORY } from './operations.tokens';
@@ -67,7 +67,7 @@ export class OperationsVisibilityService {
   constructor(
     @Inject(OPERATIONS_VISIBILITY_REPOSITORY)
     private readonly repository: OperationsVisibilityRepository,
-    private readonly now: () => Date = () => new Date(),
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   async getCheckInSummary(): Promise<OperationsCheckInSummary> {

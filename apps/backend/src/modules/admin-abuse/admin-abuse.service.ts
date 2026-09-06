@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { AbuseReportStatus, ActorType } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import type { AdminAbuseReportRecord, AdminAbuseReportsRepository } from './admin-abuse.repository';
@@ -33,7 +33,7 @@ export class AdminAbuseService {
     private readonly repository: AdminAbuseReportsRepository,
     @Inject(AuditService)
     private readonly auditService: Pick<AuditService, 'append'>,
-    private readonly now: () => Date = () => new Date(),
+    @Optional() private readonly now: () => Date = () => new Date(),
   ) {}
 
   async listPendingReports(): Promise<AdminAbuseListResponse> {

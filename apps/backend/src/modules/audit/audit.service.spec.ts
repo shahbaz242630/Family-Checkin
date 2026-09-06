@@ -69,6 +69,58 @@ describe('AuditService', () => {
     ).rejects.toThrow('Audit metadata must not contain raw PII');
   });
 
+  it('accepts identifier keys whose name merely mentions a sensitive word', async () => {
+    const repository = new InMemoryAuditRepository();
+    const service = new AuditService(repository);
+
+    await service.append({
+      entityType: 'escalation_event',
+      entityId: 'escalation-event-1',
+      action: 'escalation.backup_contact_alerted',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        backupContactId: 'backup-contact-1',
+        receiverIds: ['receiver-1', 'receiver-2'],
+        contactRef: 'contact-ref-1',
+      },
+    });
+
+    expect(repository.records).toHaveLength(1);
+    expect(repository.records[0]?.metadata).toEqual({
+      backupContactId: 'backup-contact-1',
+      receiverIds: ['receiver-1', 'receiver-2'],
+      contactRef: 'contact-ref-1',
+    });
+  });
+
+  it('still rejects sensitive keys and PII-shaped values behind an identifier key', async () => {
+    const service = new AuditService(new InMemoryAuditRepository());
+    const baseInput = {
+      entityType: 'escalation_event',
+      entityId: 'escalation-event-1',
+      action: 'escalation.backup_contact_alerted',
+      actorType: ActorType.SYSTEM,
+    };
+
+    await expect(service.append({ ...baseInput, metadata: { contactPhone: 'hashed-anyway' } })).rejects.toThrow(
+      'Audit metadata must not contain raw PII',
+    );
+
+    await expect(service.append({ ...baseInput, metadata: { contactName: 'hashed-anyway' } })).rejects.toThrow(
+      'Audit metadata must not contain raw PII',
+    );
+
+    // The identifier suffix is case-sensitive: `phoneid` is not an identifier key.
+    await expect(service.append({ ...baseInput, metadata: { phoneid: 'hashed-anyway' } })).rejects.toThrow(
+      'Audit metadata must not contain raw PII',
+    );
+
+    // An E.164 number is still PII no matter which key it hides behind.
+    await expect(service.append({ ...baseInput, metadata: { backupContactId: '+971501234567' } })).rejects.toThrow(
+      'Audit metadata must not contain raw PII',
+    );
+  });
+
   it('requires core audit fields', async () => {
     const service = new AuditService(new InMemoryAuditRepository());
 

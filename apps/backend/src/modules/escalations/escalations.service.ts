@@ -51,7 +51,7 @@ export class EscalationsService {
     @Optional()
     @Inject(NotificationsService)
     notificationsOrNow?: Pick<NotificationsService, 'sendToUser' | 'sendEscalationAlertToUser'> | (() => Date),
-    now?: () => Date,
+    @Optional() now?: () => Date,
   ) {
     this.now = () => new Date();
     if (typeof notificationsOrNow === 'function') {
@@ -249,10 +249,7 @@ export class EscalationsService {
 
     return {
       checkInId: input.checkInId,
-      status:
-        succeeded > 0
-          ? CheckInStatus.ESCALATED
-          : (input.terminalFailureStatus ?? CheckInStatus.RESPONDED_HELP),
+      status: succeeded > 0 ? CheckInStatus.ESCALATED : (input.terminalFailureStatus ?? CheckInStatus.RESPONDED_HELP),
       attempted: backupContacts.length,
       succeeded,
       failed,
@@ -272,14 +269,18 @@ export class EscalationsService {
     const startedAt = this.now();
 
     try {
-      const providerResult = await this.channelRouter.sendMessage(input.channel, this.cryptoService.decrypt(input.contact.phoneEncrypted), {
-        templateKey: input.templateKey,
-        language: 'en',
-        variables: {
-          checkInId: input.checkInId,
-          receiverId: input.receiverId,
+      const providerResult = await this.channelRouter.sendMessage(
+        input.channel,
+        this.cryptoService.decrypt(input.contact.phoneEncrypted),
+        {
+          templateKey: input.templateKey,
+          language: 'en',
+          variables: {
+            checkInId: input.checkInId,
+            receiverId: input.receiverId,
+          },
         },
-      });
+      );
       const event = await this.escalationsRepository.createEvent({
         checkInId: input.checkInId,
         attemptNumber: input.attemptNumber,
@@ -420,15 +421,19 @@ export class EscalationsService {
     reason: string;
   }): Promise<void> {
     try {
-      const result = await this.channelRouter.makeVoiceCall(Channel.VOICE, this.cryptoService.decrypt(input.ownerPhoneEncrypted), {
-        scriptKey: 'sender_escalation_siren_voice',
-        language: 'en',
-        variables: {
-          checkInId: input.checkInId,
-          receiverId: input.receiverId,
-          reason: input.reason,
+      const result = await this.channelRouter.makeVoiceCall(
+        Channel.VOICE,
+        this.cryptoService.decrypt(input.ownerPhoneEncrypted),
+        {
+          scriptKey: 'sender_escalation_siren_voice',
+          language: 'en',
+          variables: {
+            checkInId: input.checkInId,
+            receiverId: input.receiverId,
+            reason: input.reason,
+          },
         },
-      });
+      );
 
       await this.auditService.append({
         entityType: 'check_in',
