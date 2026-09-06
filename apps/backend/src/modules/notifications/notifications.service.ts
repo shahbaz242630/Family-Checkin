@@ -212,10 +212,6 @@ export class NotificationsService {
     input: SendUserPushInput,
     buildMessage: (token: { token: string }) => ExpoPushMessage,
   ): Promise<SendUserPushResult> {
-    // Opportunistic housekeeping before every batch, so a token whose receipt said DeviceNotRegistered is not
-    // tried again here. It must never stand in the way of a siren, so a failure is logged and ignored.
-    await this.processDuePushReceiptsQuietly();
-
     const tokens = await this.notificationsRepository.findActiveDeviceTokensForUser({ userId: input.userId.trim() });
     const sentAt = this.now();
     if (tokens.length === 0) {
@@ -258,12 +254,34 @@ export class NotificationsService {
       this.logger.warn(`Could not record ${accepted.length} push ticket(s): ${errorSummary(error)}`);
     }
 
+    // The pushes are out. Receipt housekeeping runs in the background so a slow Expo receipts call can never
+    // delay a siren or the webhook reply that triggered it; a failure is logged and ignored. A token whose
+    // receipt says DeviceNotRegistered is retired before the next batch.
+    this.startReceiptHousekeeping();
+
     return {
       attempted: tokens.length,
       sent,
       failed: failed + Math.max(0, tokens.length - tickets.length),
       sentAt: sent > 0 ? sentAt : undefined,
     };
+  }
+
+  /** The background receipt check started by the last send, or undefined when idle. */
+  private receiptHousekeeping?: Promise<void>;
+
+  /** Resolves once the background receipt check started by the last send has finished (specs, future cron route). */
+  async waitForReceiptHousekeeping(): Promise<void> {
+    await this.receiptHousekeeping;
+  }
+
+  private startReceiptHousekeeping(): void {
+    if (this.receiptHousekeeping) {
+      return;
+    }
+    this.receiptHousekeeping = this.processDuePushReceiptsQuietly().finally(() => {
+      this.receiptHousekeeping = undefined;
+    });
   }
 
   private async processDuePushReceiptsQuietly(): Promise<void> {

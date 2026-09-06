@@ -408,7 +408,7 @@ describe('NotificationsService push receipts (CB-023)', () => {
     expect(repository.tickets.map((ticket) => ticket.ticketId).sort()).toEqual(['ticket-pending', 'ticket-young']);
   });
 
-  it('checks due receipts before each send batch so a dead token is not tried again', async () => {
+  it('processes due receipts in the background after a send so a dead token is not tried on the next batch', async () => {
     const repository = new InMemoryPushNotificationsRepository();
     repository.tokens = [
       tokenFixture('sender-1', 'ExpoPushToken[dead]'),
@@ -428,8 +428,19 @@ describe('NotificationsService push receipts (CB-023)', () => {
 
     const result = await service.sendEscalationAlertToUser({ userId: 'sender-1', title: 'T', body: 'B', data: {} });
 
-    expect(result).toMatchObject({ attempted: 1, sent: 1, failed: 0 });
-    expect(gateway.sent[0]?.map((message) => message.to)).toEqual(['ExpoPushToken[fine]']);
+    // The siren is not held behind the receipt check: both tokens were still active when it went out.
+    expect(result).toMatchObject({ attempted: 2, sent: 2, failed: 0 });
+    expect(gateway.sent[0]?.map((message) => message.to)).toEqual(['ExpoPushToken[dead]', 'ExpoPushToken[fine]']);
+
+    await service.waitForReceiptHousekeeping();
+
+    expect(gateway.receiptQueries).toEqual([['ticket-dead']]);
+    expect(repository.tokens.find((token) => token.token === 'ExpoPushToken[dead]')?.active).toBe(false);
+
+    const next = await service.sendEscalationAlertToUser({ userId: 'sender-1', title: 'T', body: 'B', data: {} });
+
+    expect(next).toMatchObject({ attempted: 1, sent: 1, failed: 0 });
+    expect(gateway.sent[1]?.map((message) => message.to)).toEqual(['ExpoPushToken[fine]']);
   });
 
   it('does nothing without a receipts-capable gateway or without due tickets', async () => {
@@ -482,6 +493,8 @@ describe('NotificationsService push receipts (CB-023)', () => {
     await expect(
       service.sendQuietUpdateToUser({ userId: 'sender-1', title: 'T', body: 'B', data: {} }),
     ).resolves.toEqual({ attempted: 1, sent: 1, failed: 0, sentAt: now });
+    await expect(service.waitForReceiptHousekeeping()).resolves.toBeUndefined();
+    expect(repository.tickets.map((ticket) => ticket.ticketId)).toEqual(['ticket-old']);
   });
 });
 
