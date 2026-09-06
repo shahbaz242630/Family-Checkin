@@ -90,7 +90,7 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 
 - Sprint 1 of the backlog is merged (PRs #17 to #21): CB-001 to CB-008, CB-015 and the English slice of CB-010. `master` CI is green at `2b315fb`.
 - Backend: 51 spec files, 356 tests pass; the compiled build boots; the HTTP acceptance run in fake mode passed 9 of 9 scenarios (`docs/audits/2026-09-06/sprint1-acceptance.md`).
-- Mobile: type-check and the vitest project pass. The last emulator QA was 2026-05-18, before sprint 1, so the in-app flows have not yet been exercised against the sprint-1 backend.
+- Mobile: type-check and the vitest project pass. Emulator acceptance on 2026-09-06 drove every runbook scenario through the app against the sprint-1 backend: 12 of 12 pass after one backend wiring fix (CB-070, receiver removal was a 403 in the real DI graph); findings CB-071 to CB-078 opened (`docs/audits/2026-09-06/emulator-acceptance.md`).
 - Hosted Supabase database: schema applied by hand (no `_prisma_migrations`); partition RLS fix applied 2026-09-05.
 - Nothing is hosted. The scheduler workflow is disabled. No Twilio, RevenueCat, FCM or EAS credentials exist.
 - 11 Dependabot PRs are open, deferred until after emulator testing.
@@ -98,8 +98,8 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 ## Next session opener
 
 1. On `master`: `git status --short --branch`, then `npm run verify`.
-2. Emulator acceptance: follow `docs/EMULATOR_RUNBOOK.md` end to end, write `docs/audits/<date>/emulator-acceptance.md`, open a CB item per failure (next free id: CB-070).
-3. Sprint 2 = the rest of Phase 1: CB-009, CB-011 to CB-014, CB-016 to CB-018, the remaining CB-010 slices (per-language seed, sender display name, `checkin_retry`), CB-067 to CB-069. One worktree and one PR per wave; update the touched feature handoffs in the same PR.
+2. Sprint 2 = the rest of Phase 1: CB-009, CB-011 to CB-014, CB-016 to CB-018, the remaining CB-010 slices (per-language seed, sender display name, `checkin_retry`), CB-068, CB-069, CB-074, CB-075, plus the mobile findings from the emulator run (CB-071, CB-072, CB-073, CB-077, CB-078; Phase 3 but small and already reproduced). One worktree and one PR per wave; update the touched feature handoffs in the same PR. Next free backlog id: CB-079.
+3. Re-run `docs/EMULATOR_RUNBOOK.md` after sprint 2 (same method as the 2026-09-06 report) before starting Phase 2.
 4. Then Dependabot triage, then the one-off Prettier formatting commit and the `format:check` CI gate.
 
 ## Gotchas
@@ -108,7 +108,9 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 - npm 10.9 crashes with "edgesOut" when a root devDependency forces a hoisted `vitest` upgrade. Keep `vitest` and `@vitest/coverage-v8` at 4.1.5 at the root. Never delete `package-lock.json`.
 - Prisma 7. `DATABASE_URL` lives in `apps/backend/prisma.config.ts`. A fresh `npm ci` does not generate the client; CI and `npm run verify` run `prisma:generate` first.
 - Supabase. The account has three projects; the Nearby one is whatever `apps/backend/.env` `DATABASE_URL` points at, never chosen by name. The direct `db.<ref>` host is IPv6-only from this network; use the session pooler on port 5432. `supabase db push` and the Supabase MCP do not work (migration drift, 401); apply SQL through node `pg`.
-- Emulator. Host is `10.0.2.2`. Expo Go cannot receive remote push. adb text input has corrupted typed data before; type in the UI.
+- Emulator. Host is `10.0.2.2`. Expo Go cannot receive remote push. The Pixel_7 AVD is shared with other projects and may resume showing another app. `adb shell input text` works when the right field is focused first (`uiautomator dump` for bounds); earlier "corruption" was taps landing in the wrong field.
+- Environment shadowing. Expo and dotenv never override a variable that already exists in the process environment. A Windows user-level `EXPO_PUBLIC_SUPABASE_URL` from another project silently pointed the app at the wrong Supabase project on 2026-09-06; it was deleted. Keep all `EXPO_PUBLIC_*`, `SUPABASE_*` and `DATABASE_URL` values in the per-project `.env` files only.
+- Local `apps/backend/.env` carries no `DATABASE_URL` or KMS key and a placeholder service-role key (unused, CB-025); supply the run-time values through the shell, as the runbook does. The Supabase anon keys in both env files are valid and identical.
 - Worktrees. Launch worktree agents only with the shell at the repo root (a nested worktree was created once). The local gitleaks hook is skipped inside linked worktrees.
 - Hooks. Pre-commit formats staged files with Prettier and scans them for secrets; pre-push runs gitleaks via Docker, lint and type-check.
 - Timestamps read through node `pg` from `timestamp(3)` columns appear shifted by the local UTC offset; the database stores UTC.

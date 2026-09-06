@@ -1,6 +1,6 @@
 # Mobile app shell (Nearby sender app) — feature handoff
 
-Status: Partially built · Last verified: 2026-05-18 (emulator Pixel_7 via Expo Go: login, dashboard, drawer, add-receiver form, admin screens, billing screen loaded)
+Status: Partially built · Last verified: 2026-09-06 (emulator Pixel_7 via Expo Go, full runbook: login, add receiver, receiver detail, backup contact, sender actions, admin screens, Data & Privacy export and remove-receiver step-ups; `docs/audits/2026-09-06/emulator-acceptance.md`)
 BRD: FR-DSB-01/02/04, FR-AUTH-02, FR-CHN-03c, FR-LNG-01 · Open backlog: CB-027 … CB-041, CB-066
 
 ## What it does
@@ -96,7 +96,12 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - CB-039 — Admin drawer items are shown to every user; non-admins get a 403 screen.
 - CB-040 — expo-doctor 15/18: hoisted duplicate `react`/`react-native`, patch mismatches, metro overrides.
 - CB-041 — Billing: no post-purchase polling, `configure()` on user switch, wrong `userData.ts` export type keys.
-- CB-066 — Stale artefacts including the four mobile legacy redirect stubs.
+- CB-066 — Stale artefacts including the four mobile legacy redirect stubs, the "Family Check-In" splash/app name and the export filename.
+- CB-071 — Dashboard never refetches on focus; statuses are stale until pull-to-refresh; a stale detail can act on a removed receiver with no feedback.
+- CB-072 — "Receiver phone" label on the sender's own number (sign-up) and on the backup contact's number; stale sign-up error banner.
+- CB-073 — Time pickers list every minute; timezone labels show fixed UTC offsets.
+- CB-077 — Opted-out SKIPPED check-ins are labelled "No backup available".
+- CB-078 — PKCE downgrades to `plain` in Expo Go (no WebCrypto); a dev build needs a crypto polyfill.
 
 ## History
 

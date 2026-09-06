@@ -1,6 +1,6 @@
 # Backup contacts — feature handoff
 
-Status: Built · Last verified: HELP → backup alert → DONE 2026-09-06 (acceptance run); CRUD 2026-09-06 (specs); mobile UI 2026-04-28 (partial smoke, archive §9)
+Status: Built · Last verified: 2026-09-06 (emulator acceptance: backup contact added through the detail screen, HELP → alert with name and location instructions → DONE resolved; `docs/audits/2026-09-06/emulator-acceptance.md`)
 BRD: FR-BAK-03, FR-CSC-05, FR-CSC-06, BRD-4.4 · Open backlog: CB-011, CB-018
 
 ## What it does

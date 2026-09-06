@@ -29,5 +29,8 @@ import { ACCOUNT_REPOSITORY } from './account.tokens';
     StepUpService,
     AccountPrivacyService,
   ],
+  // ReceiversModule consumes REMOVE_RECEIVER step-up tokens; without this export its controller's optional
+  // StepUpService resolves to undefined and every DELETE /receivers/:id is a 403 (found on the emulator, 2026-09-06).
+  exports: [StepUpService],
 })
 export class AccountModule {}

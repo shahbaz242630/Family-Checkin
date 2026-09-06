@@ -169,6 +169,21 @@ describe('AppModule', () => {
       ).toBeDefined();
     });
 
+    it('injects the optional collaborators the receiver routes depend on', async () => {
+      // Found on the emulator 2026-09-06: StepUpService was provided only inside AccountModule, so the controller's
+      // @Optional() dependency was undefined in the real graph and every DELETE /receivers/:id was a 403 while the
+      // unit spec (which injects a fake) stayed green. The billing gate and backup-contact listing are the same shape.
+      const { ReceiversController } = await import('./modules/receivers/receivers.controller');
+      const controller = booted.app.get(ReceiversController) as unknown as Record<string, unknown>;
+
+      expect(controller.stepUpService, 'StepUpService not injected into ReceiversController').toBeDefined();
+      expect(controller.billingService, 'BillingService not injected into ReceiversController').toBeDefined();
+      expect(
+        controller.backupContactsService,
+        'BackupContactsService not injected into ReceiversController',
+      ).toBeDefined();
+    });
+
     it('maps every expected route plus the fake reply and fake outbound routes', () => {
       expect(mappedRoutes(booted.app)).toEqual([...configuredModeRoutes, ...fakeModeOnlyRoutes].sort());
     });

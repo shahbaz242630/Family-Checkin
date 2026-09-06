@@ -1,6 +1,6 @@
 # Receivers and consent — feature handoff
 
-Status: Partially built · Last verified: 2026-09-06 (acceptance run) for STOP, REPORT and unrecognised replies; 2026-09-06 (specs) for the rest of the backend; 2026-05-18 (emulator) for the receiver screens
+Status: Partially built · Last verified: 2026-09-06 (emulator acceptance: add receiver, consent, STOP, REPORT, remove with OTP; acceptance run for the reply paths; specs for the rest)
 BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open backlog: CB-009, CB-012, CB-014, CB-017, CB-018, CB-036, CB-069
 
 ## What it does
@@ -97,4 +97,5 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §0a (lines 793–804), §5 (lines 928–1179), §6 (lines 1180–1257), §29f (lines 2439–2476).
 - Acceptance evidence: `docs/audits/2026-09-06/sprint1-acceptance.md` S4 (unrecognised/unknown/invalid replies), S6 (STOP), S7 (REPORT and admin unpause).
-- PRs: #17 (REPORT pause and unpause, replies never 500), #18 (fake reply route gated to fake mode plus the cron secret), #19 (consent request rendered from the message catalog), #20 (STOP/REPORT/pause/delete cancel in-flight attempts).
+- PRs: #17 (REPORT pause and unpause, replies never 500), #18 (fake reply route gated to fake mode plus the cron secret), #19 (consent request rendered from the message catalog), #20 (STOP/REPORT/pause/delete cancel in-flight attempts), #24 (CB-070: `DELETE /receivers/:id` could never consume a step-up token in the real graph).
+- Emulator acceptance 2026-09-06: `docs/audits/2026-09-06/emulator-acceptance.md` (scenarios 2–5, 8–12; findings CB-071, CB-072, CB-073, CB-074, CB-075).
