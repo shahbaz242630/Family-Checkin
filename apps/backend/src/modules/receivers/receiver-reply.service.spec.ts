@@ -923,21 +923,18 @@ describe('ReceiverReplyService', () => {
       checkInStatus: CheckInStatus.RESPONDED_HELP,
     });
     expect(escalationsRepository.escalatedCheckIns).toEqual(['check-in-1']);
-    expect(sms.sentMessages.map((sent) => sent.to)).toEqual(['+971509999999']);
+    // One alert per backup contact (CB-011): the fake WhatsApp provider claims the number, so WhatsApp wins.
     expect(whatsapp.sentMessages.map((sent) => sent.to)).toEqual(['+971509999999']);
+    expect(sms.sentMessages).toEqual([]);
     expect(
       escalationsRepository.createdEvents.map((event) => ({
         attemptNumber: event.attemptNumber,
         channel: event.channel,
         result: event.result,
       })),
-    ).toEqual([
-      { attemptNumber: 1, channel: Channel.SMS, result: EscalationResult.SUCCESS },
-      { attemptNumber: 1, channel: Channel.WHATSAPP, result: EscalationResult.SUCCESS },
-    ]);
+    ).toEqual([{ attemptNumber: 1, channel: Channel.WHATSAPP, result: EscalationResult.SUCCESS }]);
     expect(audit.events.map((event) => event.action)).toEqual([
       'check_in.responded_help',
-      'escalation.backup_contact_alerted',
       'escalation.backup_contact_alerted',
       'check_in.escalated',
     ]);
@@ -950,7 +947,7 @@ describe('ReceiverReplyService', () => {
         receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
         checkInId: 'check-in-1',
         backupContactId: 'backup-contact-1',
-        channel: Channel.SMS,
+        channel: Channel.WHATSAPP,
         attemptNumber: 1,
       },
     });

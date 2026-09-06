@@ -1,14 +1,14 @@
 # Backup contacts — feature handoff
 
 Status: Built · Last verified: 2026-09-06 (emulator acceptance: backup contact added through the detail screen, HELP → alert with name and location instructions → DONE resolved; `docs/audits/2026-09-06/emulator-acceptance.md`)
-BRD: FR-BAK-03, FR-CSC-05, FR-CSC-06, BRD-4.4 · Open backlog: CB-011, CB-018
+BRD: FR-BAK-03, FR-CSC-05, FR-CSC-06, BRD-4.4 · Open backlog: CB-018
 
 ## What it does
 
 - A sender adds up to 5 active backup contacts per receiver, each with a name, phone, relationship, and optional location instructions. Backup contacts never install the app.
 - The list shows a display name, a masked phone (`*******1234`), the relationship, and whether location instructions are saved. Raw phone, phone hash, and encrypted values never leave the backend.
 - Edit and remove work from the same list. Remove is a soft delete, so the contact stops receiving alerts but the row survives for audit.
-- When a check-in escalates, every active backup contact is messaged on SMS and WhatsApp in priority order with the receiver's name, the channels already tried, and the contact's own location instructions. The escalation triggers themselves live in `docs/handoffs/escalations-and-notifications.md`.
+- When a check-in escalates, every active backup contact is messaged once, in priority order — WhatsApp when the channel router confirms the number is reachable there, otherwise SMS (CB-011) — in the receiver's language, with the receiver's name, the channels already tried, and the contact's own location instructions. The escalation triggers themselves live in `docs/handoffs/escalations-and-notifications.md`.
 - A backup contact replying `DONE`, `CHECKED`, or `RESOLVED` from their own number closes the receiver's latest actionable check-in as `RESOLVED`. This is the BRD closure loop.
 
 ## Where it lives
@@ -45,7 +45,7 @@ Set up per `docs/EMULATOR_RUNBOOK.md`, then:
    `Invoke-RestMethod -Method Post -Uri http://localhost:3000/operations/check-ins/run -Headers $h`
 3. Fake a `HELP` reply from the **receiver's** number:
    `Invoke-RestMethod -Method Post -Uri http://localhost:3000/receiver-replies/fake -Headers $h -Body '{"fromPhone":"+971500000001","channel":"SMS","body":"HELP"}'`
-   Expect `check_in_responded_help` / `RESPONDED_HELP` on the response, the check-in row moving to `ESCALATED`, and two `escalation_events` (SMS and WHATSAPP) with `backupAlertedAt` set.
+   Expect `check_in_responded_help` / `RESPONDED_HELP` on the response, the check-in row moving to `ESCALATED`, and one `escalation_event` per backup contact (`WHATSAPP` in fake mode, where both fake providers claim every number) with `backupAlertedAt` set.
 4. Fake `DONE` from the **backup contact's** number with the same command shape. Expect `201 {"action":"check_in_resolved_by_backup","checkInStatus":"RESOLVED"}` and `resolvedAt` set.
 
 `$h` is the cron-secret header block from the runbook. The alert copy prints in the backend terminal as a `[fake-provider]` line and is returned by `GET /receiver-replies/fake/outbound` (CB-067). The 2026-09-06 acceptance run recorded the rendered English body as:
@@ -67,7 +67,6 @@ Set up per `docs/EMULATOR_RUNBOOK.md`, then:
 
 ## Known gaps
 
-- CB-011 — backup alerts fire on SMS and WhatsApp at once in hard-coded `'en'`, producing one ERROR escalation event per unconfigured channel; should pick the contact's reachable channel and the receiver's language.
 - CB-018 — the backup contact's `DONE` message text is never stored on the check-in, and `check_ins.resolutionNote` is still never written.
 - The sender's own name is not stored, so backup alerts say "their family member" (`NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS`); a sender display name column is a remaining CB-010 slice.
 - Only English catalog copy exists for the three backup templates; other languages fall back to English and flag `renderFallback` in audit metadata.
