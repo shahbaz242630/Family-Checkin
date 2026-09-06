@@ -19,3 +19,8 @@ export function isPaidAccessRequiredError(error: unknown): boolean {
     (error.code === PAID_ACCESS_REQUIRED_CODE || error.message === PAID_ACCESS_REQUIRED_MESSAGE)
   );
 }
+
+/** The backend answered 404: the receiver, contact or check-in acted on no longer exists (removed or superseded). */
+export function isNotFoundError(error: unknown): boolean {
+  return error instanceof BackendRequestError && error.status === 404;
+}

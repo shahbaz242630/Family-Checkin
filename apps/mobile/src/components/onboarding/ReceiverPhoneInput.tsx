@@ -9,6 +9,8 @@ interface ReceiverPhoneInputProps {
   onChangePhone: (phone: string) => void;
   error?: string;
   disabled?: boolean;
+  /** Field label. Defaults to the receiver's number; pass the owner of the number when it is someone else (CB-072). */
+  label?: string;
 }
 
 export function ReceiverPhoneInput({
@@ -18,18 +20,14 @@ export function ReceiverPhoneInput({
   onChangePhone,
   error,
   disabled,
+  label = 'Receiver phone',
 }: ReceiverPhoneInputProps) {
   return (
     <View style={styles.container}>
-      <Text style={styles.label}>Receiver phone</Text>
+      <Text style={styles.label}>{label}</Text>
       <View style={styles.inputRow}>
         <View style={styles.countryPicker}>
-          <CountrySelect
-            value={phoneCountry}
-            onChange={onChangePhoneCountry}
-            disabled={disabled}
-            compactDialCode
-          />
+          <CountrySelect value={phoneCountry} onChange={onChangePhoneCountry} disabled={disabled} compactDialCode />
         </View>
         <View style={[styles.phoneInputContainer, error && styles.phoneInputError]}>
           <TextInput

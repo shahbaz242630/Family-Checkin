@@ -1,7 +1,7 @@
 # Mobile app shell (Nearby sender app) — feature handoff
 
 Status: Partially built · Last verified: 2026-09-06 (emulator Pixel_7 via Expo Go, full runbook: login, add receiver, receiver detail, backup contact, sender actions, admin screens, Data & Privacy export and remove-receiver step-ups; `docs/audits/2026-09-06/emulator-acceptance.md`)
-BRD: FR-DSB-01/02/04, FR-AUTH-02, FR-CHN-03c, FR-LNG-01 · Open backlog: CB-027 … CB-041, CB-066
+BRD: FR-DSB-01/02/04, FR-AUTH-02, FR-CHN-03c, FR-LNG-01 · Open backlog: CB-027 … CB-041, CB-066, CB-078
 
 ## What it does
 
@@ -21,6 +21,7 @@ BRD: FR-DSB-01/02/04, FR-AUTH-02, FR-CHN-03c, FR-LNG-01 · Open backlog: CB-027 
 | Auth state  | `apps/mobile/src/contexts/AuthContext.tsx`, `components/auth/ProtectedRoute.tsx`          |
 | API client  | `apps/mobile/src/services/backendApi.ts`, `services/backendErrors.ts`                     |
 | Services    | `services/userData.ts`, `biometric.ts`, `pushNotifications.ts`, `revenueCat.ts`, `supabase.ts` |
+| Utils       | `apps/mobile/src/utils/` — pure, vitest-covered: `receiverStatus.ts`, `adminOperations.ts`, `checkInSkipReason.ts`, `channelProfiles.ts`, `timeOptions.ts`, `timezoneOffset.ts` |
 | Theme       | `apps/mobile/src/theme/` (`colors.ts`, `spacing.ts`) — static tokens, light only          |
 | Config      | `apps/mobile/app.json`, `metro.config.js`, `eas.json`, `.env.example`, `package.json`     |
 | Tests       | `apps/mobile/src/**/*.spec.ts` (vitest project `mobile`, node environment)                |
@@ -39,9 +40,9 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 | `/(auth)/onboarding`               | Sender onboarding wizard                                        | `router.replace('/onboarding')` from login/signup, but `ProtectedRoute` bounces authenticated users out of `(auth)` → effectively not reachable |
 | `/auth/callback`                   | OAuth / email-confirmation landing                              | from the root deep-link handler                     |
 | `/auth/reset-password`             | Sets a new password from a recovery link                        | from the root deep-link handler                     |
-| `/(main)`                          | Dashboard: receiver cards, statuses, quick actions              | drawer                                              |
-| `/(main)/receiver-setup`           | Add-receiver form (name, phone, channel, schedule, consent send)| drawer, and from dashboard empty state / quick action|
-| `/(main)/receivers/[id]`           | Receiver detail: status, schedule, channels, backup contacts, pause/resume/edit/remove | from dashboard cards       |
+| `/(main)`                          | Dashboard: receiver cards, statuses, quick actions; refetches on focus, pull-to-refresh kept | drawer                                              |
+| `/(main)/receiver-setup`           | Add-receiver form (name, phone, channel, schedule, consent send); quarter-hour window pickers, live UTC offsets | drawer, and from dashboard empty state / quick action|
+| `/(main)/receivers/[id]`           | Receiver detail: status, schedule, channels, backup contacts, pause/resume/edit/remove; refetches on focus; a 404 shows "This receiver was removed" and returns to the dashboard | from dashboard cards       |
 | `/(main)/admin-operations`         | Check-in operations summary                                     | drawer (shown to every user — CB-039)               |
 | `/(main)/admin-operations/[checkInId]` | Per-check-in attempts and escalations                       | from admin-operations rows                          |
 | `/(main)/admin-abuse-reports`      | Abuse-report review queue                                       | drawer (shown to every user — CB-039)               |
@@ -73,6 +74,11 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - RevenueCat is a no-op without a native build: `revenueCatAvailability()` returns unconfigured on web or with no platform key, and `loadPurchases()` returning null yields "RevenueCat native module is unavailable. Use a development or store build." Purchase/restore controls stay disabled — expected in Expo Go.
 - `Sidebar` and `ProfileMenu` render outside the `(main)` `Stack` so the drawers survive route changes; `DrawerContext` handlers stay wrapped in `useCallback`/`useMemo` because the provider wraps every authenticated route.
 - `ProtectedRoute` redirects authenticated users out of `(auth)` and unauthenticated users out of `(main)`. Adding an authenticated screen under `(auth)` makes it unreachable.
+- Screens refetch on focus. `useReceivers` (dashboard) and the receiver detail load inside `useFocusEffect` from `expo-router` — first mount and every return to the screen — and keep pull-to-refresh. `loading` blanks the screen only before the first successful load; later refetches leave the current content visible. `useReceivers` therefore has to be called from a screen inside a navigator.
+- A receiver-detail action that returns 404 reloads the receiver: if the receiver itself is gone, the screen says "This receiver was removed" and `router.replace('/(main)')`; otherwise it shows the message on a refreshed detail (`isNotFoundError` in `services/backendErrors.ts`).
+- Status labels: a SKIPPED check-in reads "Skipped" unless a skip reason is known (`utils/checkInSkipReason.ts`); "No backup available" is reserved for the `no_backup_contacts` reason, which no payload carries yet (CB-077 note in `docs/handoffs/admin-operations.md`). Consent and pause still win over the latest check-in.
+- Pickers: `TimeSelect` lists quarter-hour steps by default (`utils/timeOptions.ts`, 96 rows) and keeps a loaded off-step value in the list; `TimezoneSelect` computes the UTC offset from the IANA zone at render time (`utils/timezoneOffset.ts`), so the static `offset` in `data/timezones.ts` is only the fallback when Intl cannot format the zone.
+- `ReceiverPhoneInput` takes a `label` (default "Receiver phone"); the sign-up form passes "Your phone number" and the backup-contact form "Backup contact phone". The sign-up error banner clears when any field changes.
 - Screens import from specific modules (`services/backendApi`, `services/userData`, `data/countries`, …), never the `services`/`data` barrels — the barrels pull native-facing code into route bundles.
 - `metro.config.js` sets `watchFolders` to the workspace root, adds both `node_modules` paths, and sets `disableHierarchicalLookup = true`; this is what lets Metro resolve `expo-router/entry-classic` in the npm-workspaces monorepo.
 - `biometric.ts` guards every call with `isWebRuntime` and stores only `biometric_enabled` / `biometric_user_id` in SecureStore; it does not gate any login path.
@@ -97,13 +103,10 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - CB-040 — expo-doctor 15/18: hoisted duplicate `react`/`react-native`, patch mismatches, metro overrides.
 - CB-041 — Billing: no post-purchase polling, `configure()` on user switch, wrong `userData.ts` export type keys.
 - CB-066 — Stale artefacts including the four mobile legacy redirect stubs, the "Family Check-In" splash/app name and the export filename.
-- CB-071 — Dashboard never refetches on focus; statuses are stale until pull-to-refresh; a stale detail can act on a removed receiver with no feedback.
-- CB-072 — "Receiver phone" label on the sender's own number (sign-up) and on the backup contact's number; stale sign-up error banner.
-- CB-073 — Time pickers list every minute; timezone labels show fixed UTC offsets.
-- CB-077 — Opted-out SKIPPED check-ins are labelled "No backup available".
 - CB-078 — PKCE downgrades to `plain` in Expo Go (no WebCrypto); a dev build needs a crypto polyfill.
 
 ## History
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §4 (lines 885–927, first Expo web smoke and the `receiver-setup` route fix), §5 (lines 928–1179, replacing the Supabase loved-one screens with backend receiver reads), §9 (lines 1400–1420, Android `10.0.2.2` rewrite and the `80xx` CORS pattern), §33 (lines 3340–3365, import splitting and drawer memoisation), Android Studio / Expo Go QA (lines 3440–3472, the Expo Go push crash fix). Known Issues at lines 766–779 record the still-open Expo web warnings: nested `auth/callback` and `auth/reset-password` route-name warnings, `Unexpected text node` on auth screens, and deprecated `shadow*` style props.
 - Feature detail lives in the auth, receivers, admin-operations and billing handoffs in `docs/handoffs/`.
+- Sprint 2 mobile findings from the emulator run (CB-071 focus refetch and removed-receiver feedback, CB-072 phone labels and sign-up banner, CB-073 quarter-hour pickers and live offsets, CB-077 skipped-status labels): `sprint2/cb-071-072-073-077-mobile`.

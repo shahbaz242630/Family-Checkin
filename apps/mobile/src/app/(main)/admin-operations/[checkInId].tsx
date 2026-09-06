@@ -10,6 +10,7 @@ import {
   formatOperationsDateTime,
   operationsStatusLabel,
 } from '../../../utils/adminOperations';
+import { inferCheckInSkipReason } from '../../../utils/checkInSkipReason';
 
 export default function AdminOperationsDetailScreen() {
   const router = useRouter();
@@ -90,9 +91,15 @@ export default function AdminOperationsDetailScreen() {
       </Pressable>
 
       <View style={styles.metaBand}>
-        <InfoBlock label="Status" value={operationsStatusLabel(detail.status)} />
+        <InfoBlock
+          label="Status"
+          value={operationsStatusLabel(detail.status, inferCheckInSkipReason(detail.attempts))}
+        />
         <InfoBlock label="Channel" value={detail.channelUsed ?? 'Not sent'} />
-        <InfoBlock label="Alerts" value={`${detail.successfulEscalationCount}/${detail.escalationAttemptCount} delivered`} />
+        <InfoBlock
+          label="Alerts"
+          value={`${detail.successfulEscalationCount}/${detail.escalationAttemptCount} delivered`}
+        />
       </View>
 
       <View style={styles.section}>

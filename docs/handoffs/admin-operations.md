@@ -17,9 +17,9 @@ BRD: FR-ADM-01, FR-ADM-02 (admin surface), FR-SAF-05 (abuse review) · Open back
 | Layer   | Paths                                    |
 | ------- | ---------------------------------------- |
 | Backend | `apps/backend/src/modules/admin-abuse/` (all files); `apps/backend/src/modules/operations/operations.controller.ts`, `operations-visibility.service.ts`, `prisma-operations-visibility.repository.ts`; `apps/backend/src/modules/auth/admin-auth.service.ts`, `admin-users.repository.ts`, `prisma-admin-users.repository.ts`, `auth.controller.ts`; `apps/backend/src/modules/receivers/abuse-review-pause.ts` (pause constants), `receiver-reply.service.ts` (REPORT handler) |
-| Mobile  | `apps/mobile/src/app/(main)/admin-operations.tsx`, `apps/mobile/src/app/(main)/admin-operations/[checkInId].tsx`, `apps/mobile/src/app/(main)/admin-abuse-reports.tsx`, `apps/mobile/src/app/(main)/_layout.tsx` (stack screens), `apps/mobile/src/components/layout/Sidebar.tsx` (`MENU_ITEMS`), `apps/mobile/src/utils/adminOperations.ts`, `apps/mobile/src/services/backendApi.ts` |
+| Mobile  | `apps/mobile/src/app/(main)/admin-operations.tsx`, `apps/mobile/src/app/(main)/admin-operations/[checkInId].tsx`, `apps/mobile/src/app/(main)/admin-abuse-reports.tsx`, `apps/mobile/src/app/(main)/_layout.tsx` (stack screens), `apps/mobile/src/components/layout/Sidebar.tsx` (`MENU_ITEMS`), `apps/mobile/src/utils/adminOperations.ts`, `apps/mobile/src/utils/checkInSkipReason.ts`, `apps/mobile/src/services/backendApi.ts` |
 | Data    | `admin_users` (`AdminRole`), `abuse_reports` (`AbuseReportStatus`), `receivers.pausedUntil` / `pausedReason`; DDL in `apps/backend/prisma/migrations/202604260001_initial_nearby_schema/migration.sql`; RLS in `apps/backend/prisma/20260430_internal_tables_rls.sql` (`admin_users` is deny-by-default, backend/service-role only) |
-| Tests   | `admin-auth.service.spec.ts`, `prisma-admin-users.repository.spec.ts`, `auth.controller.spec.ts`, `operations.controller.spec.ts`, `operations-visibility.service.spec.ts`, `prisma-operations-visibility.repository.spec.ts`, `admin-abuse.controller.spec.ts`, `admin-abuse.service.spec.ts`, `prisma-admin-abuse.repository.spec.ts`, `app.module.spec.ts` (route table), `apps/mobile/src/utils/adminOperations.spec.ts` |
+| Tests   | `admin-auth.service.spec.ts`, `prisma-admin-users.repository.spec.ts`, `auth.controller.spec.ts`, `operations.controller.spec.ts`, `operations-visibility.service.spec.ts`, `prisma-operations-visibility.repository.spec.ts`, `admin-abuse.controller.spec.ts`, `admin-abuse.service.spec.ts`, `prisma-admin-abuse.repository.spec.ts`, `app.module.spec.ts` (route table), `apps/mobile/src/utils/adminOperations.spec.ts`, `apps/mobile/src/utils/checkInSkipReason.spec.ts` |
 
 ## Routes and contracts
 
@@ -56,11 +56,11 @@ Provisioning an admin: there is no invite endpoint, seed or script. Insert a row
 - `REVIEWED_ACTION_TAKEN` must not resume the receiver.
 - Listing, detail and review all exclude soft-deleted receivers (`receiver: { deletedAt: null }`).
 - `OPERATIONS_CRON_SECRET` never reaches an admin or client surface; the admin GET routes stay throttled while only the cron POST skips the limiter.
+- Status labels (CB-077). A SKIPPED check-in reads "Skipped" in the summary counts and recent rows because `GET /operations/check-ins/summary` carries no skip reason. The check-in detail derives the reason from the cancelled attempts' `failureReason` (`receiver_opted_out` → "Opted out", `abuse_reported` → "Reported", `receiver_paused` → "Paused", `receiver_deleted` → "Removed"; `utils/checkInSkipReason.ts`). "No backup available" is reserved for a `no_backup_contacts` reason, which no payload carries; to label the summary correctly the backend would need a `skipReason` on `check_ins` (written by `markCancelled` from `cancelOpenCheckInsForReceiver`'s reason and by the no-contacts branch of `escalateBackupContacts`) and exposed on `recent[]`, `statusCounts` and `ReceiverSummary.latestCheckIn`.
 
 ## Known gaps
 
 - CB-039 — the drawer lists `Admin Operations` and `Abuse Reports` for every signed-in user; a non-admin reaches the screen and gets the access-denied state instead of never seeing the entry. Fix is to gate `MENU_ITEMS` on a cached `getAdminMe` result.
-- CB-077 — a check-in SKIPPED because the receiver opted out is counted under "No backup available" in the status counts.
 - CB-062 — no health metrics beyond check-in counts (receivers, channel error rates, abuse, billing), no reviewer note, no report-content view, and no pause-account / contact-sender abuse actions.
 - Founder decision 4 (`docs/COMPLETION_BACKLOG.md`) is open: keep the admin screens inside the sender app or build a separate Next.js panel. It shapes both CB-039 and CB-062.
 - No admin provisioning, invite or deactivation endpoint; `admin_users` rows are inserted and edited by hand.

@@ -1,5 +1,6 @@
 // Receiver dashboard hook - manages receiver summary data.
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
+import { useFocusEffect } from 'expo-router';
 import { useAuth } from './useAuth';
 import { listReceivers, type BackendReceiverSummary } from '../services/backendApi';
 
@@ -50,11 +51,18 @@ interface UseLovedOnesReturn {
   refreshLovedOnes: () => Promise<void>;
 }
 
+/**
+ * Receivers for the dashboard. Fetches whenever the screen gains focus (first mount, returning from a detail or
+ * the add-receiver form, coming back to the app) so a reply or a removal shows without pull-to-refresh (CB-071).
+ * `loading` is true only until the first load completes; focus refetches keep the current list on screen.
+ * Must be called from a screen inside a navigator (it relies on `useFocusEffect`).
+ */
 export function useReceivers(): UseReceiversReturn {
   const { user } = useAuth();
   const [receivers, setReceivers] = useState<ReceiverDashboardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const hasLoadedRef = useRef(false);
 
   const fetchReceivers = useCallback(async () => {
     if (!user?.id) {
@@ -64,11 +72,14 @@ export function useReceivers(): UseReceiversReturn {
     }
 
     try {
-      setLoading(true);
+      if (!hasLoadedRef.current) {
+        setLoading(true);
+      }
       setError(null);
 
       const receiversFromBackend = await listReceivers();
       setReceivers(receiversFromBackend.map(toReceiverDashboardItem));
+      hasLoadedRef.current = true;
     } catch (err) {
       console.error('Error fetching receivers:', err);
       setError(err instanceof Error ? err : new Error('Failed to fetch receivers'));
@@ -77,9 +88,11 @@ export function useReceivers(): UseReceiversReturn {
     }
   }, [user?.id]);
 
-  useEffect(() => {
-    fetchReceivers();
-  }, [fetchReceivers]);
+  useFocusEffect(
+    useCallback(() => {
+      void fetchReceivers();
+    }, [fetchReceivers]),
+  );
 
   return {
     receivers,

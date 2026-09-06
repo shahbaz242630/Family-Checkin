@@ -1,9 +1,12 @@
 // Timezone data organized by region/country
+import { formatUtcOffsetLabel } from '../utils/timezoneOffset';
+
 export interface TimezoneOption {
   value: string;
   label: string;
   city: string;
   country: string;
+  /** Static fallback label only. Pickers compute the live offset from `value` at render time (CB-073). */
   offset: string;
 }
 
@@ -51,7 +54,13 @@ export const TIMEZONES: TimezoneOption[] = [
   { value: 'Europe/Moscow', label: 'Russia (Moscow)', city: 'Moscow', country: 'Russia', offset: 'UTC+3' },
 
   // Africa
-  { value: 'Africa/Johannesburg', label: 'South Africa', city: 'Johannesburg', country: 'South Africa', offset: 'UTC+2' },
+  {
+    value: 'Africa/Johannesburg',
+    label: 'South Africa',
+    city: 'Johannesburg',
+    country: 'South Africa',
+    offset: 'UTC+2',
+  },
   { value: 'Africa/Lagos', label: 'Nigeria', city: 'Lagos', country: 'Nigeria', offset: 'UTC+1' },
   { value: 'Africa/Nairobi', label: 'Kenya', city: 'Nairobi', country: 'Kenya', offset: 'UTC+3' },
 
@@ -80,28 +89,19 @@ function formatTimezoneLabel(value: string): string {
   return parts[parts.length - 1].replace(/_/g, ' ');
 }
 
-function formatTimezoneOffset(value: string): string {
-  try {
-    const parts = new Intl.DateTimeFormat('en', {
-      timeZone: value,
-      timeZoneName: 'shortOffset',
-    }).formatToParts(new Date());
-    return parts.find((part) => part.type === 'timeZoneName')?.value.replace('GMT', 'UTC') ?? '';
-  } catch {
-    return '';
-  }
-}
-
 function getRuntimeTimezones(): TimezoneOption[] {
-  const supportedValuesOf = (Intl as typeof Intl & {
-    supportedValuesOf?: (key: 'timeZone') => string[];
-  }).supportedValuesOf;
+  const supportedValuesOf = (
+    Intl as typeof Intl & {
+      supportedValuesOf?: (key: 'timeZone') => string[];
+    }
+  ).supportedValuesOf;
 
   if (!supportedValuesOf) {
     return [];
   }
 
   try {
+    const now = new Date();
     return supportedValuesOf('timeZone').map((value) => {
       const [region] = value.split('/');
       const city = formatTimezoneLabel(value);
@@ -111,7 +111,7 @@ function getRuntimeTimezones(): TimezoneOption[] {
         label: `${city} (${value})`,
         city,
         country: region,
-        offset: formatTimezoneOffset(value),
+        offset: formatUtcOffsetLabel(value, now, ''),
       };
     });
   } catch {
@@ -119,9 +119,16 @@ function getRuntimeTimezones(): TimezoneOption[] {
   }
 }
 
+// The runtime list is several hundred zones formatted through Intl; build it once per process instead of on
+// every keystroke of the picker search. Offsets in it are fallbacks only (see `TimezoneOption.offset`).
+let availableTimezones: TimezoneOption[] | undefined;
+
 export function getAvailableTimezones(): TimezoneOption[] {
-  const runtimeTimezones = getRuntimeTimezones();
-  return runtimeTimezones.length > 0 ? runtimeTimezones : TIMEZONES;
+  if (!availableTimezones) {
+    const runtimeTimezones = getRuntimeTimezones();
+    availableTimezones = runtimeTimezones.length > 0 ? runtimeTimezones : TIMEZONES;
+  }
+  return availableTimezones;
 }
 
 // Search timezones by query (city, country, or label)
@@ -134,7 +141,7 @@ export function searchTimezones(query: string): TimezoneOption[] {
     (tz) =>
       tz.label.toLowerCase().includes(lowerQuery) ||
       tz.city.toLowerCase().includes(lowerQuery) ||
-      tz.country.toLowerCase().includes(lowerQuery)
+      tz.country.toLowerCase().includes(lowerQuery),
   );
 }
 

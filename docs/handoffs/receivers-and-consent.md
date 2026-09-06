@@ -10,16 +10,16 @@ BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open
 - `STOP` revokes consent, writes a 7-day opt-out cooldown row and cancels any attempt still queued for today.
 - `REPORT` files an abuse report and pauses the receiver until an admin reviews it; the open check-in and its pending attempts are cancelled.
 - The sender can pause (optionally until a date), resume, edit and remove a receiver. Remove is a soft delete behind an SMS step-up code; pause and remove send the receiver a best-effort lifecycle message.
-- Mobile shows receivers on the dashboard with a consent/check-in status chip, and a detail screen with pause/resume, edit, backup contacts and remove.
+- Mobile shows receivers on the dashboard with a consent/check-in status chip, and a detail screen with pause/resume, edit, backup contacts and remove. Both refetch on focus; a detail whose receiver was removed elsewhere says "This receiver was removed" and returns to the dashboard.
 
 ## Where it lives
 
 | Layer   | Paths                                                                                                                                                                                                                                                                                                     |
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Backend | `apps/backend/src/modules/receivers/` — `receivers.controller.ts`, `receivers.service.ts`, `receiver-consent.service.ts`, `receiver-reply.service.ts`, `receiver-replies.controller.ts`, `receiver-replies.module.ts`, `prisma-receivers.repository.ts`, `abuse-review-pause.ts`                             |
-| Mobile  | `apps/mobile/src/app/(main)/index.tsx` (dashboard), `apps/mobile/src/app/(main)/receivers/[id].tsx` (detail), `apps/mobile/src/app/(main)/receiver-setup.tsx` (re-exports `apps/mobile/src/app/(auth)/onboarding.tsx`), `apps/mobile/src/hooks/useLovedOnes.ts`, `apps/mobile/src/utils/channelProfiles.ts`, `apps/mobile/src/utils/receiverStatus.ts` |
+| Mobile  | `apps/mobile/src/app/(main)/index.tsx` (dashboard), `apps/mobile/src/app/(main)/receivers/[id].tsx` (detail), `apps/mobile/src/app/(main)/receiver-setup.tsx` (re-exports `apps/mobile/src/app/(auth)/onboarding.tsx`), `apps/mobile/src/hooks/useLovedOnes.ts`, `apps/mobile/src/utils/channelProfiles.ts`, `apps/mobile/src/utils/receiverStatus.ts`, `apps/mobile/src/utils/checkInSkipReason.ts`, `apps/mobile/src/components/onboarding/TimeSelect.tsx` + `utils/timeOptions.ts`, `TimezoneSelect.tsx` + `utils/timezoneOffset.ts` |
 | Data    | `receivers`, `opt_out_cooldowns`, `abuse_reports`, `audit_logs`; migrations `202604260001_initial_nearby_schema`, `202605150001_receiver_remove_step_up`                                                                                                                                                   |
-| Tests   | `receivers.controller.spec.ts`, `receivers.service.spec.ts`, `receiver-consent.service.spec.ts`, `receiver-reply.service.spec.ts`, `receiver-replies.controller.spec.ts`, `prisma-receivers.repository.spec.ts`; mobile `utils/receiverStatus.spec.ts`, `utils/channelProfiles.spec.ts`, `services/backendApi.spec.ts` |
+| Tests   | `receivers.controller.spec.ts`, `receivers.service.spec.ts`, `receiver-consent.service.spec.ts`, `receiver-reply.service.spec.ts`, `receiver-replies.controller.spec.ts`, `prisma-receivers.repository.spec.ts`; mobile `utils/receiverStatus.spec.ts`, `utils/checkInSkipReason.spec.ts`, `utils/channelProfiles.spec.ts`, `utils/timeOptions.spec.ts`, `utils/timezoneOffset.spec.ts`, `services/backendApi.spec.ts`, `services/backendErrors.spec.ts` |
 
 ## Routes and contracts
 

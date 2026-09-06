@@ -1,15 +1,6 @@
 // Signup screen - Google, Apple, and Email registration
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  Pressable,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  Linking,
-} from 'react-native';
+import { View, Text, StyleSheet, Pressable, KeyboardAvoidingView, Platform, ScrollView, Linking } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
@@ -138,10 +129,7 @@ export default function SignupScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <KeyboardAvoidingView style={styles.keyboardView} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
@@ -153,25 +141,13 @@ export default function SignupScreen() {
               <Text style={styles.backButtonText}>← Back</Text>
             </Pressable>
             <Text style={styles.title}>Create your account</Text>
-            <Text style={styles.subtitle}>
-              Set up private check-ins for your receivers
-            </Text>
+            <Text style={styles.subtitle}>Set up private check-ins for your receivers</Text>
           </View>
 
           {/* Social Buttons */}
           <View style={styles.socialButtons}>
-            <SocialButton
-              provider="google"
-              onPress={handleGoogleSignUp}
-              loading={loading}
-              mode="signup"
-            />
-            <SocialButton
-              provider="apple"
-              onPress={handleAppleSignUp}
-              loading={loading}
-              mode="signup"
-            />
+            <SocialButton provider="google" onPress={handleGoogleSignUp} loading={loading} mode="signup" />
+            <SocialButton provider="apple" onPress={handleAppleSignUp} loading={loading} mode="signup" />
           </View>
 
           {/* Divider */}
@@ -187,6 +163,7 @@ export default function SignupScreen() {
               onChangeText={(text) => {
                 setFullName(text);
                 setNameError('');
+                clearError();
               }}
               error={nameError}
             />
@@ -201,17 +178,23 @@ export default function SignupScreen() {
               onChangeText={(text) => {
                 setEmail(text);
                 setEmailError('');
+                clearError();
               }}
               error={emailError}
             />
 
             <ReceiverPhoneInput
+              label="Your phone number"
               phoneCountry={phoneCountry}
               phone={phone}
-              onChangePhoneCountry={setPhoneCountry}
+              onChangePhoneCountry={(isoCode) => {
+                setPhoneCountry(isoCode);
+                clearError();
+              }}
               onChangePhone={(value) => {
                 setPhone(value.replace(/\D/g, ''));
                 setPhoneError('');
+                clearError();
               }}
               error={phoneError}
               disabled={loading}
@@ -226,12 +209,11 @@ export default function SignupScreen() {
                 onChangeText={(text) => {
                   setPassword(text);
                   setPasswordError('');
+                  clearError();
                 }}
                 error={passwordError}
               />
-              <Text style={styles.passwordHint}>
-                Use 8+ characters with uppercase, lowercase, numbers & symbols
-              </Text>
+              <Text style={styles.passwordHint}>Use 8+ characters with uppercase, lowercase, numbers & symbols</Text>
             </View>
 
             {/* Error Message */}
@@ -251,9 +233,7 @@ export default function SignupScreen() {
 
             {/* Terms & Privacy */}
             <View style={styles.termsContainer}>
-              <Text style={styles.termsText}>
-                By creating an account, you agree to our{' '}
-              </Text>
+              <Text style={styles.termsText}>By creating an account, you agree to our </Text>
               <View style={styles.termsLinks}>
                 <Pressable onPress={openTermsOfService}>
                   <Text style={styles.termsLink}>Terms of Service</Text>
