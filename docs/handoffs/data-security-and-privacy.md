@@ -80,6 +80,11 @@ This feature owns scripts, not HTTP routes. All run from `apps/backend` and read
 - CB-056 — nothing schedules partition maintenance: months past the pre-created 24 fall into `_default` and the helper then fails; `archive_operational_logs_before` is never called.
 - CB-059 — no retention job: no soft-delete window, no hard-delete purge, no 6-year audit archive.
 
+## Hosted database
+
+- Schema on the hosted Supabase project is current through migration `202609060202` as of 2026-09-06. There is still no `_prisma_migrations` table there, so `prisma migrate deploy` must not be run against it without baselining first.
+- How migrations reach it: the founder runs a script that posts each `migration.sql` to the Supabase management API (`POST /v1/projects/<ref>/database/query`, authenticated with the founder's personal access token, `SUPABASE_ACCESS_TOKEN`). The engineering side prepares the script and a read-only preflight; the founder executes the apply (the harness blocks Claude from writing to the hosted project). Re-create the script from `docs/audits/2026-09-06/sprint2-acceptance.md` if the session scratchpad is gone: preflight the expected columns/tables, apply only the missing files in name order, re-run the preflight, check RLS and policies on any new table.
+
 ## History
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` "Supabase Status" (lines 85–183), §24 RLS hardening (1964–1991), §25 Security Advisor WARN fixes (1992–2032), §29e (2384–2438), §29h existing-surface audit (2519–2582), partitioned operational logs applied 2026-05-10 (563–586), Prisma 7 note (781–784).
