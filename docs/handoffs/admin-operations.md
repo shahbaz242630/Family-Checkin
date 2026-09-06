@@ -69,4 +69,4 @@ Provisioning an admin: there is no invite endpoint, seed or script. Insert a row
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §22 (lines 1865–1916, operations visibility), §23 (1917–1963, admin auth foundation), §26 (2033–2100, dashboard and check-in detail UI), §26b (2101–2151, abuse review queue), §0a (793–804, sprint 1).
 - Acceptance: `docs/audits/2026-09-06/sprint1-acceptance.md` scenario S7 (REPORT → pause → `AdminAbuseService.markSafe` on the real DI graph → resumed).
-- PRs: #17 (CB-007 REPORT pauses check-ins, reviewed-safe unpauses).
+- PRs: #17 (CB-007 REPORT pauses check-ins, reviewed-safe unpauses), #25 (CB-077: SKIPPED reads "Skipped" in the summary, by cancellation reason in the check-in detail).
