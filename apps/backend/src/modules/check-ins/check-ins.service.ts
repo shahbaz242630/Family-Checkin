@@ -6,6 +6,8 @@ import { ChannelRouterService } from '../channels/channel-router.service';
 import { renderingAuditMetadata, type MessageRendering } from '../channels/message-catalog.service';
 import { NEUTRAL_RECEIVER_GREETING_NAME, NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { UsersService } from '../users/users.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { CheckInAlreadyScheduledError } from './check-ins.repository';
 import type {
@@ -14,6 +16,7 @@ import type {
   CheckInReceiverCandidate,
   CheckInRecord,
   CheckInsRepository,
+  ScheduleInvalidReceiver,
 } from './check-ins.repository';
 import { CHECK_INS_REPOSITORY } from './check-ins.tokens';
 import type { VoiceCallerIdRepository } from './voice-caller-id.repository';
@@ -44,6 +47,20 @@ export interface RecordVoiceProviderFailureResult {
   updated: boolean;
 }
 
+/** A Twilio `StatusCallback` for an outbound SMS or WhatsApp message (CB-016). */
+export interface RecordMessagingProviderStatusInput {
+  providerMessageId?: string;
+  /** Twilio `MessageStatus`: queued, sent, delivered, read, undelivered, failed. */
+  messageStatus?: string;
+  /** Twilio `ErrorCode` (a numeric code such as 30003); audited, never shown to anyone. */
+  errorCode?: string;
+}
+
+export interface RecordMessagingProviderStatusResult {
+  /** True when a SENT attempt was marked FAILED because of this status. */
+  updated: boolean;
+}
+
 /** Why a receiver's open check-ins are being cancelled; stored on the skipped attempts and audited (CB-008). */
 export type CancelOpenCheckInsReason = 'receiver_opted_out' | 'abuse_reported' | 'receiver_paused' | 'receiver_deleted';
 
@@ -64,6 +81,10 @@ interface CheckInRef {
 
 const PROVIDER_SEND_FAILED = 'provider_send_failed';
 const CASCADE_EXHAUSTED = 'cascade_exhausted';
+/** Audit and push `reason` for a receiver whose stored schedule cannot be evaluated (CB-069). */
+const SCHEDULE_INVALID = 'schedule_invalid';
+/** Twilio message statuses that mean the message will never reach the handset (CB-016). */
+const MESSAGING_FAILURE_STATUSES: readonly string[] = ['undelivered', 'failed'];
 /** Message templates for a check-in's first attempt and for every later attempt of the same check-in (CB-010). */
 const CHECK_IN_FIRST_ATTEMPT_TEMPLATE = 'checkin_daily';
 const CHECK_IN_LATER_ATTEMPT_TEMPLATE = 'checkin_retry';
@@ -88,6 +109,12 @@ export class CheckInsService {
     @Inject(BillingService)
     private readonly billingService?: Pick<BillingService, 'getBillingStatus'>,
     private readonly voiceCallerIds?: VoiceCallerIdRepository,
+    @Optional()
+    @Inject(UsersService)
+    private readonly usersService?: Pick<UsersService, 'senderDisplayNameFor'>,
+    @Optional()
+    @Inject(NotificationsService)
+    private readonly notificationsService?: Pick<NotificationsService, 'sendQuietUpdateToUser'>,
   ) {}
 
   async sendDueCheckIns(): Promise<SendDueCheckInsResult> {
@@ -112,6 +139,7 @@ export class CheckInsService {
           reason: invalid.reason,
         },
       });
+      await this.notifySenderOfInvalidSchedule(invalid);
     }
     if (due.recovered?.length) {
       await this.checkInsRepository.clearScheduleInvalid?.({ receiverIds: due.recovered });
@@ -248,6 +276,59 @@ export class CheckInsService {
   }
 
   /**
+   * Delivery status of an outbound SMS or WhatsApp message (CB-016). `undelivered` and `failed` mark the SENT
+   * attempt FAILED (`twilio_status_<status>`) through the same guarded transition as a voice failure, pull the
+   * next pending attempt of the cascade forward so the next tick sends it, and flag the check-in when nothing is
+   * left. Any other status is the provider's business and changes nothing here; a closed check-in is never
+   * reopened or flagged (CB-006).
+   */
+  async recordMessagingProviderStatus(
+    input: RecordMessagingProviderStatusInput,
+  ): Promise<RecordMessagingProviderStatusResult> {
+    const providerMessageId = input.providerMessageId?.trim();
+    const status = input.messageStatus?.trim().toLowerCase();
+    if (!providerMessageId || !status || !MESSAGING_FAILURE_STATUSES.includes(status)) {
+      return { updated: false };
+    }
+
+    const now = this.now();
+    const failureReason = `twilio_status_${status}`;
+    const attempt = await this.checkInsRepository.markSentAttemptProviderFailure({
+      providerMessageId,
+      completedAt: now,
+      providerStatus: status,
+      failureReason,
+    });
+    if (!attempt) {
+      return { updated: false };
+    }
+
+    const checkIn = await this.checkInsRepository.findById(attempt.checkInId);
+    if (!checkIn) {
+      return { updated: true };
+    }
+
+    await this.auditAttemptFailed({
+      checkInId: checkIn.id,
+      receiverId: checkIn.receiverId,
+      channel: attempt.channel,
+      attemptNumber: attempt.attemptNumber,
+      failureReason,
+      providerErrorCode: input.errorCode?.trim() || undefined,
+    });
+    if (this.isClosed(checkIn.status)) {
+      return { updated: true };
+    }
+
+    // The cascade does not wait out the stagger for a message the carrier already gave up on: the next attempt
+    // becomes due now and the next tick sends it, exactly as it does after a timeout.
+    await this.checkInsRepository.expediteNextPendingAttempt?.({ checkInId: checkIn.id, dueAt: now });
+    await this.flagIfExhausted({ checkInId: checkIn.id, receiverId: checkIn.receiverId });
+
+    return { updated: true };
+  }
+
+  /**
    * Skips every pending attempt and closes every open check-in of a receiver, so a STOP, a REPORT, a pause or a
    * deletion stops the cascade at once instead of after the next message goes out (CB-008). Attempts already
    * with the provider stay SENT until they time out; a closed check-in is never reopened by them.
@@ -305,6 +386,43 @@ export class CheckInsService {
   /** True when this tick is the first to see the receiver's schedule as invalid; a repository without the stamp audits every tick. */
   private async stampScheduleInvalid(receiverId: string, seenAt: Date): Promise<boolean> {
     return (await this.checkInsRepository.markScheduleInvalid?.({ receiverId, seenAt })) ?? true;
+  }
+
+  /**
+   * One quiet push to the sender per schedule version, sent only from the tick that stamped the receiver (CB-069).
+   * Audited like every other sender push (`sender_push.sent` / `not_delivered` / `failed`, with `deepLink`,
+   * CB-068); a push failure never ends the tick.
+   */
+  private async notifySenderOfInvalidSchedule(invalid: ScheduleInvalidReceiver): Promise<void> {
+    if (!this.notificationsService) {
+      return;
+    }
+
+    const deepLink = `/(main)/receivers/${invalid.receiverId}`;
+    const metadata = { receiverId: invalid.receiverId, reason: SCHEDULE_INVALID, deepLink };
+    try {
+      const result = await this.notificationsService.sendQuietUpdateToUser({
+        userId: invalid.userId,
+        title: 'Check-in schedule needs attention',
+        body: 'We could not work out when to check in on one of your receivers. Open the app to review the time window and timezone.',
+        data: { receiverId: invalid.receiverId, reason: SCHEDULE_INVALID, deepLink },
+      });
+      await this.auditService.append({
+        entityType: 'receiver',
+        entityId: invalid.receiverId,
+        action: result.sent > 0 ? 'sender_push.sent' : 'sender_push.not_delivered',
+        actorType: ActorType.SYSTEM,
+        metadata: { ...metadata, attempted: result.attempted, sent: result.sent, failed: result.failed },
+      });
+    } catch {
+      await this.auditService.append({
+        entityType: 'receiver',
+        entityId: invalid.receiverId,
+        action: 'sender_push.failed',
+        actorType: ActorType.SYSTEM,
+        metadata,
+      });
+    }
   }
 
   /**
@@ -397,7 +515,11 @@ export class CheckInsService {
     const result = await this.channelRouter.sendMessage(receiver.primaryChannel, to, {
       templateKey: CHECK_IN_FIRST_ATTEMPT_TEMPLATE,
       language: receiver.language,
-      variables: this.checkInMessageVariables(receiver.nameEncrypted, receiver.personalNoteEncrypted),
+      variables: await this.checkInMessageVariables({
+        senderUserId: receiver.userId,
+        nameEncrypted: receiver.nameEncrypted,
+        personalNoteEncrypted: receiver.personalNoteEncrypted,
+      }),
     });
 
     return {
@@ -407,16 +529,28 @@ export class CheckInsService {
     };
   }
 
-  /** Receiver-facing copy names the receiver, the sender (neutral until sender names are stored) and the note. */
-  private checkInMessageVariables(
-    nameEncrypted: string | undefined,
-    personalNoteEncrypted: string | undefined,
-  ): Record<string, string> {
-    const personalNote = personalNoteEncrypted ? this.cryptoService.decrypt(personalNoteEncrypted) : undefined;
+  /**
+   * Receiver-facing copy names the receiver, the sender and the note. The sender's name comes from `users`
+   * through `UsersService` (CB-010) and falls back to the neutral wording when it is unknown; it is decrypted here,
+   * for the provider call, and never written to an audit row.
+   */
+  private async checkInMessageVariables(input: {
+    senderUserId: string | undefined;
+    nameEncrypted: string | undefined;
+    personalNoteEncrypted: string | undefined;
+  }): Promise<Record<string, string>> {
+    const personalNote = input.personalNoteEncrypted
+      ? this.cryptoService.decrypt(input.personalNoteEncrypted)
+      : undefined;
+    const senderDisplayName =
+      (input.senderUserId ? await this.usersService?.senderDisplayNameFor(input.senderUserId) : undefined) ??
+      NEUTRAL_SENDER_DISPLAY_NAME;
 
     return {
-      receiverName: nameEncrypted ? this.cryptoService.decrypt(nameEncrypted) : NEUTRAL_RECEIVER_GREETING_NAME,
-      senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME,
+      receiverName: input.nameEncrypted
+        ? this.cryptoService.decrypt(input.nameEncrypted)
+        : NEUTRAL_RECEIVER_GREETING_NAME,
+      senderDisplayName,
       ...(personalNote ? { personalNote } : {}),
     };
   }
@@ -498,10 +632,11 @@ export class CheckInsService {
             // that reaches the cascade unsent (a sender try-later row) still reads as a first check-in.
             templateKey: attempt.attemptNumber > 1 ? CHECK_IN_LATER_ATTEMPT_TEMPLATE : CHECK_IN_FIRST_ATTEMPT_TEMPLATE,
             language: attempt.checkIn.receiverLanguage,
-            variables: this.checkInMessageVariables(
-              attempt.checkIn.receiverNameEncrypted,
-              attempt.checkIn.receiverPersonalNoteEncrypted,
-            ),
+            variables: await this.checkInMessageVariables({
+              senderUserId: attempt.checkIn.receiverUserId,
+              nameEncrypted: attempt.checkIn.receiverNameEncrypted,
+              personalNoteEncrypted: attempt.checkIn.receiverPersonalNoteEncrypted,
+            }),
           });
 
     await this.checkInsRepository.markAttemptSent({
@@ -604,7 +739,16 @@ export class CheckInsService {
     return true;
   }
 
-  private async auditAttemptFailed(input: CheckInRef & { channel: Channel; attemptNumber: number }): Promise<void> {
+  private async auditAttemptFailed(
+    input: CheckInRef & {
+      channel: Channel;
+      attemptNumber: number;
+      /** Defaults to `provider_send_failed`; a delivery callback passes `twilio_status_<status>` (CB-016). */
+      failureReason?: string;
+      /** Twilio `ErrorCode` from a delivery callback; a numeric code, never a person's data. */
+      providerErrorCode?: string;
+    },
+  ): Promise<void> {
     await this.auditService.append({
       entityType: 'check_in',
       entityId: input.checkInId,
@@ -614,7 +758,8 @@ export class CheckInsService {
         receiverId: input.receiverId,
         channel: input.channel,
         attemptNumber: input.attemptNumber,
-        failureReason: PROVIDER_SEND_FAILED,
+        failureReason: input.failureReason ?? PROVIDER_SEND_FAILED,
+        ...(input.providerErrorCode ? { providerErrorCode: input.providerErrorCode } : {}),
       },
     });
   }

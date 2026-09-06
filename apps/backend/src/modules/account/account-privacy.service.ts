@@ -13,6 +13,8 @@ export interface AccountExportResponse {
     id: string;
     email: string;
     phone: string;
+    /** Present when the sender has a stored display name (CB-010). */
+    displayName?: string;
     country: string;
     preferredLanguage: string;
     timezone: string;
@@ -114,6 +116,9 @@ export class AccountPrivacyService {
         id: record.user.id,
         email: this.cryptoService.decrypt(record.user.emailEncrypted),
         phone: this.cryptoService.decrypt(record.user.phoneEncrypted),
+        ...(record.user.displayNameEncrypted
+          ? { displayName: this.cryptoService.decrypt(record.user.displayNameEncrypted) }
+          : {}),
         country: record.user.country,
         preferredLanguage: record.user.preferredLanguage,
         timezone: record.user.timezone,

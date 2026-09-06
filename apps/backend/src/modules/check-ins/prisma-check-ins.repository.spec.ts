@@ -195,9 +195,9 @@ describe('PrismaCheckInsRepository', () => {
 
     expect(due.candidates.map((candidate) => candidate.id)).toEqual(['receiver-good']);
     expect(due.skipped).toEqual([
-      { receiverId: 'receiver-bad-timezone', reason: 'invalid_timezone' },
-      { receiverId: 'receiver-bad-window', reason: 'invalid_schedule_time_window' },
-      { receiverId: 'receiver-array-window', reason: 'invalid_schedule_time_window' },
+      { receiverId: 'receiver-bad-timezone', userId: 'sender-user-1', reason: 'invalid_timezone' },
+      { receiverId: 'receiver-bad-window', userId: 'sender-user-1', reason: 'invalid_schedule_time_window' },
+      { receiverId: 'receiver-array-window', userId: 'sender-user-1', reason: 'invalid_schedule_time_window' },
     ]);
   });
 
@@ -408,7 +408,9 @@ describe('PrismaCheckInsRepository', () => {
       const due = await repository.findReceiversDueForCheckIn(new Date('2026-04-27T05:30:00.000Z'));
 
       expect(due.recovered).toEqual(['receiver-fixed-outside-window', 'receiver-fixed-due']);
-      expect(due.skipped).toEqual([{ receiverId: 'receiver-still-bad', reason: 'invalid_timezone' }]);
+      expect(due.skipped).toEqual([
+        { receiverId: 'receiver-still-bad', userId: 'sender-user-1', reason: 'invalid_timezone' },
+      ]);
       expect(due.candidates.map((candidate) => candidate.id)).toEqual(['receiver-fixed-due', 'receiver-never-bad']);
       // Reporting is read-only; the service decides when to clear the stamp.
       expect(receiver.updateMany).not.toHaveBeenCalled();
@@ -721,5 +723,66 @@ describe('PrismaCheckInsRepository', () => {
       completedAt: new Date('2026-04-27T06:20:00.000Z'),
     });
     expect(replayed).toBeNull();
+  });
+
+  describe('pulls the next attempt forward after a delivery failure (CB-016)', () => {
+    const dueAt = new Date('2026-04-27T05:32:00.000Z');
+
+    it('moves the earliest pending attempt to dueAt only while it is still pending and scheduled later', async () => {
+      const checkInAttempt = checkInAttemptMock();
+      checkInAttempt.findFirst.mockResolvedValue(
+        attemptRow({
+          id: 'attempt-2',
+          attemptNumber: 2,
+          channel: Channel.SMS,
+          status: CheckInAttemptStatus.PENDING,
+          scheduledAt: new Date('2026-04-27T06:00:00.000Z'),
+          sentAt: null,
+          providerMessageId: null,
+        }),
+      );
+      checkInAttempt.updateMany.mockResolvedValueOnce({ count: 1 }).mockResolvedValueOnce({ count: 0 });
+      const repository = new PrismaCheckInsRepository({
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt,
+      });
+
+      const moved = await repository.expediteNextPendingAttempt({ checkInId: 'check-in-1', dueAt });
+      const raced = await repository.expediteNextPendingAttempt({ checkInId: 'check-in-1', dueAt });
+
+      expect(checkInAttempt.findFirst).toHaveBeenCalledWith({
+        where: { checkInId: 'check-in-1', status: CheckInAttemptStatus.PENDING },
+        orderBy: { attemptNumber: 'asc' },
+      });
+      expect(checkInAttempt.updateMany).toHaveBeenCalledWith({
+        where: { id: 'attempt-2', status: { in: [CheckInAttemptStatus.PENDING] } },
+        data: { scheduledAt: dueAt },
+      });
+      expect(moved).toBe(true);
+      expect(raced).toBe(false);
+    });
+
+    it('leaves an attempt that is already due, or a check-in with nothing pending, untouched', async () => {
+      const checkInAttempt = checkInAttemptMock();
+      checkInAttempt.findFirst
+        .mockResolvedValueOnce(
+          attemptRow({
+            id: 'attempt-2',
+            status: CheckInAttemptStatus.PENDING,
+            scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
+          }),
+        )
+        .mockResolvedValueOnce(null);
+      const repository = new PrismaCheckInsRepository({
+        receiver: receiverMock(),
+        checkIn: checkInMock(),
+        checkInAttempt,
+      });
+
+      expect(await repository.expediteNextPendingAttempt({ checkInId: 'check-in-1', dueAt })).toBe(false);
+      expect(await repository.expediteNextPendingAttempt({ checkInId: 'check-in-1', dueAt })).toBe(false);
+      expect(checkInAttempt.updateMany).not.toHaveBeenCalled();
+    });
   });
 });

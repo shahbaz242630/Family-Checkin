@@ -48,6 +48,8 @@ const SRC = {
   surfaceHardening: 'apps/backend/prisma/20260509_existing_surface_rls_hardening.sql',
   attemptsMigration: 'apps/backend/prisma/migrations/202605010001_check_in_attempts/migration.sql',
   voiceMigration: 'apps/backend/prisma/migrations/202605100001_twilio_voice_readiness/migration.sql',
+  webhookKeysMigration:
+    'apps/backend/prisma/migrations/202609060201_provider_webhook_events_unique_index/migration.sql',
   partitions: 'supabase/migrations/20260510181345_partitioned_operational_logs.sql',
   partitionRls: 'apps/backend/scripts/db/sql/20260905_partition_rls_hardening.sql',
   applyAll: 'apps/backend/scripts/db/apply-all.mjs',
@@ -82,6 +84,7 @@ const INTERNAL_ONLY_NO_POLICIES = {
   voice_caller_id_pool: `${SRC.voiceMigration} / ${SRC.handoffPartitions}: "RLS enabled and no client policies, intentionally backend-only"`,
   receiver_voice_caller_id_assignments: `${SRC.voiceMigration} / ${SRC.handoffPartitions}: "RLS enabled and no client policies, intentionally backend-only"`,
   provider_webhook_events: `${SRC.partitions} / ${SRC.handoffPartitions}: raw provider webhook payloads, "intentionally backend-only"`,
+  provider_webhook_event_keys: `${SRC.webhookKeysMigration}: natural-key registry that makes provider webhook replays impossible to store twice (the partitioned events table cannot carry that unique index); written by the backend only`,
   backup_contacts: `${SRC.setup} enables RLS with no policy; ${SRC.handoffStatus} "Current policies are intentionally minimal" - served through the backend`,
   co_monitors: `${SRC.setup} enables RLS with no policy; invitations/acceptance flow through the backend (${SRC.handoffStatus})`,
   escalation_events: `${SRC.setup} enables RLS with no policy; escalation timeline is read through backend endpoints (${SRC.handoffStatus})`,

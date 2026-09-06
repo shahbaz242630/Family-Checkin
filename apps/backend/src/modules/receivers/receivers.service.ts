@@ -10,6 +10,7 @@ import { ChannelRouterService } from '../channels/channel-router.service';
 import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
 import type { EscalateSenderRequestedBackupResult } from '../escalations/escalations.service';
+import { UsersService } from '../users/users.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
 import {
@@ -176,6 +177,9 @@ export class ReceiversService {
     @Optional()
     @Inject(CheckInsService)
     checkInsService?: Pick<CheckInsService, 'cancelOpenCheckInsForReceiver'>,
+    @Optional()
+    @Inject(UsersService)
+    private readonly usersService?: Pick<UsersService, 'senderDisplayNameFor'>,
   ) {
     this.channelRouter = channelRouter;
     this.checkInsService = checkInsService;
@@ -307,7 +311,7 @@ export class ReceiversService {
       actionName: 'pause',
       templateKey: 'receiver_checkins_paused',
       scriptKey: 'receiver_checkins_paused_voice',
-      variables: this.lifecycleMessageVariables(receiver),
+      variables: await this.lifecycleMessageVariables(receiver),
     });
 
     await this.auditService.append({
@@ -371,7 +375,7 @@ export class ReceiversService {
       actionName: 'delete',
       templateKey: 'receiver_checkins_ended',
       scriptKey: 'receiver_checkins_ended_voice',
-      variables: this.lifecycleMessageVariables(receiver),
+      variables: await this.lifecycleMessageVariables(receiver),
     });
 
     await this.auditService.append({
@@ -616,10 +620,12 @@ export class ReceiversService {
     });
   }
 
-  private lifecycleMessageVariables(receiver: ReceiverRecord): Record<string, string> {
+  private async lifecycleMessageVariables(receiver: ReceiverRecord): Promise<Record<string, string>> {
     return {
       receiverName: this.cryptoService.decrypt(receiver.nameEncrypted),
-      senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME,
+      // The sender's stored display name (CB-010), neutral when none is known.
+      senderDisplayName:
+        (await this.usersService?.senderDisplayNameFor(receiver.userId)) ?? NEUTRAL_SENDER_DISPLAY_NAME,
     };
   }
 

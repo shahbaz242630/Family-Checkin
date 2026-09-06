@@ -11,6 +11,7 @@ import {
   describeChannelsTried,
 } from '../channels/message-catalog.templates';
 import { NotificationsService } from '../notifications/notifications.service';
+import { UsersService } from '../users/users.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type { EscalationBackupContactRecord, EscalationsRepository } from './escalations.repository';
 import { ESCALATIONS_REPOSITORY } from './escalations.tokens';
@@ -112,6 +113,9 @@ export class EscalationsService {
     @Inject(NotificationsService)
     notificationsOrNow?: Pick<NotificationsService, 'sendToUser' | 'sendEscalationAlertToUser'> | (() => Date),
     @Optional() now?: () => Date,
+    @Optional()
+    @Inject(UsersService)
+    private readonly usersService?: Pick<UsersService, 'senderDisplayNameFor'>,
   ) {
     this.now = () => new Date();
     if (typeof notificationsOrNow === 'function') {
@@ -369,9 +373,9 @@ export class EscalationsService {
   }
 
   /**
-   * What every backup alert for this escalation says: who the receiver is, in their language, what was already
-   * tried, and why. The sender's own name is not stored yet, so a neutral "their family member" stands in.
-   * `receivers.language` is `char(5)`, so the stored value is trimmed before it reaches the catalog or a provider.
+   * What every backup alert for this escalation says: who the receiver is, in their language, who the sender is
+   * (their stored display name through `UsersService`, or "their family member" when none is known, CB-010), what
+   * was already tried, and why. `receivers.language` is trimmed before it reaches the catalog or a provider.
    */
   private async backupAlertContext(input: {
     receiverId: string;
@@ -389,11 +393,20 @@ export class EscalationsService {
         receiverName: owner?.receiverNameEncrypted
           ? this.cryptoService.decrypt(owner.receiverNameEncrypted)
           : NEUTRAL_RECEIVER_NAME_FOR_BACKUP_CONTACTS,
-        senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS,
+        senderDisplayName: owner
+          ? await this.senderDisplayNameForBackupContacts(owner.userId)
+          : NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS,
         reason: input.reason,
         ...(channelsTried ? { channelsTried } : {}),
       },
     };
+  }
+
+  private async senderDisplayNameForBackupContacts(userId: string): Promise<string> {
+    return (
+      (await this.usersService?.senderDisplayNameFor(userId, NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS)) ??
+      NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS
+    );
   }
 
   /**

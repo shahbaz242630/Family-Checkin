@@ -3,6 +3,7 @@ import { ActorType, Channel, ConsentStatus } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { renderingAuditMetadata } from '../channels/message-catalog.service';
+import { UsersService } from '../users/users.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import {
   addDays,
@@ -56,6 +57,9 @@ export class ReceiverConsentService {
     @Inject(AuditService)
     private readonly auditService: AuditService,
     @Optional() private readonly now: () => Date = () => new Date(),
+    @Optional()
+    @Inject(UsersService)
+    private readonly usersService?: Pick<UsersService, 'senderDisplayNameFor'>,
   ) {}
 
   /**
@@ -200,9 +204,15 @@ export class ReceiverConsentService {
     return { receiver: updatedReceiver, sent: true };
   }
 
-  private async trySendConsentRequest(receiver: ReceiverRecord, senderDisplayName: string): Promise<ConsentSendResult> {
+  private async trySendConsentRequest(
+    receiver: ReceiverRecord,
+    fallbackDisplayName: string,
+  ): Promise<ConsentSendResult> {
     const templateKey = receiver.primaryChannel === Channel.VOICE ? 'consent_request_voice' : 'consent_request';
     try {
+      // The sender's stored display name (CB-010); the caller's neutral wording when none is known.
+      const senderDisplayName =
+        (await this.usersService?.senderDisplayNameFor(receiver.userId, fallbackDisplayName)) ?? fallbackDisplayName;
       const to = this.cryptoService.decrypt(receiver.phoneEncrypted);
       const receiverDisplayName = this.cryptoService.decrypt(receiver.nameEncrypted);
       const outcome =

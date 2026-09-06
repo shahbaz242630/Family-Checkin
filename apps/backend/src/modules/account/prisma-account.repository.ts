@@ -1,14 +1,22 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { SensitiveAction, StepUpChallenge } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
-import type { AccountDeletionResult, AccountExportRecord, AccountRepository, StepUpChallengeRecord } from './account.repository';
+import type {
+  AccountDeletionResult,
+  AccountExportRecord,
+  AccountRepository,
+  StepUpChallengeRecord,
+} from './account.repository';
 
 @Injectable()
 export class PrismaAccountRepository implements AccountRepository {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async createStepUpChallenge(
-    input: Omit<StepUpChallengeRecord, 'verifiedAt' | 'tokenHash' | 'tokenExpiresAt' | 'consumedAt' | 'attemptCount' | 'createdAt'>,
+    input: Omit<
+      StepUpChallengeRecord,
+      'verifiedAt' | 'tokenHash' | 'tokenExpiresAt' | 'consumedAt' | 'attemptCount' | 'createdAt'
+    >,
   ): Promise<StepUpChallengeRecord> {
     return this.toStepUpChallengeRecord(
       await this.prisma.stepUpChallenge.create({
@@ -31,7 +39,12 @@ export class PrismaAccountRepository implements AccountRepository {
     );
   }
 
-  async markStepUpVerified(input: { id: string; tokenHash: string; verifiedAt: Date; tokenExpiresAt: Date }): Promise<StepUpChallengeRecord> {
+  async markStepUpVerified(input: {
+    id: string;
+    tokenHash: string;
+    verifiedAt: Date;
+    tokenExpiresAt: Date;
+  }): Promise<StepUpChallengeRecord> {
     return this.toStepUpChallengeRecord(
       await this.prisma.stepUpChallenge.update({
         where: { id: input.id },
@@ -77,6 +90,7 @@ export class PrismaAccountRepository implements AccountRepository {
         id: true,
         emailEncrypted: true,
         phoneEncrypted: true,
+        displayNameEncrypted: true,
         country: true,
         preferredLanguage: true,
         timezone: true,
@@ -240,12 +254,20 @@ export class PrismaAccountRepository implements AccountRepository {
     anonymizedBackupPhoneEncrypted: string;
     anonymizedBackupPhoneHash: string;
   }): Promise<AccountDeletionResult | null> {
-    const user = await this.prisma.user.findFirst({ where: { id: input.userId, deletedAt: null }, select: { id: true } });
+    const user = await this.prisma.user.findFirst({
+      where: { id: input.userId, deletedAt: null },
+      select: { id: true },
+    });
     if (!user) return null;
 
     return this.prisma.$transaction(async (tx) => {
-      const receiverIds = await tx.receiver.findMany({ where: { userId: input.userId, deletedAt: null }, select: { id: true } });
-      const backupContactCount = await tx.backupContact.count({ where: { receiverId: { in: receiverIds.map((receiver) => receiver.id) }, deletedAt: null } });
+      const receiverIds = await tx.receiver.findMany({
+        where: { userId: input.userId, deletedAt: null },
+        select: { id: true },
+      });
+      const backupContactCount = await tx.backupContact.count({
+        where: { receiverId: { in: receiverIds.map((receiver) => receiver.id) }, deletedAt: null },
+      });
 
       await tx.backupContact.updateMany({
         where: { receiverId: { in: receiverIds.map((receiver) => receiver.id) } },
@@ -276,6 +298,8 @@ export class PrismaAccountRepository implements AccountRepository {
           phoneEncrypted: input.anonymizedUserPhoneEncrypted,
           emailHash: input.anonymizedUserEmailHash,
           phoneHash: input.anonymizedUserPhoneHash,
+          // The display name (CB-010) is personal data too and leaves with the rest of the identity.
+          displayNameEncrypted: null,
           deletedAt: input.deletedAt,
         },
       });

@@ -1332,6 +1332,70 @@ describe('EscalationsService handles a sender-requested backup alert (CB-074)', 
   });
 });
 
+describe('EscalationsService names the sender in backup alerts (CB-010)', () => {
+  class InMemoryUsersService {
+    public displayNames = new Map<string, string>();
+    public lookedUp: Array<{ userId: string; fallback?: string }> = [];
+
+    async senderDisplayNameFor(userId: string, fallback = 'your family member'): Promise<string> {
+      this.lookedUp.push({ userId, fallback });
+      return this.displayNames.get(userId) ?? fallback;
+    }
+  }
+
+  function harness(users: InMemoryUsersService) {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const sms = new FakeChannelProvider(Channel.SMS, { now: () => AT });
+    repository.receiverNameEncrypted = crypto.encrypt('Margaret');
+    repository.backupContacts = [
+      backupContactFixture(crypto, {
+        id: 'backup-contact-first',
+        phone: '+971502222222',
+        priorityOrder: 1,
+        createdAt: new Date('2026-04-29T08:20:00.000Z'),
+      }),
+    ];
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms]),
+      auditService,
+      () => AT,
+      undefined,
+      users,
+    );
+
+    return { service, sms, audit };
+  }
+
+  it('reads the stored display name through UsersService for the backup contact copy and keeps it out of the audit trail', async () => {
+    const users = new InMemoryUsersService();
+    users.displayNames.set('sender-1', 'Sam');
+    const { service, sms, audit } = harness(users);
+
+    await service.escalateSenderRequestedBackup({ receiverId: 'receiver-1', checkInId: 'check-in-1' });
+
+    expect(sms.sentMessages[0]?.message.variables).toMatchObject({
+      receiverName: 'Margaret',
+      senderDisplayName: 'Sam',
+    });
+    expect(sms.renderedMessages[0]?.body).toContain('Sam');
+    expect(users.lookedUp).toEqual([{ userId: 'sender-1', fallback: 'their family member' }]);
+    expect(JSON.stringify(audit.events)).not.toContain('Sam');
+    expect(JSON.stringify(audit.events)).not.toContain('Margaret');
+  });
+
+  it('keeps "their family member" when the sender has no stored name', async () => {
+    const { service, sms } = harness(new InMemoryUsersService());
+
+    await service.escalateSenderRequestedBackup({ receiverId: 'receiver-1', checkInId: 'check-in-1' });
+
+    expect(sms.sentMessages[0]?.message.variables.senderDisplayName).toBe('their family member');
+  });
+});
+
 function backupContactFixture(
   crypto: CryptoService,
   input: { id: string; phone: string; priorityOrder: number; createdAt: Date },

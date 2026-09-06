@@ -28,6 +28,8 @@ export interface CheckInReceiverCandidate {
 
 export interface ScheduleInvalidReceiver {
   receiverId: string;
+  /** The sender who owns the receiver, so the once-per-version quiet push has an addressee (CB-069). */
+  userId: string;
   /** Lower-case validation code such as `invalid_timezone`; safe to put in audit metadata. */
   reason: string;
 }
@@ -94,6 +96,8 @@ export interface CheckInAttemptWithCheckInRecord extends CheckInAttemptRecord {
     receiverLanguage: string;
     receiverNameEncrypted?: string;
     receiverPersonalNoteEncrypted?: string;
+    /** Owner of the receiver, for the sender display name in retry copy (CB-010); optional only for doubles. */
+    receiverUserId?: string;
   };
 }
 
@@ -249,6 +253,12 @@ export interface CheckInsRepository {
   ): Promise<CheckInAttemptRecord | null>;
   /** SENT -> TIMED_OUT. */
   markAttemptTimedOut(input: MarkCheckInAttemptTimedOutInput): Promise<boolean>;
+  /**
+   * Moves the earliest PENDING attempt of the check-in to `dueAt` when it is scheduled later, so the next tick
+   * sends it instead of waiting out the stagger after a provider reported the current one undelivered (CB-016).
+   * `true` only when an attempt was moved. Optional, like the schedule stamp, only for doubles in other modules.
+   */
+  expediteNextPendingAttempt?(input: { checkInId: string; dueAt: Date }): Promise<boolean>;
   /** The latest SENT attempt of the check-in -> RESPONDED; null when none is SENT. */
   markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }): Promise<CheckInAttemptRecord | null>;
   /** Every PENDING attempt of the check-in -> SKIPPED; returns how many moved. */

@@ -9,11 +9,14 @@ import type {
 import { ChannelProviderConfigurationError } from './configured-provider-errors';
 import { MessageCatalogService } from './message-catalog.service';
 import { FetchTwilioHttpClient, type TwilioHttpClient } from './twilio-http-client';
+import { twilioMessagingStatusCallbackUrl } from './twilio-status-callback';
 
 export interface SmsProviderConfig {
   accountSid?: string;
   authToken?: string;
   fromNumber?: string;
+  /** `PUBLIC_API_BASE_URL`; when set, Twilio posts delivery statuses back to the messaging status route (CB-016). */
+  publicApiBaseUrl?: string;
 }
 
 export class SmsProvider implements ChannelProvider {
@@ -29,6 +32,7 @@ export class SmsProvider implements ChannelProvider {
   async sendMessage(to: string, message: TemplatedMessage): Promise<ChannelSendResult> {
     const config = this.configured();
     const rendered = await this.catalog.render({ ...message, channel: this.channel });
+    const statusCallback = twilioMessagingStatusCallbackUrl(this.config.publicApiBaseUrl);
 
     const response = await this.httpClient.postForm(
       this.messagesUrl(config.accountSid),
@@ -36,6 +40,7 @@ export class SmsProvider implements ChannelProvider {
         To: to,
         From: config.fromNumber,
         Body: rendered.body,
+        ...(statusCallback ? { StatusCallback: statusCallback } : {}),
       }),
       config.authToken,
     );
@@ -62,9 +67,9 @@ export class SmsProvider implements ChannelProvider {
     }
   }
 
-  private configured(): Required<SmsProviderConfig> {
+  private configured(): Required<Pick<SmsProviderConfig, 'accountSid' | 'authToken' | 'fromNumber'>> {
     this.assertConfigured();
-    return this.config as Required<SmsProviderConfig>;
+    return this.config as Required<Pick<SmsProviderConfig, 'accountSid' | 'authToken' | 'fromNumber'>>;
   }
 
   private messagesUrl(accountSid: string): string {
