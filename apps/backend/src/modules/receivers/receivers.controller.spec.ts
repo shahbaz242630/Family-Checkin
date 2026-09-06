@@ -1,6 +1,7 @@
 import { Channel, ConsentStatus, RelationshipType, SensitiveAction, TechProfile } from '@prisma/client';
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
+import { ReceiverScheduleValidationError } from '../../shared/schedule/receiver-schedule';
 import { ReceiversController } from './receivers.controller';
 import { PERSONAL_NOTE_TOO_LONG_MESSAGE } from './receivers.service';
 
@@ -34,6 +35,7 @@ class FakeReceiversService {
   public alertBackupInput: Record<string, unknown> | null = null;
   public tryLaterInput: Record<string, unknown> | null = null;
   public nextCreateError: Error | null = null;
+  public nextUpdateError: Error | null = null;
 
   async listForSender(userId: string) {
     this.listedForUserId = userId;
@@ -109,6 +111,10 @@ class FakeReceiversService {
   }
 
   async updateForSender(input: Record<string, unknown>) {
+    if (this.nextUpdateError) {
+      throw this.nextUpdateError;
+    }
+
     this.updateInput = input;
     return {
       id: input.receiverId,
@@ -742,5 +748,79 @@ describe('ReceiversController', () => {
       senderDisplayName: 'your family member',
     });
     expect(JSON.stringify(receiverConsentService.requestInput)).not.toContain('sender@example.com');
+  });
+});
+
+describe('ReceiversController rejects an invalid schedule with a code (CB-004)', () => {
+  const body = {
+    name: 'Fatima Parent',
+    phone: '+971501234567',
+    countryCode: 'AE',
+    relationshipType: RelationshipType.PARENT,
+    language: 'en',
+    timezone: 'Dubai',
+    techProfile: TechProfile.WHATSAPP,
+    primaryChannel: Channel.WHATSAPP,
+    fallbackChannels: [Channel.SMS],
+    scheduleFrequency: 'daily',
+    scheduleTimeWindow: { start: '09:00', end: '11:00' },
+  };
+
+  it('returns 400 with INVALID_TIMEZONE on create and requests no consent', async () => {
+    const receiversService = new FakeReceiversService();
+    receiversService.nextCreateError = new ReceiverScheduleValidationError(
+      'INVALID_TIMEZONE',
+      'Receiver timezone must be an IANA time zone name such as Asia/Dubai',
+    );
+    const receiverConsentService = new FakeReceiverConsentService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      receiverConsentService as never,
+      undefined,
+      new FakeBillingService(true) as never,
+    );
+
+    const error = await controller.create('Bearer access-token', 'Nearby Mobile/1.0', '203.0.113.10', body).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getResponse()).toEqual({
+      code: 'INVALID_TIMEZONE',
+      message: 'Receiver timezone must be an IANA time zone name such as Asia/Dubai',
+    });
+    expect(receiverConsentService.requestInput).toBeNull();
+  });
+
+  it('returns 400 with INVALID_SCHEDULE_TIME_WINDOW on update', async () => {
+    const receiversService = new FakeReceiversService();
+    receiversService.nextUpdateError = new ReceiverScheduleValidationError(
+      'INVALID_SCHEDULE_TIME_WINDOW',
+      'Receiver schedule time window start and end must use HH:mm (24-hour) format',
+    );
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    const error = await controller
+      .update('Bearer access-token', '203.0.113.10', 'Nearby Mobile/1.0', '1aef91f9-64c9-4548-baa5-d70b52386efb', {
+        ...body,
+        timezone: 'Asia/Dubai',
+        scheduleTimeWindow: { start: '9:00', end: '11:00' },
+      })
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getResponse()).toMatchObject({ code: 'INVALID_SCHEDULE_TIME_WINDOW' });
+    expect(receiversService.updateInput).toBeNull();
   });
 });

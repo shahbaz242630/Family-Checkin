@@ -7,7 +7,12 @@ import { renderingAuditMetadata, type MessageRendering } from '../channels/messa
 import { NEUTRAL_RECEIVER_GREETING_NAME, NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
-import type { CheckInReceiverCandidate, CheckInsRepository } from './check-ins.repository';
+import type {
+  CheckInAttemptRecord,
+  CheckInAttemptWithCheckInRecord,
+  CheckInReceiverCandidate,
+  CheckInsRepository,
+} from './check-ins.repository';
 import { CHECK_INS_REPOSITORY } from './check-ins.tokens';
 import type { VoiceCallerIdRepository } from './voice-caller-id.repository';
 
@@ -15,12 +20,7 @@ export interface SendDueCheckInsResult {
   created: number;
   sent: number;
   skipped: number;
-}
-
-export interface EscalateOverdueCheckInsResult {
-  checked: number;
-  escalated: number;
-  skipped: number;
+  /** Receivers whose schedule could not be evaluated plus receivers whose first send threw (CB-004). */
   failed: number;
 }
 
@@ -42,10 +42,29 @@ export interface RecordVoiceProviderFailureResult {
   updated: boolean;
 }
 
+/** Why a receiver's open check-ins are being cancelled; stored on the skipped attempts and audited (CB-008). */
+export type CancelOpenCheckInsReason = 'receiver_opted_out' | 'abuse_reported' | 'receiver_paused' | 'receiver_deleted';
+
+export interface CancelOpenCheckInsInput {
+  receiverId: string;
+  reason: CancelOpenCheckInsReason;
+}
+
+export interface CancelOpenCheckInsResult {
+  cancelled: number;
+  skippedAttempts: number;
+}
+
+interface CheckInRef {
+  checkInId: string;
+  receiverId: string;
+}
+
+const PROVIDER_SEND_FAILED = 'provider_send_failed';
+const CASCADE_EXHAUSTED = 'cascade_exhausted';
+
 @Injectable()
 export class CheckInsService {
-  private static readonly defaultResponseWindowMinutes = 30;
-
   constructor(
     @Inject(CHECK_INS_REPOSITORY) private readonly checkInsRepository: CheckInsRepository,
     @Inject(CryptoService)
@@ -56,7 +75,7 @@ export class CheckInsService {
     private readonly auditService: AuditService,
     @Optional()
     @Inject(EscalationsService)
-    private readonly escalationsService?: Pick<EscalationsService, 'escalateMissedCheckIn'>,
+    private readonly escalationsService?: Pick<EscalationsService, 'notifySenderOfMissedCheckIn'>,
     private readonly now: () => Date = () => new Date(),
     @Optional()
     @Inject(BillingService)
@@ -66,10 +85,24 @@ export class CheckInsService {
 
   async sendDueCheckIns(): Promise<SendDueCheckInsResult> {
     const now = this.now();
-    const receivers = await this.checkInsRepository.findReceiversDueForCheckIn(now);
-    const result: SendDueCheckInsResult = { created: 0, sent: 0, skipped: 0 };
+    const due = await this.checkInsRepository.findReceiversDueForCheckIn(now);
+    const result: SendDueCheckInsResult = { created: 0, sent: 0, skipped: 0, failed: 0 };
 
-    for (const receiver of receivers) {
+    for (const invalid of due.skipped) {
+      result.failed += 1;
+      await this.auditService.append({
+        entityType: 'receiver',
+        entityId: invalid.receiverId,
+        action: 'check_in.schedule_invalid',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: invalid.receiverId,
+          reason: invalid.reason,
+        },
+      });
+    }
+
+    for (const receiver of due.candidates) {
       if (!this.isEligible(receiver, now)) {
         result.skipped += 1;
         continue;
@@ -84,7 +117,7 @@ export class CheckInsService {
         scheduledAt: now,
       });
       result.created += 1;
-      const attempts = await this.checkInsRepository.createAttempts(
+      const [firstAttempt] = await this.checkInsRepository.createAttempts(
         this.buildCascadeAttempts(receiver, checkIn.id, now),
       );
 
@@ -99,71 +132,9 @@ export class CheckInsService {
         },
       });
 
-      const providerResult = await this.sendInitialCheckIn(receiver);
-      if (attempts[0]) {
-        await this.checkInsRepository.markAttemptSent({
-          attemptId: attempts[0].id,
-          sentAt: now,
-          providerMessageId: providerResult.providerId,
-          providerStatus: providerResult.providerStatus,
-        });
-      }
-      await this.checkInsRepository.markSent({
-        checkInId: checkIn.id,
-        channel: receiver.primaryChannel,
-        sentAt: now,
-        providerMessageId: providerResult.providerId,
-        providerStatus: providerResult.providerStatus,
-      });
-      result.sent += 1;
-
-      await this.auditService.append({
-        entityType: 'check_in',
-        entityId: checkIn.id,
-        action: 'check_in.sent',
-        actorType: ActorType.SYSTEM,
-        metadata: {
-          receiverId: receiver.id,
-          channel: receiver.primaryChannel,
-          providerStatus: providerResult.providerStatus,
-          ...renderingAuditMetadata(providerResult.rendering),
-        },
-      });
-    }
-
-    return result;
-  }
-
-  async escalateOverdueCheckIns(
-    responseWindowMinutes = CheckInsService.defaultResponseWindowMinutes,
-  ): Promise<EscalateOverdueCheckInsResult> {
-    const now = this.now();
-    const overdueBefore = new Date(now.getTime() - responseWindowMinutes * 60 * 1000);
-    const checkIns = await this.checkInsRepository.findOverdueSentCheckIns({ overdueBefore });
-    const result: EscalateOverdueCheckInsResult = { checked: checkIns.length, escalated: 0, skipped: 0, failed: 0 };
-
-    for (const checkIn of checkIns) {
-      if (!checkIn.sentAt) {
-        result.skipped += 1;
-        continue;
-      }
-
-      try {
-        const escalation = await this.escalationsService?.escalateMissedCheckIn({
-          receiverId: checkIn.receiverId,
-          checkInId: checkIn.id,
-          sentAt: checkIn.sentAt,
-          responseWindowMinutes,
-        });
-
-        if (escalation?.status === CheckInStatus.ESCALATED) {
-          result.escalated += 1;
-        } else if (escalation?.status === CheckInStatus.FAILED) {
-          result.failed += 1;
-        } else {
-          result.skipped += 1;
-        }
-      } catch {
+      if (await this.sendFirstAttempt(receiver, checkIn.id, firstAttempt, now)) {
+        result.sent += 1;
+      } else {
         result.failed += 1;
       }
     }
@@ -180,48 +151,41 @@ export class CheckInsService {
         continue;
       }
 
-      await this.checkInsRepository.markAttemptTimedOut({ attemptId: attempt.id, completedAt: now });
-      result.timedOut += 1;
-
-      if (await this.sendNextDuePendingAttempt(attempt.checkIn.id, now)) {
-        result.sent += 1;
-      } else if (!(await this.hasPendingAttempts(attempt.checkIn.id))) {
-        await this.markCheckInNeedsAttention({
-          checkInId: attempt.checkIn.id,
-          receiverId: attempt.checkIn.receiverId,
-        });
-        result.needsAttention += 1;
+      // Each attempt is isolated so one provider or database error cannot stop the rest of the tick (CB-004).
+      try {
+        if (!(await this.checkInsRepository.markAttemptTimedOut({ attemptId: attempt.id, completedAt: now }))) {
+          // A reply or a provider callback closed this attempt between the query and the write.
+          continue;
+        }
+        result.timedOut += 1;
+        await this.advanceCascade(this.toCheckInRef(attempt), now, result);
+      } catch {
+        result.failed += 1;
       }
     }
 
     for (const attempt of await this.checkInsRepository.findDuePendingAttempts({ now })) {
-      if (this.isClosed(attempt.checkIn.status)) {
-        const skipped = await this.checkInsRepository.skipPendingAttemptsForCheckIn({
-          checkInId: attempt.checkIn.id,
-          completedAt: now,
-          failureReason: 'cascade_closed',
-        });
-        result.skipped += skipped;
-        continue;
-      }
-
       try {
-        await this.sendAttempt(attempt, now);
-        result.sent += 1;
-      } catch {
-        await this.checkInsRepository.markAttemptFailed({
-          attemptId: attempt.id,
-          completedAt: now,
-          failureReason: 'provider_send_failed',
-        });
-        result.failed += 1;
+        if (this.isClosed(attempt.checkIn.status)) {
+          result.skipped += await this.checkInsRepository.skipPendingAttemptsForCheckIn({
+            checkInId: attempt.checkIn.id,
+            completedAt: now,
+            failureReason: 'cascade_closed',
+          });
+          continue;
+        }
 
-        if (await this.sendNextDuePendingAttempt(attempt.checkIn.id, now)) {
+        if (await this.trySendAttempt(attempt, now)) {
           result.sent += 1;
-        } else if (!(await this.hasPendingAttempts(attempt.checkIn.id))) {
-          await this.checkInsRepository.markNeedsAttention({ checkInId: attempt.checkIn.id });
+          continue;
+        }
+        result.failed += 1;
+        // A later attempt that is already due is still in this list and goes out in its own iteration.
+        if (await this.flagIfExhausted(this.toCheckInRef(attempt))) {
           result.needsAttention += 1;
         }
+      } catch {
+        result.failed += 1;
       }
     }
 
@@ -242,16 +206,55 @@ export class CheckInsService {
       providerStatus,
       failureReason,
     });
+    if (!attempt) {
+      return { updated: false };
+    }
 
-    if (attempt && !(await this.hasPendingAttempts(attempt.checkInId))) {
-      const checkIn = await this.checkInsRepository.findById(attempt.checkInId);
-      await this.markCheckInNeedsAttention({
-        checkInId: attempt.checkInId,
-        receiverId: checkIn?.receiverId ?? attempt.checkInId,
+    // A no-answer or machine-answer callback can land after the receiver already replied by another channel
+    // (CB-006): the attempt is recorded as failed, but a closed check-in is never reopened or flagged.
+    const checkIn = await this.checkInsRepository.findById(attempt.checkInId);
+    if (checkIn && !this.isClosed(checkIn.status)) {
+      await this.flagIfExhausted({ checkInId: checkIn.id, receiverId: checkIn.receiverId });
+    }
+
+    return { updated: true };
+  }
+
+  /**
+   * Skips every pending attempt and closes every open check-in of a receiver, so a STOP, a REPORT, a pause or a
+   * deletion stops the cascade at once instead of after the next message goes out (CB-008). Attempts already
+   * with the provider stay SENT until they time out; a closed check-in is never reopened by them.
+   */
+  async cancelOpenCheckInsForReceiver(input: CancelOpenCheckInsInput): Promise<CancelOpenCheckInsResult> {
+    const now = this.now();
+    const result: CancelOpenCheckInsResult = { cancelled: 0, skippedAttempts: 0 };
+
+    for (const checkIn of await this.checkInsRepository.findOpenForReceiver(input.receiverId)) {
+      const skippedAttempts = await this.checkInsRepository.skipPendingAttemptsForCheckIn({
+        checkInId: checkIn.id,
+        completedAt: now,
+        failureReason: input.reason,
+      });
+      result.skippedAttempts += skippedAttempts;
+
+      if (!(await this.checkInsRepository.markCancelled({ checkInId: checkIn.id }))) {
+        continue;
+      }
+      result.cancelled += 1;
+      await this.auditService.append({
+        entityType: 'check_in',
+        entityId: checkIn.id,
+        action: 'check_in.cancelled',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: input.receiverId,
+          reason: input.reason,
+          skippedAttempts,
+        },
       });
     }
 
-    return { updated: attempt !== null };
+    return result;
   }
 
   private isEligible(receiver: CheckInReceiverCandidate, now: Date): boolean {
@@ -270,6 +273,70 @@ export class CheckInsService {
 
   private async hasPaidAccess(userId: string): Promise<boolean> {
     return (await this.billingService?.getBillingStatus(userId))?.entitled ?? false;
+  }
+
+  /**
+   * First attempt of a new check-in. A provider that throws (Twilio 21211, a stalled socket, a bad row) marks the
+   * attempt FAILED and returns false; the receiver's fallback attempts stay scheduled and the loop continues with
+   * the next receiver (CB-004).
+   */
+  private async sendFirstAttempt(
+    receiver: CheckInReceiverCandidate,
+    checkInId: string,
+    attempt: CheckInAttemptRecord | undefined,
+    now: Date,
+  ): Promise<boolean> {
+    let providerResult: { providerId: string; providerStatus: string; rendering?: MessageRendering };
+    try {
+      providerResult = await this.sendInitialCheckIn(receiver);
+    } catch {
+      if (attempt) {
+        await this.checkInsRepository.markAttemptFailed({
+          attemptId: attempt.id,
+          completedAt: now,
+          failureReason: PROVIDER_SEND_FAILED,
+        });
+      }
+      await this.auditAttemptFailed({
+        checkInId,
+        receiverId: receiver.id,
+        channel: receiver.primaryChannel,
+        attemptNumber: attempt?.attemptNumber ?? 1,
+      });
+      await this.flagIfExhausted({ checkInId, receiverId: receiver.id });
+      return false;
+    }
+
+    if (attempt) {
+      await this.checkInsRepository.markAttemptSent({
+        attemptId: attempt.id,
+        sentAt: now,
+        providerMessageId: providerResult.providerId,
+        providerStatus: providerResult.providerStatus,
+      });
+    }
+    await this.checkInsRepository.markSent({
+      checkInId,
+      channel: receiver.primaryChannel,
+      sentAt: now,
+      providerMessageId: providerResult.providerId,
+      providerStatus: providerResult.providerStatus,
+    });
+
+    await this.auditService.append({
+      entityType: 'check_in',
+      entityId: checkInId,
+      action: 'check_in.sent',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: receiver.id,
+        channel: receiver.primaryChannel,
+        providerStatus: providerResult.providerStatus,
+        ...renderingAuditMetadata(providerResult.rendering),
+      },
+    });
+
+    return true;
   }
 
   private async sendInitialCheckIn(
@@ -355,6 +422,28 @@ export class CheckInsService {
     }));
   }
 
+  /** Sends one due attempt; a throwing provider marks it FAILED and returns false instead of ending the tick (CB-004). */
+  private async trySendAttempt(attempt: CheckInAttemptWithCheckInRecord, now: Date): Promise<boolean> {
+    try {
+      await this.sendAttempt(attempt, now);
+    } catch {
+      await this.checkInsRepository.markAttemptFailed({
+        attemptId: attempt.id,
+        completedAt: now,
+        failureReason: PROVIDER_SEND_FAILED,
+      });
+      await this.auditAttemptFailed({
+        checkInId: attempt.checkIn.id,
+        receiverId: attempt.checkIn.receiverId,
+        channel: attempt.channel,
+        attemptNumber: attempt.attemptNumber,
+      });
+      return false;
+    }
+
+    return true;
+  }
+
   private async sendAttempt(
     attempt: Awaited<ReturnType<CheckInsRepository['findDuePendingAttempts']>>[number],
     now: Date,
@@ -396,16 +485,30 @@ export class CheckInsService {
     });
   }
 
-  private async sendNextDuePendingAttempt(checkInId: string, now: Date): Promise<boolean> {
+  /** After an attempt ends unanswered: send the next attempt if it is due, or flag the check-in once none remain. */
+  private async advanceCascade(checkIn: CheckInRef, now: Date, result: ProcessCascadeAttemptsResult): Promise<void> {
     const next = (await this.checkInsRepository.findDuePendingAttempts({ now })).find(
-      (attempt) => attempt.checkIn.id === checkInId,
+      (attempt) => attempt.checkIn.id === checkIn.checkInId,
     );
-    if (!next) {
-      return false;
+    if (next && this.isClosed(next.checkIn.status)) {
+      // A reply, a backup contact or a cancellation closed the check-in first: never reopen it (CB-006).
+      result.skipped += await this.checkInsRepository.skipPendingAttemptsForCheckIn({
+        checkInId: checkIn.checkInId,
+        completedAt: now,
+        failureReason: 'cascade_closed',
+      });
+      return;
     }
-
-    await this.sendAttempt(next, now);
-    return true;
+    if (next) {
+      if (await this.trySendAttempt(next, now)) {
+        result.sent += 1;
+        return;
+      }
+      result.failed += 1;
+    }
+    if (await this.flagIfExhausted(checkIn)) {
+      result.needsAttention += 1;
+    }
   }
 
   private async hasPendingAttempts(checkInId: string): Promise<boolean> {
@@ -414,8 +517,25 @@ export class CheckInsService {
     );
   }
 
-  private async markCheckInNeedsAttention(input: { checkInId: string; receiverId: string }): Promise<void> {
-    await this.checkInsRepository.markNeedsAttention({ checkInId: input.checkInId });
+  /** Flags the check-in NEEDS_ATTENTION when no attempt is left; true only when this call made the transition. */
+  private async flagIfExhausted(checkIn: CheckInRef): Promise<boolean> {
+    if (await this.hasPendingAttempts(checkIn.checkInId)) {
+      return false;
+    }
+
+    return this.markCheckInNeedsAttention(checkIn);
+  }
+
+  /**
+   * PENDING/SENT -> NEEDS_ATTENTION plus the sender siren (CB-005). The status guard makes this idempotent: a
+   * second timed-out attempt, a replayed provider callback or a re-run tick finds the check-in already flagged
+   * (or closed) and neither audits nor notifies again.
+   */
+  private async markCheckInNeedsAttention(input: CheckInRef): Promise<boolean> {
+    if (!(await this.checkInsRepository.markNeedsAttention({ checkInId: input.checkInId }))) {
+      return false;
+    }
+
     await this.auditService.append({
       entityType: 'check_in',
       entityId: input.checkInId,
@@ -423,9 +543,50 @@ export class CheckInsService {
       actorType: ActorType.SYSTEM,
       metadata: {
         receiverId: input.receiverId,
-        reason: 'cascade_exhausted',
+        reason: CASCADE_EXHAUSTED,
       },
     });
+
+    try {
+      await this.escalationsService?.notifySenderOfMissedCheckIn({
+        receiverId: input.receiverId,
+        checkInId: input.checkInId,
+      });
+    } catch {
+      // Push and voice failures are audited inside EscalationsService; this covers a failure before either
+      // (for example the owner lookup) so the cron tick still completes for every other receiver.
+      await this.auditService.append({
+        entityType: 'check_in',
+        entityId: input.checkInId,
+        action: 'check_in.sender_notify_failed',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: input.receiverId,
+          reason: CASCADE_EXHAUSTED,
+        },
+      });
+    }
+
+    return true;
+  }
+
+  private async auditAttemptFailed(input: CheckInRef & { channel: Channel; attemptNumber: number }): Promise<void> {
+    await this.auditService.append({
+      entityType: 'check_in',
+      entityId: input.checkInId,
+      action: 'check_in.attempt_failed',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: input.receiverId,
+        channel: input.channel,
+        attemptNumber: input.attemptNumber,
+        failureReason: PROVIDER_SEND_FAILED,
+      },
+    });
+  }
+
+  private toCheckInRef(attempt: CheckInAttemptWithCheckInRecord): CheckInRef {
+    return { checkInId: attempt.checkIn.id, receiverId: attempt.checkIn.receiverId };
   }
 
   private async voiceCallOptions(receiverId: string, countryCode: string): Promise<{ fromNumber: string } | undefined> {

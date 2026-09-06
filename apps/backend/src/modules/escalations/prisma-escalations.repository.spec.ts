@@ -10,7 +10,7 @@ describe('PrismaEscalationsRepository', () => {
       backupContact: { findMany },
       checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
-      checkIn: { update: vi.fn() },
+      checkIn: { updateMany: vi.fn() },
     });
 
     await repository.findActiveBackupContactsForReceiver({ receiverId: 'receiver-1' });
@@ -42,7 +42,7 @@ describe('PrismaEscalationsRepository', () => {
       backupContact: { findMany: vi.fn() },
       checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create },
-      checkIn: { update: vi.fn() },
+      checkIn: { updateMany: vi.fn() },
     });
 
     await repository.createEvent({
@@ -82,7 +82,7 @@ describe('PrismaEscalationsRepository', () => {
       backupContact: { findMany: vi.fn() },
       checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
-      checkIn: { update: vi.fn() },
+      checkIn: { updateMany: vi.fn() },
     });
 
     await expect(repository.findReceiverOwner({ receiverId: 'receiver-1' })).resolves.toEqual({
@@ -116,7 +116,7 @@ describe('PrismaEscalationsRepository', () => {
       backupContact: { findMany: vi.fn() },
       checkInAttempt: { findMany },
       escalationEvent: { create: vi.fn() },
-      checkIn: { update: vi.fn() },
+      checkIn: { updateMany: vi.fn() },
     });
 
     await expect(repository.findChannelsTriedForCheckIn({ checkInId: 'check-in-1' })).resolves.toEqual([
@@ -130,38 +130,56 @@ describe('PrismaEscalationsRepository', () => {
     });
   });
 
-  it('marks a check-in escalated', async () => {
-    const update = vi.fn().mockResolvedValue({ id: 'check-in-1', status: CheckInStatus.ESCALATED });
+  it('marks a check-in escalated only from an open or actionable status', async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
     const repository = new PrismaEscalationsRepository({
       receiver: { findFirst: vi.fn() },
       backupContact: { findMany: vi.fn() },
       checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
-      checkIn: { update },
+      checkIn: { updateMany },
     });
 
     await repository.markCheckInEscalated({ checkInId: 'check-in-1' });
 
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 'check-in-1' },
+    // RESPONDED_OK, ESCALATED and RESOLVED are absent: a late escalation never flips an answered or resolved
+    // check-in (CB-006).
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'check-in-1',
+        status: {
+          in: [
+            CheckInStatus.SENT,
+            CheckInStatus.RESPONDED_HELP,
+            CheckInStatus.NEEDS_ATTENTION,
+            CheckInStatus.FAILED,
+            CheckInStatus.SKIPPED,
+          ],
+        },
+      },
       data: { status: CheckInStatus.ESCALATED },
     });
   });
 
-  it('marks a check-in terminal after a missed escalation cannot continue', async () => {
-    const update = vi.fn().mockResolvedValue({ id: 'check-in-1', status: CheckInStatus.SKIPPED });
+  it('marks a check-in terminal after a missed escalation cannot continue, but only while it is still open', async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 0 });
     const repository = new PrismaEscalationsRepository({
       receiver: { findFirst: vi.fn() },
       backupContact: { findMany: vi.fn() },
       checkInAttempt: { findMany: vi.fn() },
       escalationEvent: { create: vi.fn() },
-      checkIn: { update },
+      checkIn: { updateMany },
     });
 
-    await repository.markCheckInTerminal({ checkInId: 'check-in-1', status: CheckInStatus.SKIPPED });
+    await expect(
+      repository.markCheckInTerminal({ checkInId: 'check-in-1', status: CheckInStatus.SKIPPED }),
+    ).resolves.toBeUndefined();
 
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 'check-in-1' },
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'check-in-1',
+        status: { in: [CheckInStatus.PENDING, CheckInStatus.SENT, CheckInStatus.NEEDS_ATTENTION] },
+      },
       data: { status: CheckInStatus.SKIPPED },
     });
   });

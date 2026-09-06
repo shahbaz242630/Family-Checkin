@@ -23,6 +23,7 @@ import { BackupContactsService } from '../backup-contacts/backup-contacts.servic
 import { BillingService } from '../billing/billing.service';
 import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { UsersService } from '../users/users.service';
+import { ReceiverScheduleValidationError } from '../../shared/schedule/receiver-schedule';
 import { ReceiverConsentService } from './receiver-consent.service';
 import { PERSONAL_NOTE_TOO_LONG_MESSAGE, ReceiversService } from './receivers.service';
 
@@ -451,6 +452,9 @@ export class ReceiversController {
     try {
       return await operation();
     } catch (error) {
+      if (error instanceof ReceiverScheduleValidationError) {
+        throw new BadRequestException({ code: error.code, message: error.message });
+      }
       if (error instanceof Error && RECEIVER_VALIDATION_MESSAGES.has(error.message)) {
         throw new BadRequestException(error.message);
       }

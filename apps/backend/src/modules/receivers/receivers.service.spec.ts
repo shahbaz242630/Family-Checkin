@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
 import type { ChannelRouterService } from '../channels/channel-router.service';
+import type { CheckInsService } from '../check-ins/check-ins.service';
 import type { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type {
@@ -1304,5 +1305,193 @@ describe('ReceiversService', () => {
 
     await service.createForSender({ ...input, personalNote: 'ع'.repeat(50) });
     expect(crypto.decrypt(repository.lastInput?.personalNoteEncrypted ?? '')).toBe('ع'.repeat(50));
+  });
+});
+
+describe('ReceiversService validates the schedule the cron evaluates (CB-004)', () => {
+  const baseInput = {
+    userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+    name: 'Fatima',
+    phone: '0501234567',
+    phoneCountry: 'AE',
+    countryCode: 'AE',
+    relationshipType: RelationshipType.PARENT,
+    language: 'en',
+    timezone: 'Asia/Dubai',
+    techProfile: TechProfile.WHATSAPP,
+    primaryChannel: Channel.WHATSAPP,
+    fallbackChannels: [],
+    scheduleFrequency: 'daily',
+    scheduleTimeWindow: { start: '09:00', end: '11:00' },
+  };
+
+  function existingReceiver(crypto: CryptoService): ReceiverWithLatestCheckInRecord {
+    return {
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      userId: baseInput.userId,
+      nameEncrypted: crypto.encrypt('Fatima Parent'),
+      phoneEncrypted: crypto.encrypt('+971501234567'),
+      phoneHash: crypto.hashForLookup('+971501234567'),
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      consentStatus: ConsentStatus.GRANTED,
+      createdAt: new Date('2026-04-26T08:00:00.000Z'),
+      updatedAt: new Date('2026-04-27T10:02:00.000Z'),
+    };
+  }
+
+  it('rejects an unknown timezone or a malformed window on create with a typed code and stores nothing', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const service = new ReceiversService(repository, new CryptoService(masterKey), audit as unknown as AuditService);
+
+    await expect(service.createForSender({ ...baseInput, timezone: 'Dubai' })).rejects.toMatchObject({
+      name: 'ReceiverScheduleValidationError',
+      code: 'INVALID_TIMEZONE',
+    });
+    await expect(
+      service.createForSender({ ...baseInput, scheduleTimeWindow: { start: '9:00', end: '17:00' } }),
+    ).rejects.toMatchObject({ code: 'INVALID_SCHEDULE_TIME_WINDOW' });
+    await expect(service.createForSender({ ...baseInput, scheduleTimeWindow: {} })).rejects.toMatchObject({
+      code: 'INVALID_SCHEDULE_TIME_WINDOW',
+    });
+    expect(repository.lastInput).toBeNull();
+    expect(audit.events).toEqual([]);
+  });
+
+  it('rejects them on update too, and stores only the validated start and end on success', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const crypto = new CryptoService(masterKey);
+    repository.receiversForUser = [existingReceiver(crypto)];
+    const service = new ReceiversService(repository, crypto, new InMemoryAuditService() as unknown as AuditService);
+    const updateInput = {
+      userId: baseInput.userId,
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      name: 'Fatima Parent',
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '08:00', end: '10:00' },
+    };
+
+    await expect(service.updateForSender({ ...updateInput, timezone: 'GMT+4' })).rejects.toMatchObject({
+      code: 'INVALID_TIMEZONE',
+    });
+    await expect(
+      service.updateForSender({ ...updateInput, scheduleTimeWindow: { start: '08:00', end: '25:00' } }),
+    ).rejects.toMatchObject({ code: 'INVALID_SCHEDULE_TIME_WINDOW' });
+
+    const updated = await service.updateForSender({
+      ...updateInput,
+      timezone: 'UTC',
+      scheduleTimeWindow: { start: '08:00', end: '10:00', label: 'morning' },
+    });
+
+    expect(updated).toMatchObject({ timezone: 'UTC', scheduleTimeWindow: { start: '08:00', end: '10:00' } });
+  });
+});
+
+describe('ReceiversService cancels in-flight check-ins on pause and delete (CB-008)', () => {
+  class InMemoryCheckInsService {
+    public cancelled: Array<{ receiverId: string; reason: string }> = [];
+
+    async cancelOpenCheckInsForReceiver(input: { receiverId: string; reason: string }) {
+      this.cancelled.push(input);
+      return { cancelled: 1, skippedAttempts: 2 };
+    }
+  }
+
+  function serviceWith(
+    checkIns: InMemoryCheckInsService,
+    crypto: CryptoService,
+    repository: InMemoryReceiversRepository,
+  ) {
+    return new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      undefined,
+      undefined,
+      new InMemoryChannelRouter() as unknown as ChannelRouterService,
+      checkIns as unknown as CheckInsService,
+    );
+  }
+
+  function receiverRow(crypto: CryptoService): ReceiverWithLatestCheckInRecord {
+    return {
+      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      nameEncrypted: crypto.encrypt('Fatima Parent'),
+      phoneEncrypted: crypto.encrypt('+971501234567'),
+      phoneHash: crypto.hashForLookup('+971501234567'),
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      consentStatus: ConsentStatus.GRANTED,
+      createdAt: new Date('2026-04-26T08:00:00.000Z'),
+      updatedAt: new Date('2026-04-27T10:02:00.000Z'),
+    };
+  }
+
+  it('cancels the open check-ins of a paused receiver with the pause reason', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkIns = new InMemoryCheckInsService();
+    repository.receiversForUser = [receiverRow(crypto)];
+
+    await serviceWith(checkIns, crypto, repository).pauseForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    });
+
+    expect(checkIns.cancelled).toEqual([
+      { receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb', reason: 'receiver_paused' },
+    ]);
+  });
+
+  it('cancels the open check-ins of a deleted receiver with the delete reason', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkIns = new InMemoryCheckInsService();
+    repository.receiversForUser = [receiverRow(crypto)];
+
+    await serviceWith(checkIns, crypto, repository).deleteForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+    });
+
+    expect(checkIns.cancelled).toEqual([
+      { receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb', reason: 'receiver_deleted' },
+    ]);
+  });
+
+  it("cancels nothing when the receiver is not the sender's", async () => {
+    const crypto = new CryptoService(masterKey);
+    const checkIns = new InMemoryCheckInsService();
+
+    await serviceWith(checkIns, crypto, new InMemoryReceiversRepository()).pauseForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: 'missing-receiver',
+    });
+
+    expect(checkIns.cancelled).toEqual([]);
   });
 });

@@ -1,7 +1,15 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { CheckInAttemptStatus, CheckInStatus, ConsentStatus } from '@prisma/client';
-import type { Channel, CheckIn, CheckInAttempt, Prisma, Receiver } from '@prisma/client';
+import type { Channel, CheckIn, CheckInAttempt, Receiver } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import {
+  assertSupportedTimeZone,
+  parseScheduleTimeWindow,
+  ReceiverScheduleValidationError,
+  timeOfDayToMinutes,
+} from '../../shared/schedule/receiver-schedule';
+import type { ScheduleTimeWindow } from '../../shared/schedule/receiver-schedule';
+import { CHECK_IN_ALLOWED_FROM, CHECK_IN_ATTEMPT_ALLOWED_FROM, OPEN_CHECK_IN_STATUSES } from './check-ins.repository';
 import type {
   CheckInAttemptRecord,
   CheckInAttemptWithCheckInRecord,
@@ -10,13 +18,13 @@ import type {
   CheckInsRepository,
   CreateCheckInAttemptInput,
   CreatePendingCheckInInput,
-  FindOverdueSentCheckInsInput,
   MarkCheckInAttemptFailedInput,
   MarkCheckInAttemptSentInput,
   MarkCheckInAttemptTimedOutInput,
   MarkCheckInRespondedInput,
   MarkCheckInSentInput,
   MarkSentCheckInAttemptProviderFailureInput,
+  ReceiversDueForCheckIn,
   SkipPendingCheckInAttemptsInput,
 } from './check-ins.repository';
 
@@ -39,6 +47,18 @@ type ReceiverDueForCheckIn = Pick<
   | 'pausedUntil'
   | 'deletedAt'
 >;
+
+type AttemptWithCheckIn = CheckInAttempt & {
+  checkIn: CheckIn & {
+    receiver: {
+      phoneEncrypted: string;
+      countryCode: string;
+      language: string;
+      nameEncrypted: string;
+      personalNoteEncrypted: string | null;
+    };
+  };
+};
 
 interface CheckInsPrismaClient {
   receiver: {
@@ -80,13 +100,13 @@ interface CheckInsPrismaClient {
     ): Promise<CheckIn | null>;
     findMany(args: {
       where: {
-        status: CheckInStatus;
-        sentAt: { lte: Date };
+        receiverId: string;
+        status: { in: CheckInStatus[] };
       };
-      orderBy: { sentAt: 'asc' };
+      orderBy: { scheduledAt: 'asc' };
     }): Promise<CheckIn[]>;
-    update(args: {
-      where: { id: string };
+    updateMany(args: {
+      where: { id: string; status: { in: CheckInStatus[] } };
       data: Partial<{
         status: CheckInStatus;
         channelUsed: Channel;
@@ -96,7 +116,7 @@ interface CheckInsPrismaClient {
         responseTranscript: string;
         resolvedAt: Date;
       }>;
-    }): Promise<CheckIn>;
+    }): Promise<{ count: number }>;
   };
   checkInAttempt: {
     createManyAndReturn(args: { data: CreateCheckInAttemptInput[] }): Promise<CheckInAttempt[]>;
@@ -122,29 +142,17 @@ interface CheckInsPrismaClient {
         };
       };
       orderBy: Array<{ scheduledAt?: 'asc' } | { attemptNumber?: 'asc' }>;
-    }): Promise<
-      Array<
-        CheckInAttempt & {
-          checkIn: CheckIn & {
-            receiver: {
-              phoneEncrypted: string;
-              countryCode: string;
-              language: string;
-              nameEncrypted: string;
-              personalNoteEncrypted: string | null;
-            };
-          };
-        }
-      >
-    >;
+    }): Promise<AttemptWithCheckIn[]>;
     findFirst(args: {
       where:
         | { checkInId: string; status: CheckInAttemptStatus }
         | { providerMessageId: string; status: CheckInAttemptStatus };
       orderBy: { attemptNumber: 'desc' } | { sentAt: 'desc' };
     }): Promise<CheckInAttempt | null>;
-    update(args: {
-      where: { id: string };
+    updateMany(args: {
+      where:
+        | { id: string; status: { in: CheckInAttemptStatus[] } }
+        | { checkInId: string; status: { in: CheckInAttemptStatus[] } };
       data: Partial<{
         status: CheckInAttemptStatus;
         sentAt: Date;
@@ -153,10 +161,6 @@ interface CheckInsPrismaClient {
         providerStatus: string;
         failureReason: string;
       }>;
-    }): Promise<CheckInAttempt>;
-    updateMany(args: {
-      where: { checkInId: string; status: CheckInAttemptStatus };
-      data: { status: CheckInAttemptStatus; completedAt: Date; failureReason: string };
     }): Promise<{ count: number }>;
   };
 }
@@ -165,7 +169,7 @@ interface CheckInsPrismaClient {
 export class PrismaCheckInsRepository implements CheckInsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: CheckInsPrismaClient | PrismaService) {}
 
-  async findReceiversDueForCheckIn(now: Date): Promise<CheckInReceiverCandidate[]> {
+  async findReceiversDueForCheckIn(now: Date): Promise<ReceiversDueForCheckIn> {
     const { startOfDay, startOfNextDay } = this.utcDayBounds(now);
     const receivers = await this.prisma.receiver.findMany({
       where: {
@@ -185,27 +189,28 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         },
       },
     });
+    const result: ReceiversDueForCheckIn = { candidates: [], skipped: [] };
 
-    return receivers
-      .filter((receiver) => this.isInsideScheduleWindow(receiver.scheduleTimeWindow, now, receiver.timezone))
-      .map((receiver) => ({
-        id: receiver.id,
-        userId: receiver.userId,
-        nameEncrypted: receiver.nameEncrypted,
-        phoneEncrypted: receiver.phoneEncrypted,
-        personalNoteEncrypted: receiver.personalNoteEncrypted ?? undefined,
-        countryCode: receiver.countryCode,
-        language: receiver.language,
-        timezone: receiver.timezone,
-        techProfile: receiver.techProfile,
-        primaryChannel: receiver.primaryChannel,
-        fallbackChannels: receiver.fallbackChannels,
-        scheduleFrequency: receiver.scheduleFrequency,
-        scheduleTimeWindow: this.toScheduleTimeWindow(receiver.scheduleTimeWindow),
-        consentStatus: receiver.consentStatus,
-        pausedUntil: receiver.pausedUntil ?? undefined,
-        deletedAt: receiver.deletedAt ?? undefined,
-      }));
+    for (const receiver of receivers) {
+      let window: ScheduleTimeWindow;
+      let due: boolean;
+      try {
+        window = parseScheduleTimeWindow(receiver.scheduleTimeWindow);
+        assertSupportedTimeZone(receiver.timezone);
+        due = this.isInsideScheduleWindow(window, now, receiver.timezone);
+      } catch (error) {
+        // One row saved as `timezone: 'Dubai'` or `{ start: '9:00' }` used to reject the whole query and stall
+        // every receiver's check-in (CB-004). Report the row and carry on; the service audits it.
+        result.skipped.push({ receiverId: receiver.id, reason: this.scheduleInvalidReason(error) });
+        continue;
+      }
+
+      if (due) {
+        result.candidates.push(this.toCandidate(receiver, window));
+      }
+    }
+
+    return result;
   }
 
   async createPending(input: CreatePendingCheckInInput): Promise<CheckInRecord> {
@@ -234,17 +239,12 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       .map((attempt) => this.toCheckInAttemptRecord(attempt));
   }
 
-  async markSent(input: MarkCheckInSentInput): Promise<CheckInRecord> {
-    const checkIn = await this.prisma.checkIn.update({
-      where: { id: input.checkInId },
-      data: {
-        status: CheckInStatus.SENT,
-        channelUsed: input.channel,
-        sentAt: input.sentAt,
-      },
+  async markSent(input: MarkCheckInSentInput): Promise<boolean> {
+    return this.transitionCheckIn(input.checkInId, CHECK_IN_ALLOWED_FROM.sent, {
+      status: CheckInStatus.SENT,
+      channelUsed: input.channel,
+      sentAt: input.sentAt,
     });
-
-    return this.toCheckInRecord(checkIn);
   }
 
   async findDuePendingAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]> {
@@ -301,31 +301,21 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return attempts.map((attempt) => this.toAttemptWithCheckInRecord(attempt));
   }
 
-  async markAttemptSent(input: MarkCheckInAttemptSentInput): Promise<CheckInAttemptRecord> {
-    const attempt = await this.prisma.checkInAttempt.update({
-      where: { id: input.attemptId },
-      data: {
-        status: CheckInAttemptStatus.SENT,
-        sentAt: input.sentAt,
-        providerMessageId: input.providerMessageId,
-        providerStatus: input.providerStatus,
-      },
+  async markAttemptSent(input: MarkCheckInAttemptSentInput): Promise<boolean> {
+    return this.transitionAttempt(input.attemptId, CHECK_IN_ATTEMPT_ALLOWED_FROM.sent, {
+      status: CheckInAttemptStatus.SENT,
+      sentAt: input.sentAt,
+      providerMessageId: input.providerMessageId,
+      providerStatus: input.providerStatus,
     });
-
-    return this.toCheckInAttemptRecord(attempt);
   }
 
-  async markAttemptFailed(input: MarkCheckInAttemptFailedInput): Promise<CheckInAttemptRecord> {
-    const attempt = await this.prisma.checkInAttempt.update({
-      where: { id: input.attemptId },
-      data: {
-        status: CheckInAttemptStatus.FAILED,
-        completedAt: input.completedAt,
-        failureReason: input.failureReason,
-      },
+  async markAttemptFailed(input: MarkCheckInAttemptFailedInput): Promise<boolean> {
+    return this.transitionAttempt(input.attemptId, CHECK_IN_ATTEMPT_ALLOWED_FROM.failed, {
+      status: CheckInAttemptStatus.FAILED,
+      completedAt: input.completedAt,
+      failureReason: input.failureReason,
     });
-
-    return this.toCheckInAttemptRecord(attempt);
   }
 
   async markSentAttemptProviderFailure(
@@ -342,30 +332,25 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       return null;
     }
 
-    const attempt = await this.prisma.checkInAttempt.update({
-      where: { id: latest.id },
-      data: {
-        status: CheckInAttemptStatus.FAILED,
-        completedAt: input.completedAt,
-        providerStatus: input.providerStatus,
-        failureReason: input.failureReason,
-      },
-    });
+    const data = {
+      status: CheckInAttemptStatus.FAILED,
+      completedAt: input.completedAt,
+      providerStatus: input.providerStatus,
+      failureReason: input.failureReason,
+    };
+    if (!(await this.transitionAttempt(latest.id, CHECK_IN_ATTEMPT_ALLOWED_FROM.providerFailure, data))) {
+      return null;
+    }
 
-    return this.toCheckInAttemptRecord(attempt);
+    return this.toCheckInAttemptRecord({ ...latest, ...data });
   }
 
-  async markAttemptTimedOut(input: MarkCheckInAttemptTimedOutInput): Promise<CheckInAttemptRecord> {
-    const attempt = await this.prisma.checkInAttempt.update({
-      where: { id: input.attemptId },
-      data: {
-        status: CheckInAttemptStatus.TIMED_OUT,
-        completedAt: input.completedAt,
-        failureReason: 'response_window_elapsed',
-      },
+  async markAttemptTimedOut(input: MarkCheckInAttemptTimedOutInput): Promise<boolean> {
+    return this.transitionAttempt(input.attemptId, CHECK_IN_ATTEMPT_ALLOWED_FROM.timedOut, {
+      status: CheckInAttemptStatus.TIMED_OUT,
+      completedAt: input.completedAt,
+      failureReason: 'response_window_elapsed',
     });
-
-    return this.toCheckInAttemptRecord(attempt);
   }
 
   async markLatestSentAttemptResponded(input: {
@@ -376,25 +361,24 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       where: { checkInId: input.checkInId, status: CheckInAttemptStatus.SENT },
       orderBy: { attemptNumber: 'desc' },
     });
-
     if (!latest) {
       return null;
     }
 
-    const attempt = await this.prisma.checkInAttempt.update({
-      where: { id: latest.id },
-      data: {
-        status: CheckInAttemptStatus.RESPONDED,
-        completedAt: input.completedAt,
-      },
-    });
+    const data = {
+      status: CheckInAttemptStatus.RESPONDED,
+      completedAt: input.completedAt,
+    };
+    if (!(await this.transitionAttempt(latest.id, CHECK_IN_ATTEMPT_ALLOWED_FROM.responded, data))) {
+      return null;
+    }
 
-    return this.toCheckInAttemptRecord(attempt);
+    return this.toCheckInAttemptRecord({ ...latest, ...data });
   }
 
   async skipPendingAttemptsForCheckIn(input: SkipPendingCheckInAttemptsInput): Promise<number> {
     const result = await this.prisma.checkInAttempt.updateMany({
-      where: { checkInId: input.checkInId, status: CheckInAttemptStatus.PENDING },
+      where: { checkInId: input.checkInId, status: { in: [...CHECK_IN_ATTEMPT_ALLOWED_FROM.skipped] } },
       data: {
         status: CheckInAttemptStatus.SKIPPED,
         completedAt: input.completedAt,
@@ -405,15 +389,16 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return result.count;
   }
 
-  async markNeedsAttention(input: { checkInId: string }): Promise<CheckInRecord> {
-    const checkIn = await this.prisma.checkIn.update({
-      where: { id: input.checkInId },
-      data: {
-        status: CheckInStatus.NEEDS_ATTENTION,
-      },
+  async markNeedsAttention(input: { checkInId: string }): Promise<boolean> {
+    return this.transitionCheckIn(input.checkInId, CHECK_IN_ALLOWED_FROM.needsAttention, {
+      status: CheckInStatus.NEEDS_ATTENTION,
     });
+  }
 
-    return this.toCheckInRecord(checkIn);
+  async markCancelled(input: { checkInId: string }): Promise<boolean> {
+    return this.transitionCheckIn(input.checkInId, CHECK_IN_ALLOWED_FROM.cancelled, {
+      status: CheckInStatus.SKIPPED,
+    });
   }
 
   async findById(checkInId: string): Promise<CheckInRecord | null> {
@@ -424,6 +409,18 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     });
 
     return checkIn ? this.toCheckInRecord(checkIn) : null;
+  }
+
+  async findOpenForReceiver(receiverId: string): Promise<CheckInRecord[]> {
+    const checkIns = await this.prisma.checkIn.findMany({
+      where: {
+        receiverId,
+        status: { in: [...OPEN_CHECK_IN_STATUSES] },
+      },
+      orderBy: { scheduledAt: 'asc' },
+    });
+
+    return checkIns.map((checkIn) => this.toCheckInRecord(checkIn));
   }
 
   async findLatestOpenForReceiver(receiverId: string): Promise<CheckInRecord | null> {
@@ -458,79 +455,62 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return checkIn ? this.toCheckInRecord(checkIn) : null;
   }
 
-  async markResponded(input: MarkCheckInRespondedInput): Promise<CheckInRecord> {
-    const checkIn = await this.prisma.checkIn.update({
-      where: { id: input.checkInId },
-      data: {
-        status: input.status,
-        respondedAt: input.respondedAt,
-        responseDetectedAs: input.responseDetectedAs,
-        responseTranscript: input.responseTranscript,
-      },
+  async markResponded(input: MarkCheckInRespondedInput): Promise<CheckInRecord | null> {
+    const transitioned = await this.transitionCheckIn(input.checkInId, CHECK_IN_ALLOWED_FROM.responded, {
+      status: input.status,
+      respondedAt: input.respondedAt,
+      responseDetectedAs: input.responseDetectedAs,
+      responseTranscript: input.responseTranscript,
     });
 
-    return this.toCheckInRecord(checkIn);
+    return transitioned ? this.findById(input.checkInId) : null;
   }
 
-  async markResolvedByBackupContact(input: { checkInId: string; resolvedAt: Date }): Promise<CheckInRecord> {
-    const checkIn = await this.prisma.checkIn.update({
-      where: { id: input.checkInId },
-      data: {
-        status: CheckInStatus.RESOLVED,
-        resolvedAt: input.resolvedAt,
-      },
+  async markResolvedByBackupContact(input: { checkInId: string; resolvedAt: Date }): Promise<CheckInRecord | null> {
+    const transitioned = await this.transitionCheckIn(input.checkInId, CHECK_IN_ALLOWED_FROM.resolvedByBackupContact, {
+      status: CheckInStatus.RESOLVED,
+      resolvedAt: input.resolvedAt,
     });
 
-    return this.toCheckInRecord(checkIn);
+    return transitioned ? this.findById(input.checkInId) : null;
   }
 
-  async findOverdueSentCheckIns(input: FindOverdueSentCheckInsInput): Promise<CheckInRecord[]> {
-    const checkIns = await this.prisma.checkIn.findMany({
-      where: {
-        status: CheckInStatus.SENT,
-        sentAt: {
-          lte: input.overdueBefore,
-        },
-      },
-      orderBy: { sentAt: 'asc' },
+  private async transitionCheckIn(
+    checkInId: string,
+    allowedFrom: readonly CheckInStatus[],
+    data: Parameters<CheckInsPrismaClient['checkIn']['updateMany']>[0]['data'],
+  ): Promise<boolean> {
+    const result = await this.prisma.checkIn.updateMany({
+      where: { id: checkInId, status: { in: [...allowedFrom] } },
+      data,
     });
 
-    return checkIns.map((checkIn) => this.toCheckInRecord(checkIn));
+    return result.count > 0;
   }
 
-  private isInsideScheduleWindow(scheduleTimeWindow: Prisma.JsonValue, now: Date, timezone: string): boolean {
-    const window = this.toScheduleTimeWindow(scheduleTimeWindow);
-    const start = typeof window.start === 'string' ? window.start : undefined;
-    const end = typeof window.end === 'string' ? window.end : undefined;
+  private async transitionAttempt(
+    attemptId: string,
+    allowedFrom: readonly CheckInAttemptStatus[],
+    data: Parameters<CheckInsPrismaClient['checkInAttempt']['updateMany']>[0]['data'],
+  ): Promise<boolean> {
+    const result = await this.prisma.checkInAttempt.updateMany({
+      where: { id: attemptId, status: { in: [...allowedFrom] } },
+      data,
+    });
 
-    if (!start || !end) {
-      return false;
-    }
+    return result.count > 0;
+  }
 
+  private isInsideScheduleWindow(window: ScheduleTimeWindow, now: Date, timezone: string): boolean {
     const currentMinutes = this.localTimeToMinutes(now, timezone);
-    const startMinutes = this.timeToMinutes(start);
-    const endMinutes = this.timeToMinutes(end);
+    const startMinutes = timeOfDayToMinutes(window.start);
+    const endMinutes = timeOfDayToMinutes(window.end);
 
     if (startMinutes <= endMinutes) {
       return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
     }
 
     return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
-  }
-
-  private timeToMinutes(value: string): number {
-    const match = /^(\d{2}):(\d{2})$/.exec(value);
-    if (!match) {
-      throw new Error('Schedule time must use HH:mm format');
-    }
-
-    const hours = Number(match[1]);
-    const minutes = Number(match[2]);
-    if (hours > 23 || minutes > 59) {
-      throw new Error('Schedule time must be a valid 24-hour clock value');
-    }
-
-    return hours * 60 + minutes;
   }
 
   private localTimeToMinutes(now: Date, timezone: string): number {
@@ -550,6 +530,10 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return hour * 60 + minute;
   }
 
+  private scheduleInvalidReason(error: unknown): string {
+    return error instanceof ReceiverScheduleValidationError ? error.code.toLowerCase() : 'schedule_evaluation_failed';
+  }
+
   private utcDayBounds(now: Date): { startOfDay: Date; startOfNextDay: Date } {
     const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
     const startOfNextDay = new Date(startOfDay.getTime() + 24 * 60 * 60 * 1000);
@@ -557,12 +541,25 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return { startOfDay, startOfNextDay };
   }
 
-  private toScheduleTimeWindow(value: Prisma.JsonValue): Prisma.JsonObject {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      throw new Error('Receiver schedule time window must be a JSON object');
-    }
-
-    return value;
+  private toCandidate(receiver: ReceiverDueForCheckIn, window: ScheduleTimeWindow): CheckInReceiverCandidate {
+    return {
+      id: receiver.id,
+      userId: receiver.userId,
+      nameEncrypted: receiver.nameEncrypted,
+      phoneEncrypted: receiver.phoneEncrypted,
+      personalNoteEncrypted: receiver.personalNoteEncrypted ?? undefined,
+      countryCode: receiver.countryCode,
+      language: receiver.language,
+      timezone: receiver.timezone,
+      techProfile: receiver.techProfile,
+      primaryChannel: receiver.primaryChannel,
+      fallbackChannels: receiver.fallbackChannels,
+      scheduleFrequency: receiver.scheduleFrequency,
+      scheduleTimeWindow: { start: window.start, end: window.end },
+      consentStatus: receiver.consentStatus,
+      pausedUntil: receiver.pausedUntil ?? undefined,
+      deletedAt: receiver.deletedAt ?? undefined,
+    };
   }
 
   private toCheckInRecord(checkIn: CheckIn): CheckInRecord {
@@ -602,19 +599,7 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     };
   }
 
-  private toAttemptWithCheckInRecord(
-    attempt: CheckInAttempt & {
-      checkIn: CheckIn & {
-        receiver: {
-          phoneEncrypted: string;
-          countryCode: string;
-          language: string;
-          nameEncrypted: string;
-          personalNoteEncrypted: string | null;
-        };
-      };
-    },
-  ): CheckInAttemptWithCheckInRecord {
+  private toAttemptWithCheckInRecord(attempt: AttemptWithCheckIn): CheckInAttemptWithCheckInRecord {
     return {
       ...this.toCheckInAttemptRecord(attempt),
       checkIn: {

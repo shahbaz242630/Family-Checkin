@@ -20,6 +20,7 @@ import type {
   EscalationsRepository,
 } from '../escalations/escalations.repository';
 import { EscalationsService } from '../escalations/escalations.service';
+import type { CheckInsService } from '../check-ins/check-ins.service';
 import type {
   CheckInRecord,
   CheckInsRepository,
@@ -27,7 +28,6 @@ import type {
   CreatePendingCheckInInput,
   MarkCheckInSentInput,
   ResolveCheckInByBackupContactInput,
-  FindOverdueSentCheckInsInput,
 } from '../check-ins/check-ins.repository';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { createRealAuditService } from '../../shared/testing/real-audit';
@@ -273,8 +273,8 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
   public respondedAttempt: { checkInId: string; completedAt: Date } | null = null;
   public skippedAttempts: { checkInId: string; completedAt: Date; failureReason: string } | null = null;
 
-  async findReceiversDueForCheckIn(_now: Date): Promise<CheckInReceiverCandidate[]> {
-    return [];
+  async findReceiversDueForCheckIn(_now: Date): Promise<{ candidates: CheckInReceiverCandidate[]; skipped: [] }> {
+    return { candidates: [], skipped: [] };
   }
 
   async createPending(input: CreatePendingCheckInInput): Promise<CheckInRecord> {
@@ -288,21 +288,20 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     };
   }
 
-  async markSent(input: MarkCheckInSentInput): Promise<CheckInRecord> {
-    return {
-      id: input.checkInId,
-      receiverId: 'receiver-1',
-      scheduledAt: input.sentAt,
-      status: CheckInStatus.SENT,
-      channelUsed: input.channel,
-      sentAt: input.sentAt,
-      createdAt: input.sentAt,
-      updatedAt: input.sentAt,
-    };
+  async markSent(_input: MarkCheckInSentInput): Promise<boolean> {
+    return true;
   }
 
   async findLatestOpenForReceiver(receiverId: string): Promise<CheckInRecord | null> {
     return this.openCheckIn?.receiverId === receiverId ? this.openCheckIn : null;
+  }
+
+  async findOpenForReceiver(receiverId: string): Promise<CheckInRecord[]> {
+    return this.openCheckIn?.receiverId === receiverId ? [this.openCheckIn] : [];
+  }
+
+  async markCancelled(_input: { checkInId: string }): Promise<boolean> {
+    return true;
   }
 
   async createAttempts(): Promise<[]> {
@@ -317,70 +316,25 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     return [];
   }
 
-  async markAttemptSent(input: {
+  async markAttemptSent(_input: {
     attemptId: string;
     sentAt: Date;
     providerMessageId: string;
     providerStatus: string;
-  }): Promise<{
-    id: string;
-    checkInId: string;
-    attemptNumber: number;
-    channel: Channel;
-    status: CheckInAttemptStatus;
-    scheduledAt: Date;
-    sentAt: Date;
-    providerMessageId: string;
-    providerStatus: string;
-    createdAt: Date;
-    updatedAt: Date;
-  }> {
-    return {
-      id: input.attemptId,
-      checkInId: 'check-in-1',
-      attemptNumber: 1,
-      channel: Channel.WHATSAPP,
-      status: CheckInAttemptStatus.SENT,
-      scheduledAt: input.sentAt,
-      sentAt: input.sentAt,
-      providerMessageId: input.providerMessageId,
-      providerStatus: input.providerStatus,
-      createdAt: input.sentAt,
-      updatedAt: input.sentAt,
-    };
+  }): Promise<boolean> {
+    return true;
   }
 
-  async markAttemptFailed(input: { attemptId: string; completedAt: Date; failureReason: string }) {
-    return {
-      id: input.attemptId,
-      checkInId: 'check-in-1',
-      attemptNumber: 1,
-      channel: Channel.WHATSAPP,
-      status: CheckInAttemptStatus.FAILED,
-      scheduledAt: input.completedAt,
-      completedAt: input.completedAt,
-      failureReason: input.failureReason,
-      createdAt: input.completedAt,
-      updatedAt: input.completedAt,
-    };
+  async markAttemptFailed(_input: { attemptId: string; completedAt: Date; failureReason: string }): Promise<boolean> {
+    return true;
   }
 
   async markSentAttemptProviderFailure(): Promise<null> {
     return null;
   }
 
-  async markAttemptTimedOut(input: { attemptId: string; completedAt: Date }) {
-    return {
-      id: input.attemptId,
-      checkInId: 'check-in-1',
-      attemptNumber: 1,
-      channel: Channel.WHATSAPP,
-      status: CheckInAttemptStatus.TIMED_OUT,
-      scheduledAt: input.completedAt,
-      completedAt: input.completedAt,
-      createdAt: input.completedAt,
-      updatedAt: input.completedAt,
-    };
+  async markAttemptTimedOut(_input: { attemptId: string; completedAt: Date }): Promise<boolean> {
+    return true;
   }
 
   async markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }) {
@@ -407,15 +361,8 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     return 1;
   }
 
-  async markNeedsAttention(input: { checkInId: string }): Promise<CheckInRecord> {
-    return {
-      id: input.checkInId,
-      receiverId: 'receiver-1',
-      scheduledAt: new Date('2026-04-27T05:30:00.000Z'),
-      status: CheckInStatus.NEEDS_ATTENTION,
-      createdAt: new Date('2026-04-27T05:30:00.000Z'),
-      updatedAt: new Date('2026-04-27T05:30:00.000Z'),
-    };
+  async markNeedsAttention(_input: { checkInId: string }): Promise<boolean> {
+    return true;
   }
 
   async findById(checkInId: string): Promise<CheckInRecord | null> {
@@ -469,10 +416,6 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
       createdAt: this.actionableCheckIn?.createdAt ?? input.resolvedAt,
       updatedAt: input.resolvedAt,
     };
-  }
-
-  async findOverdueSentCheckIns(_input: FindOverdueSentCheckInsInput): Promise<CheckInRecord[]> {
-    return [];
   }
 }
 
@@ -1449,5 +1392,86 @@ describe('ReceiverReplyService never fails inbound replies (CB-015)', () => {
     expect(result.action).toBe('unrecognised_reply');
     expect(audit.events).toHaveLength(1);
     expect(audit.events[0]?.action).toBe('backup_contact.reply_unrecognised');
+  });
+});
+
+describe('ReceiverReplyService cancels in-flight check-ins on STOP and REPORT (CB-008)', () => {
+  class InMemoryCheckInsService {
+    public cancelled: Array<{ receiverId: string; reason: string }> = [];
+
+    async cancelOpenCheckInsForReceiver(input: { receiverId: string; reason: string }) {
+      this.cancelled.push(input);
+      return { cancelled: 1, skippedAttempts: 1 };
+    }
+  }
+
+  function serviceWith(
+    checkInsService: InMemoryCheckInsService,
+    crypto: CryptoService,
+    repository: InMemoryReceiversRepository,
+  ) {
+    return new ReceiverReplyService(
+      repository,
+      new InMemoryCheckInsRepository(),
+      crypto,
+      createRealAuditService().auditService,
+      undefined,
+      undefined,
+      () => new Date('2026-04-27T05:40:00.000Z'),
+      checkInsService as unknown as CheckInsService,
+    );
+  }
+
+  it('cancels open check-ins after a STOP so the next cascade attempt never goes out', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkInsService = new InMemoryCheckInsService();
+    repository.records.push({ ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED });
+
+    const result = await serviceWith(checkInsService, crypto, repository).handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.SMS,
+      body: 'STOP',
+    });
+
+    expect(result.action).toBe('consent_revoked');
+    expect(repository.consentUpdate?.consentStatus).toBe(ConsentStatus.REVOKED);
+    expect(checkInsService.cancelled).toEqual([
+      { receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb', reason: 'receiver_opted_out' },
+    ]);
+  });
+
+  it('cancels open check-ins after a REPORT alongside the review pause', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkInsService = new InMemoryCheckInsService();
+    repository.records.push({ ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED });
+
+    const result = await serviceWith(checkInsService, crypto, repository).handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.WHATSAPP,
+      body: 'REPORT',
+    });
+
+    expect(result.action).toBe('abuse_reported');
+    expect(repository.pausedReceiver?.receiverId).toBe('1aef91f9-64c9-4548-baa5-d70b52386efb');
+    expect(checkInsService.cancelled).toEqual([
+      { receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb', reason: 'abuse_reported' },
+    ]);
+  });
+
+  it('does not cancel anything for a YES, which closes the check-in through the reply itself', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const checkInsService = new InMemoryCheckInsService();
+    repository.records.push({ ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED });
+
+    await serviceWith(checkInsService, crypto, repository).handleInboundReply({
+      fromPhone: '+971501234567',
+      channel: Channel.WHATSAPP,
+      body: 'YES',
+    });
+
+    expect(checkInsService.cancelled).toEqual([]);
   });
 });
