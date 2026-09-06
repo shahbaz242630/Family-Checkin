@@ -119,4 +119,4 @@ Related handoffs: `docs/handoffs/escalations-and-notifications.md` (sender siren
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §0a (793–804), §1–§3 (806–884), §12–§17 (1543–1765), §19–§20 (1794–1847), §29c (2343–2363), §34 (3366–3400).
 - Acceptance evidence: `docs/audits/2026-09-06/sprint1-acceptance.md` S2 (tick with a bad row), S6 (STOP cancels the cascade), S8 (exhaustion → `NEEDS_ATTENTION`, one notification, guarded re-run).
-- PRs: #20 (CB-004/005/006/008 — resilient tick, exhaustion notification, guarded transitions, cancellation), #21 (sprint 1 close: acceptance report and backlog follow-ups), sprint 2 check-in engine PR (CB-013 local-day dedupe, CB-069 once-per-version audit, CB-010 `checkin_retry`).
+- PRs: #20 (CB-004/005/006/008 — resilient tick, exhaustion notification, guarded transitions, cancellation), #21 (sprint 1 close: acceptance report and backlog follow-ups), #28 (CB-013 local-day dedupe, CB-069 once-per-version audit, CB-010 `checkin_retry`).
