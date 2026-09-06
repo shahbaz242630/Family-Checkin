@@ -109,6 +109,12 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 - `REPORT` is applied to the resolved row only; with several rows sharing a phone, the other rows are not paused for review.
 - The STOP confirmation reuses `receiver_checkins_ended` ("has ended your Nearby check-ins"); a dedicated opt-out template is a CB-010 copy slice.
 
+## Known gaps (added after the sprint-2 acceptance run)
+
+- CB-079 — the STOP confirmation still uses the neutral English fallback inside non-English copy and never names the sender.
+- CB-081 — resend counts the first invitation toward the 7-day cap (founder decision pending).
+- CB-080 — intermittent empty response bodies on the Android app (verify and delete flows affected); see `docs/audits/2026-09-06/sprint2-acceptance.md` F2.
+
 ## History
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §0a (lines 793–804), §5 (lines 928–1179), §6 (lines 1180–1257), §29f (lines 2439–2476).

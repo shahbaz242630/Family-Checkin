@@ -62,7 +62,7 @@ Start the emulator from Android Studio (or `emulator -avd <name>`), then:
 npm.cmd --prefix apps/mobile run android
 ```
 
-Metro logs go to the terminal; the handoff's older runs used `expo-android*.log` files at the repo root (gitignored). For an unattended run, `CI=1 npx expo start --android --port 8081` avoids the interactive prompts (reloads are then manual: force-stop Expo Go and reopen `exp://<host>:8081`). To drive the UI from a script, `adb shell uiautomator dump` gives every element's text and bounds; see `docs/audits/2026-09-06/emulator-acceptance.md` for the method that worked.
+Metro logs go to the terminal; the handoff's older runs used `expo-android*.log` files at the repo root (gitignored). Start Metro with `--clear` after pulling new code: in `CI=1` mode it served a stale module once on 2026-09-06 (the app showed old behaviour until the cache was cleared). Do not judge bundle freshness by fetching `entry.bundle` yourself: without the device's `transform.routerRoot` option that bundle contains no screens. For an unattended run, `CI=1 npx expo start --android --port 8081 --clear` avoids the interactive prompts (reloads are then manual: force-stop Expo Go and reopen `exp://<host>:8081`). To drive the UI from a script, `adb shell uiautomator dump` gives every element's text and bounds; see `docs/audits/2026-09-06/emulator-acceptance.md` for the method that worked.
 
 ## 5. Driving the flows
 
@@ -99,6 +99,6 @@ Known-open mobile items to NOT chase (backlog Phase 3): social login (CB-028), p
 
 ## 6. Recording results
 
-Last run: `docs/audits/2026-09-06/emulator-acceptance.md` (12/12 scenarios, one backend defect fixed as CB-070, findings CB-071 to CB-078).
+Runs: `docs/audits/2026-09-06/emulator-acceptance.md` (sprint 1: 12/12, CB-070 fixed, findings CB-071–078) and `docs/audits/2026-09-06/sprint2-acceptance.md` (sprint 2: regression 12/12 plus 12 new checks, findings CB-079–082). On the detail screen there are two "Remove" buttons (backup contact row and receiver); scripted taps must pick by position.
 
 Write `docs/audits/<date>/emulator-acceptance.md` with pass/fail per scenario and the backend log lines that prove each outcome; open backlog items for anything that fails, with the next free `CB-` id.

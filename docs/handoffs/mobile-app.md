@@ -107,6 +107,8 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - CB-041 — Billing: no post-purchase polling, `configure()` on user switch, wrong `userData.ts` export type keys.
 - CB-066 — Stale artefacts including the four mobile legacy redirect stubs, the "Family Check-In" splash/app name and the export filename.
 - CB-078 — PKCE downgrades to `plain` in Expo Go (no WebCrypto); a dev build needs a crypto polyfill.
+- CB-080 — intermittent empty response bodies parsed as "JSON Parse error: Unexpected end of input" (sprint-2 acceptance F2); `backendRequest` should treat an empty body as a readable error.
+- CB-082 — the lazily imported `expo-notifications` chunk failed to parse once in Expo Go (sprint-2 acceptance F4).
 
 ## History
 
