@@ -59,6 +59,7 @@ type ReceiverDueForCheckIn = Pick<
 type AttemptWithCheckIn = CheckInAttempt & {
   checkIn: CheckIn & {
     receiver: {
+      userId: string;
       phoneEncrypted: string;
       countryCode: string;
       language: string;
@@ -150,6 +151,7 @@ interface CheckInsPrismaClient {
           include: {
             receiver: {
               select: {
+                userId: true;
                 phoneEncrypted: true;
                 countryCode: true;
                 language: true;
@@ -166,7 +168,7 @@ interface CheckInsPrismaClient {
       where:
         | { checkInId: string; status: CheckInAttemptStatus }
         | { providerMessageId: string; status: CheckInAttemptStatus };
-      orderBy: { attemptNumber: 'desc' } | { sentAt: 'desc' };
+      orderBy: { attemptNumber: 'desc' } | { attemptNumber: 'asc' } | { sentAt: 'desc' };
     }): Promise<CheckInAttempt | null>;
     updateMany(args: {
       where:
@@ -174,6 +176,7 @@ interface CheckInsPrismaClient {
         | { checkInId: string; status: { in: CheckInAttemptStatus[] } };
       data: Partial<{
         status: CheckInAttemptStatus;
+        scheduledAt: Date;
         sentAt: Date;
         completedAt: Date;
         providerMessageId: string;
@@ -220,7 +223,11 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       } catch (error) {
         // One row saved as `timezone: 'Dubai'` or `{ start: '9:00' }` used to reject the whole query and stall
         // every receiver's check-in (CB-004). Report the row and carry on; the service audits it.
-        result.skipped.push({ receiverId: receiver.id, reason: this.scheduleInvalidReason(error) });
+        result.skipped.push({
+          receiverId: receiver.id,
+          userId: receiver.userId,
+          reason: this.scheduleInvalidReason(error),
+        });
         continue;
       }
 
@@ -325,6 +332,7 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
           include: {
             receiver: {
               select: {
+                userId: true,
                 phoneEncrypted: true,
                 countryCode: true,
                 language: true,
@@ -352,6 +360,7 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
           include: {
             receiver: {
               select: {
+                userId: true,
                 phoneEncrypted: true,
                 countryCode: true,
                 language: true,
@@ -418,6 +427,19 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
       completedAt: input.completedAt,
       failureReason: 'response_window_elapsed',
     });
+  }
+
+  async expediteNextPendingAttempt(input: { checkInId: string; dueAt: Date }): Promise<boolean> {
+    const next = await this.prisma.checkInAttempt.findFirst({
+      where: { checkInId: input.checkInId, status: CheckInAttemptStatus.PENDING },
+      orderBy: { attemptNumber: 'asc' },
+    });
+    if (!next || next.scheduledAt.getTime() <= input.dueAt.getTime()) {
+      return false;
+    }
+
+    // Guarded like every other attempt write: a tick that sent or skipped it in the meantime wins.
+    return this.transitionAttempt(next.id, [CheckInAttemptStatus.PENDING], { scheduledAt: input.dueAt });
   }
 
   async markLatestSentAttemptResponded(input: {
@@ -691,6 +713,7 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         receiverLanguage: attempt.checkIn.receiver.language,
         receiverNameEncrypted: attempt.checkIn.receiver.nameEncrypted,
         receiverPersonalNoteEncrypted: attempt.checkIn.receiver.personalNoteEncrypted ?? undefined,
+        receiverUserId: attempt.checkIn.receiver.userId,
       },
     };
   }

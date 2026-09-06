@@ -20,7 +20,10 @@ class FakeStepUpService {
 class FakeAccountRepository implements Partial<AccountRepository> {
   public deletedInput: unknown;
 
-  constructor(public exportRecord: AccountExportRecord | null, private readonly deleteResult: AccountDeletionResult | null = null) {}
+  constructor(
+    public exportRecord: AccountExportRecord | null,
+    private readonly deleteResult: AccountDeletionResult | null = null,
+  ) {}
 
   async buildExport() {
     return this.exportRecord;
@@ -52,6 +55,7 @@ function exportRecord(): AccountExportRecord {
       id: 'user-1',
       emailEncrypted: encrypted('sender@example.com'),
       phoneEncrypted: encrypted('+971501234567'),
+      displayNameEncrypted: encrypted('Sam'),
       country: 'AE',
       preferredLanguage: 'en',
       timezone: 'Asia/Dubai',
@@ -89,7 +93,9 @@ function exportRecord(): AccountExportRecord {
         createdAt: new Date('2026-04-05T00:00:00.000Z'),
       },
     ],
-    checkIns: [{ id: 'check-1', receiverId: 'receiver-1', status: 'RESPONDED_OK', responseTranscript: encrypted('OK') }],
+    checkIns: [
+      { id: 'check-1', receiverId: 'receiver-1', status: 'RESPONDED_OK', responseTranscript: encrypted('OK') },
+    ],
     attempts: [{ id: 'attempt-1', providerMessageId: 'SM123', providerStatus: 'accepted' }],
     escalations: [{ id: 'escalation-1', errorDetails: 'sanitized' }],
     subscriptions: [{ id: 'sub-1', paymentProvider: 'stripe', externalSubscriptionId: 'sub_external' }],
@@ -111,8 +117,11 @@ describe('AccountPrivacyService', () => {
     const result = await service.exportAccount({ userId: 'user-1', stepUpToken: 'EXPORT_DATA-token' });
     const serialized = JSON.stringify(result);
 
-    expect(stepUp.consumed).toEqual([{ userId: 'user-1', action: SensitiveAction.EXPORT_DATA, stepUpToken: 'EXPORT_DATA-token' }]);
+    expect(stepUp.consumed).toEqual([
+      { userId: 'user-1', action: SensitiveAction.EXPORT_DATA, stepUpToken: 'EXPORT_DATA-token' },
+    ]);
     expect(result.user.email).toBe('sender@example.com');
+    expect(result.user.displayName).toBe('Sam');
     expect(result.receivers[0]?.displayName).toBe('Salma');
     expect(result.backupContacts[0]?.displayName).toBe('Fatima');
     expect(serialized).not.toContain('Encrypted');
@@ -145,7 +154,9 @@ describe('AccountPrivacyService', () => {
     });
 
     expect(result).toEqual({ ok: true, deletedAt: '2026-05-01T10:00:00.000Z' });
-    expect(stepUp.consumed).toEqual([{ userId: 'user-1', action: SensitiveAction.DELETE_ACCOUNT, stepUpToken: 'DELETE_ACCOUNT-token' }]);
+    expect(stepUp.consumed).toEqual([
+      { userId: 'user-1', action: SensitiveAction.DELETE_ACCOUNT, stepUpToken: 'DELETE_ACCOUNT-token' },
+    ]);
     expect(JSON.stringify(repository.deletedInput)).not.toContain('sender@example.com');
     expect(audit.events).toEqual([
       {
@@ -169,6 +180,8 @@ describe('AccountPrivacyService', () => {
       new FakeAuditService() as unknown as AuditService,
     );
 
-    await expect(service.exportAccount({ userId: 'user-1', stepUpToken: 'DELETE_ACCOUNT-token' })).rejects.toThrow('Step-up verification is required');
+    await expect(service.exportAccount({ userId: 'user-1', stepUpToken: 'DELETE_ACCOUNT-token' })).rejects.toThrow(
+      'Step-up verification is required',
+    );
   });
 });

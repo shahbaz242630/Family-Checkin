@@ -7,6 +7,10 @@ import { ChannelsModule } from '../channels/channels.module';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { EscalationsModule } from '../escalations/escalations.module';
 import { EscalationsService } from '../escalations/escalations.service';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { NotificationsService } from '../notifications/notifications.service';
+import { UsersModule } from '../users/users.module';
+import { UsersService } from '../users/users.service';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { PrismaService } from '../../shared/prisma/prisma.service';
@@ -18,7 +22,9 @@ import { PrismaVoiceCallerIdRepository } from './prisma-voice-caller-id.reposito
 import type { VoiceCallerIdRepository } from './voice-caller-id.repository';
 
 @Module({
-  imports: [AuditModule, BillingModule, ChannelsModule, EscalationsModule],
+  // UsersModule for the sender display name in check-in copy (CB-010); NotificationsModule for the quiet push
+  // when a receiver's schedule becomes unevaluable (CB-069).
+  imports: [AuditModule, BillingModule, ChannelsModule, EscalationsModule, UsersModule, NotificationsModule],
   providers: [
     PrismaService,
     {
@@ -44,6 +50,8 @@ import type { VoiceCallerIdRepository } from './voice-caller-id.repository';
         escalationsService: EscalationsService,
         billingService: BillingService,
         voiceCallerIds: VoiceCallerIdRepository,
+        usersService: UsersService,
+        notificationsService: NotificationsService,
       ) =>
         new CheckInsService(
           repository,
@@ -54,6 +62,8 @@ import type { VoiceCallerIdRepository } from './voice-caller-id.repository';
           undefined,
           billingService,
           voiceCallerIds,
+          usersService,
+          notificationsService,
         ),
       inject: [
         CHECK_INS_REPOSITORY,
@@ -63,6 +73,8 @@ import type { VoiceCallerIdRepository } from './voice-caller-id.repository';
         EscalationsService,
         BillingService,
         VOICE_CALLER_ID_REPOSITORY,
+        UsersService,
+        NotificationsService,
       ],
     },
   ],

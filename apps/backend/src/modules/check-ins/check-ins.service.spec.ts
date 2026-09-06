@@ -199,6 +199,16 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
     });
   }
 
+  async expediteNextPendingAttempt(input: { checkInId: string; dueAt: Date }): Promise<boolean> {
+    const next = [...this.attempts]
+      .filter((attempt) => attempt.checkInId === input.checkInId && attempt.status === CheckInAttemptStatus.PENDING)
+      .sort((left, right) => left.attemptNumber - right.attemptNumber)[0];
+    if (!next || next.scheduledAt <= input.dueAt) {
+      return false;
+    }
+    return this.transitionAttempt(next.id, [CheckInAttemptStatus.PENDING], { scheduledAt: input.dueAt });
+  }
+
   async markLatestSentAttemptResponded(input: {
     checkInId: string;
     completedAt: Date;
@@ -326,8 +336,44 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
         receiverPhoneEncrypted: new CryptoService(masterKey).encrypt('+971501234567'),
         receiverCountryCode: 'AE',
         receiverLanguage: 'en',
+        receiverUserId:
+          this.checkInRecord(attempt.checkInId).receiverId === 'receiver-2' ? 'sender-user-2' : 'sender-user-1',
       },
     };
+  }
+}
+
+/** `UsersService.senderDisplayNameFor` double: a stored name per sender, the neutral fallback otherwise (CB-010). */
+class InMemoryUsersService {
+  public displayNames = new Map<string, string>();
+  public lookedUp: string[] = [];
+
+  async senderDisplayNameFor(userId: string, fallback = 'your family member'): Promise<string> {
+    this.lookedUp.push(userId);
+    return this.displayNames.get(userId) ?? fallback;
+  }
+}
+
+/** `NotificationsService.sendQuietUpdateToUser` double (CB-069). */
+class InMemoryNotificationsService {
+  public quietUpdates: Array<{ userId: string; title: string; body: string; data: Record<string, string> }> = [];
+  public nextError: Error | null = null;
+
+  constructor(
+    private readonly result: { attempted: number; sent: number; failed: number; sentAt?: Date } = {
+      attempted: 1,
+      sent: 1,
+      failed: 0,
+      sentAt: new Date('2026-09-06T08:00:00.000Z'),
+    },
+  ) {}
+
+  async sendQuietUpdateToUser(input: { userId: string; title: string; body: string; data: Record<string, string> }) {
+    if (this.nextError) {
+      throw this.nextError;
+    }
+    this.quietUpdates.push(input);
+    return this.result;
   }
 }
 
@@ -828,7 +874,9 @@ describe('CheckInsService keeps the tick alive around bad rows and throwing prov
     const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, { now: () => new Date('2026-04-27T05:30:00.000Z') });
     const billing = new InMemoryBillingService();
     billing.entitledByUserId.set('sender-user-1', true);
-    repository.invalidSchedules = [{ receiverId: 'receiver-dubai', reason: 'invalid_timezone' }];
+    repository.invalidSchedules = [
+      { receiverId: 'receiver-dubai', userId: 'sender-user-1', reason: 'invalid_timezone' },
+    ];
     repository.candidates = [
       {
         ...receiverCandidate(crypto),
@@ -1288,11 +1336,14 @@ describe('CheckInsService dedupes on the receiver local day (CB-013)', () => {
 });
 
 describe('CheckInsService audits an invalid schedule once per schedule version (CB-069)', () => {
-  it('writes one check_in.schedule_invalid row across ticks, keeps counting the row as failed, and audits again only after the schedule recovered', async () => {
+  it('writes one check_in.schedule_invalid row and one quiet sender push across ticks, and does both again only after the schedule recovered', async () => {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryCheckInsRepository();
     const { auditService, audit } = createRealAuditService();
-    repository.invalidSchedules = [{ receiverId: 'receiver-dubai', reason: 'invalid_timezone' }];
+    const notifications = new InMemoryNotificationsService();
+    repository.invalidSchedules = [
+      { receiverId: 'receiver-dubai', userId: 'sender-user-1', reason: 'invalid_timezone' },
+    ];
     const service = new CheckInsService(
       repository,
       crypto,
@@ -1300,6 +1351,10 @@ describe('CheckInsService audits an invalid schedule once per schedule version (
       auditService,
       undefined,
       () => new Date('2026-09-06T08:00:00.000Z'),
+      undefined,
+      undefined,
+      undefined,
+      notifications,
     );
 
     expect(await service.sendDueCheckIns()).toEqual({ created: 0, sent: 0, skipped: 0, failed: 1 });
@@ -1312,6 +1367,32 @@ describe('CheckInsService audits an invalid schedule once per schedule version (
         actorType: ActorType.SYSTEM,
         metadata: { receiverId: 'receiver-dubai', reason: 'invalid_timezone' },
       },
+      {
+        entityType: 'receiver',
+        entityId: 'receiver-dubai',
+        action: 'sender_push.sent',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: 'receiver-dubai',
+          reason: 'schedule_invalid',
+          deepLink: '/(main)/receivers/receiver-dubai',
+          attempted: 1,
+          sent: 1,
+          failed: 0,
+        },
+      },
+    ]);
+    expect(notifications.quietUpdates).toEqual([
+      {
+        userId: 'sender-user-1',
+        title: 'Check-in schedule needs attention',
+        body: expect.stringContaining('Open the app'),
+        data: {
+          receiverId: 'receiver-dubai',
+          reason: 'schedule_invalid',
+          deepLink: '/(main)/receivers/receiver-dubai',
+        },
+      },
     ]);
     expect(repository.scheduleInvalidAt.get('receiver-dubai')).toEqual(new Date('2026-09-06T08:00:00.000Z'));
 
@@ -1322,14 +1403,291 @@ describe('CheckInsService audits an invalid schedule once per schedule version (
     expect(repository.scheduleInvalidAt.has('receiver-dubai')).toBe(false);
 
     // A second bad version is a new event.
-    repository.invalidSchedules = [{ receiverId: 'receiver-dubai', reason: 'invalid_schedule_time_window' }];
+    repository.invalidSchedules = [
+      { receiverId: 'receiver-dubai', userId: 'sender-user-1', reason: 'invalid_schedule_time_window' },
+    ];
     repository.recovered = [];
     await service.sendDueCheckIns();
     await service.sendDueCheckIns();
-    expect(audit.events.map((event) => event.metadata)).toEqual([
+    expect(
+      audit.events.filter((event) => event.action === 'check_in.schedule_invalid').map((event) => event.metadata),
+    ).toEqual([
       { receiverId: 'receiver-dubai', reason: 'invalid_timezone' },
       { receiverId: 'receiver-dubai', reason: 'invalid_schedule_time_window' },
     ]);
+    expect(notifications.quietUpdates).toHaveLength(2);
+  });
+
+  it('audits sender_push.not_delivered when the sender has no device and sender_push.failed when the push throws, and keeps the tick alive', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const notifications = new InMemoryNotificationsService({ attempted: 0, sent: 0, failed: 0 });
+    repository.invalidSchedules = [
+      { receiverId: 'receiver-dubai', userId: 'sender-user-1', reason: 'invalid_timezone' },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([]),
+      auditService,
+      undefined,
+      () => new Date('2026-09-06T08:00:00.000Z'),
+      undefined,
+      undefined,
+      undefined,
+      notifications,
+    );
+
+    expect(await service.sendDueCheckIns()).toEqual({ created: 0, sent: 0, skipped: 0, failed: 1 });
+    expect(audit.events.map((event) => event.action)).toEqual([
+      'check_in.schedule_invalid',
+      'sender_push.not_delivered',
+    ]);
+
+    repository.scheduleInvalidAt.clear();
+    notifications.nextError = new Error('push gateway unreachable');
+    expect(await service.sendDueCheckIns()).toEqual({ created: 0, sent: 0, skipped: 0, failed: 1 });
+    expect(audit.events.at(-1)).toEqual({
+      entityType: 'receiver',
+      entityId: 'receiver-dubai',
+      action: 'sender_push.failed',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: 'receiver-dubai',
+        reason: 'schedule_invalid',
+        deepLink: '/(main)/receivers/receiver-dubai',
+      },
+    });
+  });
+});
+
+describe('CheckInsService fails an attempt the carrier could not deliver (CB-016)', () => {
+  const sentAt = new Date('2026-04-27T05:30:00.000Z');
+  const callbackAt = new Date('2026-04-27T05:32:00.000Z');
+
+  function harness(attempts: CheckInAttemptRecord[]) {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const escalations = new InMemoryEscalationsService();
+    const sms = new FakeChannelProvider(Channel.SMS, { now: () => callbackAt });
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, { now: () => callbackAt });
+    repository.attempts = attempts;
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms, whatsapp]),
+      auditService,
+      escalations,
+      () => callbackAt,
+    );
+
+    return { repository, audit, escalations, sms, whatsapp, service };
+  }
+
+  it('marks the SENT attempt FAILED on an undelivered status, audits the Twilio error code and sends attempt 2 on the next tick', async () => {
+    const { repository, audit, escalations, whatsapp, service } = harness([
+      sentAttempt({ id: 'attempt-1', channel: Channel.SMS, sentAt, providerMessageId: 'SM-1' }),
+      pendingAttempt({
+        id: 'attempt-2',
+        attemptNumber: 2,
+        channel: Channel.WHATSAPP,
+        scheduledAt: new Date('2026-04-27T06:00:00.000Z'),
+      }),
+    ]);
+
+    const result = await service.recordMessagingProviderStatus({
+      providerMessageId: 'SM-1',
+      messageStatus: 'undelivered',
+      errorCode: '30003',
+    });
+
+    expect(result).toEqual({ updated: true });
+    expect(repository.attempts[0]).toMatchObject({
+      id: 'attempt-1',
+      status: CheckInAttemptStatus.FAILED,
+      providerStatus: 'undelivered',
+      failureReason: 'twilio_status_undelivered',
+      completedAt: callbackAt,
+    });
+    // The stagger no longer applies: attempt 2 is due now instead of at 06:00.
+    expect(repository.attempts[1]).toMatchObject({
+      id: 'attempt-2',
+      status: CheckInAttemptStatus.PENDING,
+      scheduledAt: callbackAt,
+    });
+    expect(repository.checkInRecord('check-in-1').status).toBe(CheckInStatus.SENT);
+    expect(repository.needsAttentionCheckInIds).toEqual([]);
+    expect(escalations.missedCheckIns).toEqual([]);
+    expect(audit.events).toEqual([
+      {
+        entityType: 'check_in',
+        entityId: 'check-in-1',
+        action: 'check_in.attempt_failed',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: 'receiver-1',
+          channel: Channel.SMS,
+          attemptNumber: 1,
+          failureReason: 'twilio_status_undelivered',
+          providerErrorCode: '30003',
+        },
+      },
+    ]);
+
+    const tick = await service.processCascadeAttempts();
+
+    expect(tick).toEqual({ sent: 1, timedOut: 0, failed: 0, needsAttention: 0, skipped: 0 });
+    expect(whatsapp.sentMessages).toHaveLength(1);
+    expect(whatsapp.sentMessages[0]?.message.templateKey).toBe('checkin_retry');
+    expect(repository.attempts[1]).toMatchObject({ id: 'attempt-2', status: CheckInAttemptStatus.SENT });
+  });
+
+  it('flags the check-in and notifies the sender when the undelivered attempt was the last one', async () => {
+    const { repository, audit, escalations, service } = harness([
+      sentAttempt({ id: 'attempt-1', channel: Channel.SMS, sentAt, providerMessageId: 'SM-2' }),
+    ]);
+
+    const result = await service.recordMessagingProviderStatus({ providerMessageId: 'SM-2', messageStatus: 'failed' });
+
+    expect(result).toEqual({ updated: true });
+    expect(repository.attempts[0]).toMatchObject({
+      status: CheckInAttemptStatus.FAILED,
+      failureReason: 'twilio_status_failed',
+    });
+    expect(repository.checkInRecord('check-in-1').status).toBe(CheckInStatus.NEEDS_ATTENTION);
+    expect(escalations.missedCheckIns).toEqual([{ receiverId: 'receiver-1', checkInId: 'check-in-1' }]);
+    expect(audit.events.map((event) => event.action)).toEqual(['check_in.attempt_failed', 'check_in.needs_attention']);
+    expect(audit.events[0]?.metadata).not.toHaveProperty('providerErrorCode');
+  });
+
+  it('records queued, sent, delivered and read statuses without touching the attempt', async () => {
+    const { repository, audit, service } = harness([
+      sentAttempt({ id: 'attempt-1', channel: Channel.SMS, sentAt, providerMessageId: 'SM-3' }),
+    ]);
+
+    for (const messageStatus of ['queued', 'sent', 'delivered', 'read', 'Delivered ']) {
+      expect(await service.recordMessagingProviderStatus({ providerMessageId: 'SM-3', messageStatus })).toEqual({
+        updated: false,
+      });
+    }
+
+    expect(repository.attempts[0]).toMatchObject({ status: CheckInAttemptStatus.SENT, providerStatus: 'queued' });
+    expect(audit.events).toEqual([]);
+  });
+
+  it('ignores a status for a message no SENT attempt carries, or with no id or status at all', async () => {
+    const { repository, audit, service } = harness([
+      sentAttempt({ id: 'attempt-1', channel: Channel.SMS, sentAt, providerMessageId: 'SM-4' }),
+    ]);
+
+    expect(
+      await service.recordMessagingProviderStatus({ providerMessageId: 'SM-unknown', messageStatus: 'undelivered' }),
+    ).toEqual({ updated: false });
+    expect(await service.recordMessagingProviderStatus({ messageStatus: 'undelivered' })).toEqual({ updated: false });
+    expect(await service.recordMessagingProviderStatus({ providerMessageId: 'SM-4' })).toEqual({ updated: false });
+    expect(repository.attempts[0]?.status).toBe(CheckInAttemptStatus.SENT);
+    expect(audit.events).toEqual([]);
+  });
+
+  it('records a late undelivered status on the attempt but leaves a check-in the receiver already answered alone (CB-006)', async () => {
+    const { repository, audit, escalations, service } = harness([
+      sentAttempt({ id: 'attempt-1', channel: Channel.SMS, sentAt, providerMessageId: 'SM-5' }),
+      pendingAttempt({
+        id: 'attempt-2',
+        attemptNumber: 2,
+        channel: Channel.WHATSAPP,
+        scheduledAt: new Date('2026-04-27T06:00:00.000Z'),
+      }),
+    ]);
+    repository.checkIns.set('check-in-1', {
+      ...repository.checkInRecord('check-in-1'),
+      status: CheckInStatus.RESPONDED_OK,
+      respondedAt: new Date('2026-04-27T05:31:00.000Z'),
+    });
+
+    const result = await service.recordMessagingProviderStatus({
+      providerMessageId: 'SM-5',
+      messageStatus: 'undelivered',
+    });
+
+    expect(result).toEqual({ updated: true });
+    expect(repository.attempts[0]).toMatchObject({
+      status: CheckInAttemptStatus.FAILED,
+      failureReason: 'twilio_status_undelivered',
+    });
+    // Nothing is pulled forward or flagged: the receiver answered by another channel.
+    expect(repository.attempts[1]).toMatchObject({
+      status: CheckInAttemptStatus.PENDING,
+      scheduledAt: new Date('2026-04-27T06:00:00.000Z'),
+    });
+    expect(repository.checkInRecord('check-in-1').status).toBe(CheckInStatus.RESPONDED_OK);
+    expect(repository.needsAttentionCheckInIds).toEqual([]);
+    expect(escalations.missedCheckIns).toEqual([]);
+    expect(audit.events.map((event) => event.action)).toEqual(['check_in.attempt_failed']);
+  });
+});
+
+describe('CheckInsService names the sender in check-in copy (CB-010)', () => {
+  it('renders the stored display name on the first and later attempts, keeps it out of the audit trail, and stays neutral for an unnamed sender', async () => {
+    let now = new Date('2026-04-27T05:30:00.000Z');
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const users = new InMemoryUsersService();
+    users.displayNames.set('sender-user-1', 'Sam');
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, { now: () => now });
+    const sms = new FakeChannelProvider(Channel.SMS, { now: () => now });
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    billing.entitledByUserId.set('sender-user-2', true);
+    repository.candidates = [
+      { ...receiverCandidate(crypto), nameEncrypted: crypto.encrypt('Margaret') },
+      {
+        ...receiverCandidate(crypto),
+        id: 'receiver-2',
+        userId: 'sender-user-2',
+        nameEncrypted: crypto.encrypt('Ravi'),
+        phoneEncrypted: crypto.encrypt('+971507654321'),
+      },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([whatsapp, sms]),
+      auditService,
+      undefined,
+      () => now,
+      billing,
+      undefined,
+      users,
+    );
+
+    await service.sendDueCheckIns();
+
+    expect(whatsapp.sentMessages.map((sent) => sent.message.variables)).toEqual([
+      { receiverName: 'Margaret', senderDisplayName: 'Sam' },
+      { receiverName: 'Ravi', senderDisplayName: 'your family member' },
+    ]);
+    expect(whatsapp.renderedMessages[0]?.body).toContain('Hi Margaret, Sam is checking in on you today');
+    expect(whatsapp.renderedMessages[1]?.body).toContain('Hi Ravi, your family member is checking in on you today');
+
+    // 30 minutes on: both WhatsApp attempts have timed out and the SMS retries go out with the same names.
+    now = new Date('2026-04-27T06:00:00.000Z');
+    const tick = await service.processCascadeAttempts();
+
+    expect(tick).toMatchObject({ sent: 2, timedOut: 2 });
+    expect(
+      sms.sentMessages.map((sent) => [sent.message.templateKey, sent.message.variables.senderDisplayName]),
+    ).toEqual([
+      ['checkin_retry', 'Sam'],
+      ['checkin_retry', 'your family member'],
+    ]);
+    expect(sms.renderedMessages[0]?.body).toContain('Sam');
+    expect(users.lookedUp).toEqual(['sender-user-1', 'sender-user-2', 'sender-user-1', 'sender-user-2']);
+    expect(JSON.stringify(audit.events)).not.toContain('Sam');
+    expect(JSON.stringify(audit.events)).not.toContain('Margaret');
   });
 });
 

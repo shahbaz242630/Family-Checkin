@@ -19,6 +19,8 @@ export interface AccountExportRecord {
     id: string;
     emailEncrypted: string;
     phoneEncrypted: string;
+    /** The sender's stored display name (CB-010); exported because it is their personal data. */
+    displayNameEncrypted?: string | null;
     country: string;
     preferredLanguage: string;
     timezone: string;
@@ -69,11 +71,19 @@ export interface AccountDeletionResult {
 
 export interface AccountRepository {
   createStepUpChallenge(
-    input: Omit<StepUpChallengeRecord, 'verifiedAt' | 'tokenHash' | 'tokenExpiresAt' | 'consumedAt' | 'attemptCount' | 'createdAt'>,
+    input: Omit<
+      StepUpChallengeRecord,
+      'verifiedAt' | 'tokenHash' | 'tokenExpiresAt' | 'consumedAt' | 'attemptCount' | 'createdAt'
+    >,
   ): Promise<StepUpChallengeRecord>;
   findStepUpChallengeById(id: string): Promise<StepUpChallengeRecord | null>;
   incrementStepUpAttempts(id: string): Promise<StepUpChallengeRecord>;
-  markStepUpVerified(input: { id: string; tokenHash: string; verifiedAt: Date; tokenExpiresAt: Date }): Promise<StepUpChallengeRecord>;
+  markStepUpVerified(input: {
+    id: string;
+    tokenHash: string;
+    verifiedAt: Date;
+    tokenExpiresAt: Date;
+  }): Promise<StepUpChallengeRecord>;
   consumeStepUpToken(input: {
     userId: string;
     action: SensitiveAction;

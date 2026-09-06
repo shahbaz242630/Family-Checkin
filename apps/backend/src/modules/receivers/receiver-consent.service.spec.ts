@@ -237,6 +237,53 @@ describe('ReceiverConsentService', () => {
     ]);
   });
 
+  it('names the sender from UsersService when a display name is stored and keeps the caller wording otherwise (CB-010)', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, { now: () => new Date('2026-04-26T10:00:00.000Z') });
+    const displayNames = new Map<string, string>([['61a5639c-c902-4950-9924-1a4d6db1e02d', 'Sam']]);
+    const users = {
+      lookedUp: [] as Array<{ userId: string; fallback?: string }>,
+      async senderDisplayNameFor(userId: string, fallback?: string) {
+        users.lookedUp.push({ userId, fallback });
+        return displayNames.get(userId) ?? fallback ?? 'your family member';
+      },
+    };
+    const service = new ReceiverConsentService(
+      repository,
+      crypto,
+      new ChannelRouterService([whatsapp]),
+      audit as unknown as AuditService,
+      () => new Date('2026-04-26T10:00:00.000Z'),
+      users,
+    );
+    const receiver = receiverFixture(crypto);
+
+    await service.requestConsent({
+      receiver,
+      actorUserId: receiver.userId,
+      senderDisplayName: 'your family member',
+    });
+    displayNames.clear();
+    await service.requestConsent({
+      receiver: { ...receiver, id: 'receiver-2' },
+      actorUserId: receiver.userId,
+      senderDisplayName: 'your family member',
+    });
+
+    expect(whatsapp.sentMessages.map((sent) => sent.message.variables.senderDisplayName)).toEqual([
+      'Sam',
+      'your family member',
+    ]);
+    expect(whatsapp.renderedMessages[0]?.body).toContain('Sam');
+    expect(users.lookedUp).toEqual([
+      { userId: receiver.userId, fallback: 'your family member' },
+      { userId: receiver.userId, fallback: 'your family member' },
+    ]);
+    expect(JSON.stringify(audit.events)).not.toContain('Sam');
+  });
+
   it('uses a voice call for voice-only consent requests', async () => {
     const crypto = new CryptoService(masterKey);
     const voice = new FakeChannelProvider(Channel.VOICE, {

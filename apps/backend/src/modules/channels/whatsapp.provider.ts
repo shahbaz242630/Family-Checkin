@@ -1,14 +1,27 @@
 import { Channel } from '@prisma/client';
-import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceScript } from './channel-provider';
+import type {
+  ChannelCallResult,
+  ChannelProvider,
+  ChannelSendResult,
+  TemplatedMessage,
+  VoiceScript,
+} from './channel-provider';
 import { ChannelProviderConfigurationError } from './configured-provider-errors';
 import { FetchTwilioHttpClient, type TwilioHttpClient } from './twilio-http-client';
+import { twilioMessagingStatusCallbackUrl } from './twilio-status-callback';
 
 export interface WhatsappProviderConfig {
   accountSid?: string;
   authToken?: string;
   fromNumber?: string;
   contentSidByTemplateKey?: Record<string, string>;
+  /** `PUBLIC_API_BASE_URL`; when set, Twilio posts delivery statuses back to the messaging status route (CB-016). */
+  publicApiBaseUrl?: string;
 }
+
+type RequiredWhatsappProviderConfig = Required<
+  Pick<WhatsappProviderConfig, 'accountSid' | 'authToken' | 'fromNumber' | 'contentSidByTemplateKey'>
+>;
 
 export class WhatsappProvider implements ChannelProvider {
   public readonly channel = Channel.WHATSAPP;
@@ -22,6 +35,7 @@ export class WhatsappProvider implements ChannelProvider {
   async sendMessage(to: string, message: TemplatedMessage): Promise<ChannelSendResult> {
     const config = this.configured();
     const contentSid = this.contentSidForMessage(message, config.contentSidByTemplateKey);
+    const statusCallback = twilioMessagingStatusCallbackUrl(this.config.publicApiBaseUrl);
 
     const response = await this.httpClient.postForm(
       this.messagesUrl(config.accountSid),
@@ -30,6 +44,7 @@ export class WhatsappProvider implements ChannelProvider {
         From: this.whatsappAddress(config.fromNumber),
         ContentSid: contentSid,
         ContentVariables: JSON.stringify(message.variables),
+        ...(statusCallback ? { StatusCallback: statusCallback } : {}),
       }),
       config.authToken,
     );
@@ -51,14 +66,19 @@ export class WhatsappProvider implements ChannelProvider {
   }
 
   private assertConfigured(): void {
-    if (!this.config.accountSid || !this.config.authToken || !this.config.fromNumber || !this.config.contentSidByTemplateKey) {
+    if (
+      !this.config.accountSid ||
+      !this.config.authToken ||
+      !this.config.fromNumber ||
+      !this.config.contentSidByTemplateKey
+    ) {
       throw new ChannelProviderConfigurationError('WhatsApp');
     }
   }
 
-  private configured(): Required<WhatsappProviderConfig> {
+  private configured(): RequiredWhatsappProviderConfig {
     this.assertConfigured();
-    return this.config as Required<WhatsappProviderConfig>;
+    return this.config as RequiredWhatsappProviderConfig;
   }
 
   private messagesUrl(accountSid: string): string {

@@ -54,6 +54,7 @@ const configuredModeRoutes = [
   'POST /operations/check-ins/run',
   'POST /provider-webhooks/sms',
   'POST /provider-webhooks/twilio/messaging',
+  'POST /provider-webhooks/twilio/messaging/status',
   'POST /provider-webhooks/twilio/voice',
   'POST /provider-webhooks/twilio/voice/amd',
   'POST /provider-webhooks/twilio/voice/status',

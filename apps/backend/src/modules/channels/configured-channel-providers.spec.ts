@@ -95,6 +95,61 @@ describe('configured channel providers', () => {
     expect(request?.authToken).toBe('twilio-auth-token');
   });
 
+  it('asks Twilio for delivery status callbacks on SMS and WhatsApp when the public API base URL is known (CB-016)', async () => {
+    const smsClient = new FakeTwilioHttpClient({ sid: 'SM130', status: 'queued' });
+    const sms = new SmsProvider(
+      {
+        accountSid: 'AC123',
+        authToken: 'twilio-auth-token',
+        fromNumber: '+15550001111',
+        publicApiBaseUrl: 'https://api.nearby.test/',
+      },
+      smsClient,
+    );
+    const whatsappClient = new FakeTwilioHttpClient({ sid: 'SMWA130', status: 'queued' });
+    const whatsapp = new WhatsappProvider(
+      {
+        accountSid: 'AC123',
+        authToken: 'twilio-auth-token',
+        fromNumber: '+15550002222',
+        contentSidByTemplateKey: { checkin_daily: 'HX_CHECKIN' },
+        publicApiBaseUrl: 'https://api.nearby.test',
+      },
+      whatsappClient,
+    );
+    const message = {
+      templateKey: 'checkin_daily',
+      language: 'en',
+      variables: { receiverName: 'Salma', senderDisplayName: 'Ahmed' },
+    };
+
+    await sms.sendMessage('+971501234567', message);
+    await whatsapp.sendMessage('+971501234567', message);
+
+    expect(smsClient.requests[0]?.body.get('StatusCallback')).toBe(
+      'https://api.nearby.test/provider-webhooks/twilio/messaging/status',
+    );
+    expect(whatsappClient.requests[0]?.body.get('StatusCallback')).toBe(
+      'https://api.nearby.test/provider-webhooks/twilio/messaging/status',
+    );
+  });
+
+  it('sends no StatusCallback when the public API base URL is not configured, so Twilio never posts to a guessed host', async () => {
+    const httpClient = new FakeTwilioHttpClient({ sid: 'SM131', status: 'queued' });
+    const provider = new SmsProvider(
+      { accountSid: 'AC123', authToken: 'twilio-auth-token', fromNumber: '+15550001111' },
+      httpClient,
+    );
+
+    await provider.sendMessage('+971501234567', {
+      templateKey: 'checkin_daily',
+      language: 'en',
+      variables: { receiverName: 'Salma', senderDisplayName: 'Ahmed' },
+    });
+
+    expect(httpClient.requests[0]?.body.has('StatusCallback')).toBe(false);
+  });
+
   it('sends the English copy with fallback recorded when the receiver language has no SMS copy yet', async () => {
     const httpClient = new FakeTwilioHttpClient({ sid: 'SM124', status: 'queued' });
     const provider = new SmsProvider(

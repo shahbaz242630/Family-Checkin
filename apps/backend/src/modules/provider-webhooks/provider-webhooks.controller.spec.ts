@@ -63,6 +63,7 @@ class FakeProviderWebhookEventsRepository {
 class FakeCheckInsService {
   public voiceProviderFailures: Array<{ providerMessageId?: string; providerStatus?: string; answeredBy?: string }> =
     [];
+  public messagingStatuses: Array<{ providerMessageId?: string; messageStatus?: string; errorCode?: string }> = [];
 
   async recordVoiceProviderFailure(input: {
     providerMessageId?: string;
@@ -71,6 +72,15 @@ class FakeCheckInsService {
   }) {
     this.voiceProviderFailures.push(input);
     return { updated: true };
+  }
+
+  async recordMessagingProviderStatus(input: {
+    providerMessageId?: string;
+    messageStatus?: string;
+    errorCode?: string;
+  }) {
+    this.messagingStatuses.push(input);
+    return { updated: input.messageStatus === 'undelivered' || input.messageStatus === 'failed' };
   }
 }
 
@@ -412,6 +422,139 @@ describe('ProviderWebhooksController', () => {
         answeredBy: 'machine_start',
       },
     ]);
+  });
+
+  it('stores a replayed Twilio voice status callback once and still hands it to the guarded check-in transition', async () => {
+    const { controller, eventsRepository, checkInsService } = makeController();
+    const params = { CallSid: 'CA125', CallStatus: 'no-answer', From: '+15550003333', To: '+971501234571' };
+    const signature = signatureFor('https://api.nearby.test/provider-webhooks/twilio/voice/status', params);
+
+    const first = await controller.handleTwilioVoiceStatusWebhook(signature, params);
+    const replay = await controller.handleTwilioVoiceStatusWebhook(signature, params);
+
+    expect(first).toEqual({ ok: true, processed: 1 });
+    expect(replay).toEqual({ ok: true, processed: 0 });
+    expect(eventsRepository.events).toHaveLength(1);
+    expect(checkInsService.voiceProviderFailures).toHaveLength(2);
+  });
+
+  describe('Twilio message delivery status callbacks (CB-016)', () => {
+    const statusUrl = 'https://api.nearby.test/provider-webhooks/twilio/messaging/status';
+
+    it('accepts a signed undelivered status, stores one PII-free event and reports it to the check-in engine', async () => {
+      const { controller, service, eventsRepository, checkInsService } = makeController();
+      const params = {
+        MessageSid: 'SM500',
+        MessageStatus: 'undelivered',
+        ErrorCode: '30003',
+        To: '+971501234569',
+        From: '+15550001111',
+        AccountSid: 'AC123',
+        ApiVersion: '2010-04-01',
+      };
+
+      const response = await controller.handleTwilioMessagingStatusWebhook(signatureFor(statusUrl, params), params);
+
+      expect(response).toEqual({ ok: true, processed: 1 });
+      expect(service.handled).toEqual([]);
+      expect(checkInsService.messagingStatuses).toEqual([
+        { providerMessageId: 'SM500', messageStatus: 'undelivered', errorCode: '30003' },
+      ]);
+      expect(eventsRepository.events).toEqual([
+        {
+          provider: 'twilio',
+          eventType: 'messaging_status',
+          providerEventId: 'SM500:undelivered',
+          providerMessageId: 'SM500',
+          payload: { MessageSid: 'SM500', MessageStatus: 'undelivered', ErrorCode: '30003', channel: 'sms' },
+        },
+      ]);
+      expect(JSON.stringify(eventsRepository.events)).not.toContain('971501234569');
+      expect(JSON.stringify(eventsRepository.events)).not.toContain('15550001111');
+    });
+
+    it('records a delivered WhatsApp status once and answers a replay with processed 0', async () => {
+      const { controller, eventsRepository, checkInsService } = makeController();
+      const params = {
+        MessageSid: 'SM501',
+        MessageStatus: 'delivered',
+        To: 'whatsapp:+971501234570',
+        From: 'whatsapp:+15550002222',
+      };
+      const signature = signatureFor(statusUrl, params);
+
+      const first = await controller.handleTwilioMessagingStatusWebhook(signature, params);
+      const replay = await controller.handleTwilioMessagingStatusWebhook(signature, params);
+
+      expect(first).toEqual({ ok: true, processed: 1 });
+      expect(replay).toEqual({ ok: true, processed: 0 });
+      expect(eventsRepository.events).toEqual([
+        expect.objectContaining({
+          providerEventId: 'SM501:delivered',
+          payload: { MessageSid: 'SM501', MessageStatus: 'delivered', ErrorCode: undefined, channel: 'whatsapp' },
+        }),
+      ]);
+      // Each distinct status of one message is its own event; the engine decides which ones matter.
+      expect(checkInsService.messagingStatuses).toEqual([
+        { providerMessageId: 'SM501', messageStatus: 'delivered', errorCode: undefined },
+      ]);
+    });
+
+    it('keeps every status of one message as a separate event', async () => {
+      const { controller, eventsRepository } = makeController();
+      for (const MessageStatus of ['queued', 'sent', 'failed']) {
+        const params = { MessageSid: 'SM502', MessageStatus, To: '+971501234569' };
+        await controller.handleTwilioMessagingStatusWebhook(signatureFor(statusUrl, params), params);
+      }
+
+      expect(eventsRepository.events.map((event) => event.providerEventId)).toEqual([
+        'SM502:queued',
+        'SM502:sent',
+        'SM502:failed',
+      ]);
+    });
+
+    it('does not record the status when the check-in engine throws, so the Twilio retry is processed', async () => {
+      const { controller, eventsRepository, checkInsService } = makeController();
+      const params = { MessageSid: 'SM503', MessageStatus: 'failed', To: '+971501234569' };
+      const signature = signatureFor(statusUrl, params);
+      const original = checkInsService.recordMessagingProviderStatus.bind(checkInsService);
+      checkInsService.recordMessagingProviderStatus = async () => {
+        checkInsService.recordMessagingProviderStatus = original;
+        throw new Error('database unavailable');
+      };
+
+      await expect(controller.handleTwilioMessagingStatusWebhook(signature, params)).rejects.toThrow(
+        'database unavailable',
+      );
+      expect(eventsRepository.events).toHaveLength(0);
+
+      const retry = await controller.handleTwilioMessagingStatusWebhook(signature, params);
+
+      expect(retry).toEqual({ ok: true, processed: 1 });
+      expect(eventsRepository.events).toHaveLength(1);
+    });
+
+    it('rejects an unsigned status callback before touching anything', async () => {
+      const { controller, eventsRepository, checkInsService } = makeController();
+
+      await expect(
+        controller.handleTwilioMessagingStatusWebhook(undefined, { MessageSid: 'SM504', MessageStatus: 'undelivered' }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(eventsRepository.events).toEqual([]);
+      expect(checkInsService.messagingStatuses).toEqual([]);
+    });
+
+    it('ignores a signed callback that carries no MessageSid or MessageStatus', async () => {
+      const { controller, eventsRepository, checkInsService } = makeController();
+      const params = { To: '+971501234569', From: '+15550001111' };
+
+      const response = await controller.handleTwilioMessagingStatusWebhook(signatureFor(statusUrl, params), params);
+
+      expect(response).toEqual({ ok: true, processed: 0 });
+      expect(eventsRepository.events).toEqual([]);
+      expect(checkInsService.messagingStatuses).toEqual([]);
+    });
   });
 
   it('rejects Twilio callbacks with invalid signatures', async () => {

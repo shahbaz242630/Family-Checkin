@@ -33,12 +33,14 @@ export function createChannelProviders(
       authToken: config.twilioAuthToken,
       fromNumber: config.twilioWhatsappFromNumber,
       contentSidByTemplateKey: config.twilioWhatsappContentSids,
+      publicApiBaseUrl: config.publicApiBaseUrl,
     }),
     new SmsProvider(
       {
         accountSid: config.twilioAccountSid,
         authToken: config.twilioAuthToken,
         fromNumber: config.twilioSmsFromNumber,
+        publicApiBaseUrl: config.publicApiBaseUrl,
       },
       undefined,
       undefined,

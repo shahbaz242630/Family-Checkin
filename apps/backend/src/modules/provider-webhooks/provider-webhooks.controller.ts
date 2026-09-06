@@ -50,6 +50,15 @@ type TwilioMessagingWebhookBody = {
   MessageSid?: string;
 };
 
+/** Twilio `StatusCallback` for an outbound SMS or WhatsApp message; `To` is the receiver, `From` our number. */
+type TwilioMessagingStatusWebhookBody = {
+  MessageSid?: string;
+  MessageStatus?: string;
+  ErrorCode?: string;
+  To?: string;
+  From?: string;
+};
+
 type TwilioVoiceWebhookBody = {
   From?: string;
   To?: string;
@@ -85,7 +94,10 @@ export class ProviderWebhooksController {
     @Inject(PROVIDER_WEBHOOK_EVENTS_REPOSITORY)
     private readonly providerWebhookEventsRepository: ProviderWebhookEventsRepository,
     @Inject(CheckInsService)
-    private readonly checkInsService: Pick<CheckInsService, 'recordVoiceProviderFailure'>,
+    private readonly checkInsService: Pick<
+      CheckInsService,
+      'recordVoiceProviderFailure' | 'recordMessagingProviderStatus'
+    >,
   ) {}
 
   @Post('whatsapp')
@@ -157,6 +169,49 @@ export class ProviderWebhooksController {
     return { ok: true, processed: reply ? 1 : 0 };
   }
 
+  /**
+   * Delivery status of an outbound SMS or WhatsApp message (the `StatusCallback` the providers pass, CB-016). Every
+   * status is stored once, keyed `MessageSid:MessageStatus`; `undelivered` and `failed` also fail the matching
+   * attempt so the cascade moves on at the next tick instead of waiting out the response window. Stored after
+   * processing for the same reason as inbound messages (CB-015): a transient failure leaves nothing behind and
+   * Twilio's retry is processed rather than mistaken for a replay.
+   */
+  @Post('twilio/messaging/status')
+  async handleTwilioMessagingStatusWebhook(
+    @Headers('x-twilio-signature') twilioSignature: string | undefined,
+    @Body() body: TwilioMessagingStatusWebhookBody,
+  ): Promise<ProviderWebhookResponse> {
+    this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/messaging/status', body);
+
+    const messageSid = body.MessageSid?.trim();
+    const messageStatus = body.MessageStatus?.trim().toLowerCase();
+    if (!messageSid || !messageStatus) {
+      return { ok: true, processed: 0 };
+    }
+
+    const eventKey = {
+      provider: 'twilio',
+      eventType: 'messaging_status',
+      providerEventId: `${messageSid}:${messageStatus}`,
+    };
+    if (await this.providerWebhookEventsRepository.findEvent(eventKey)) {
+      return { ok: true, processed: 0 };
+    }
+
+    await this.checkInsService.recordMessagingProviderStatus({
+      providerMessageId: messageSid,
+      messageStatus,
+      errorCode: body.ErrorCode,
+    });
+
+    const stored = await this.providerWebhookEventsRepository.createEventIfAbsent({
+      ...eventKey,
+      providerMessageId: messageSid,
+      payload: this.toMessagingStatusEventPayload(body, messageSid, messageStatus),
+    });
+    return { ok: true, processed: stored.created ? 1 : 0 };
+  }
+
   @Post('twilio/voice')
   async handleTwilioVoiceWebhook(
     @Headers('x-twilio-signature') twilioSignature: string | undefined,
@@ -181,19 +236,21 @@ export class ProviderWebhooksController {
     @Body() body: TwilioVoiceStatusWebhookBody,
   ): Promise<ProviderWebhookResponse> {
     this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/voice/status', body);
-    await this.providerWebhookEventsRepository.createEvent({
+    const stored = await this.providerWebhookEventsRepository.createEventIfAbsent({
       provider: 'twilio',
       eventType: 'voice_status',
       providerEventId: this.twilioProviderEventId(body.CallSid, body.CallStatus),
       providerMessageId: body.CallSid,
       payload: body,
     });
+    // The transition is status-guarded, so running it again on a replay is harmless and covers a retry after a
+    // failure between the store and the transition.
     await this.checkInsService.recordVoiceProviderFailure({
       providerMessageId: body.CallSid,
       providerStatus: body.CallStatus,
     });
 
-    return { ok: true, processed: 1 };
+    return { ok: true, processed: stored.created ? 1 : 0 };
   }
 
   @Post('twilio/voice/amd')
@@ -202,7 +259,7 @@ export class ProviderWebhooksController {
     @Body() body: TwilioVoiceAmdWebhookBody,
   ): Promise<ProviderWebhookResponse> {
     this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/voice/amd', body);
-    await this.providerWebhookEventsRepository.createEvent({
+    const stored = await this.providerWebhookEventsRepository.createEventIfAbsent({
       provider: 'twilio',
       eventType: 'voice_amd',
       providerEventId: this.twilioProviderEventId(body.CallSid, body.AnsweredBy),
@@ -214,7 +271,7 @@ export class ProviderWebhooksController {
       answeredBy: body.AnsweredBy,
     });
 
-    return { ok: true, processed: 1 };
+    return { ok: true, processed: stored.created ? 1 : 0 };
   }
 
   private *extractWhatsappReplies(
@@ -328,6 +385,25 @@ export class ProviderWebhooksController {
     };
   }
 
+  /** Same rule as inbound events: ids, status and channel only; `To`/`From` are phone numbers and stay out. */
+  private toMessagingStatusEventPayload(
+    body: TwilioMessagingStatusWebhookBody,
+    messageSid: string,
+    messageStatus: string,
+  ): Record<string, string | undefined> {
+    let channel: string | undefined;
+    if (body.To !== undefined) {
+      channel = body.To.startsWith('whatsapp:') ? 'whatsapp' : 'sms';
+    }
+
+    return {
+      MessageSid: messageSid,
+      MessageStatus: messageStatus,
+      ErrorCode: body.ErrorCode,
+      channel,
+    };
+  }
+
   private extractTwilioVoiceReply(
     body: TwilioVoiceWebhookBody,
     ipAddress: string | undefined,
@@ -364,6 +440,7 @@ export class ProviderWebhooksController {
     twilioSignature: string | undefined,
     path:
       | '/provider-webhooks/twilio/messaging'
+      | '/provider-webhooks/twilio/messaging/status'
       | '/provider-webhooks/twilio/voice'
       | '/provider-webhooks/twilio/voice/status'
       | '/provider-webhooks/twilio/voice/amd',

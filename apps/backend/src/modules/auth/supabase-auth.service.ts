@@ -5,6 +5,8 @@ export interface SupabaseSenderIdentity {
   authProviderId: string;
   email: string;
   phone: string;
+  /** `user_metadata.full_name`, falling back to `user_metadata.name`; absent when neither is a non-blank string. */
+  displayName?: string;
   country: string;
   preferredLanguage: string;
   timezone: string;
@@ -16,6 +18,8 @@ interface SupabaseUserResponse {
   phone?: unknown;
   user_metadata?: {
     phone?: unknown;
+    full_name?: unknown;
+    name?: unknown;
     country?: unknown;
     preferred_language?: unknown;
     timezone?: unknown;
@@ -60,10 +64,16 @@ export class SupabaseAuthService {
       throw new UnauthorizedException('Supabase user is missing a phone number');
     }
 
+    const displayName = this.stringMetadata(
+      user.user_metadata?.full_name,
+      this.stringMetadata(user.user_metadata?.name, ''),
+    );
+
     return {
       authProviderId: user.id,
       email: user.email,
       phone,
+      ...(displayName ? { displayName } : {}),
       country: this.stringMetadata(user.user_metadata?.country, 'AE'),
       preferredLanguage: this.stringMetadata(user.user_metadata?.preferred_language, 'en'),
       timezone: this.stringMetadata(user.user_metadata?.timezone, 'Asia/Dubai'),
