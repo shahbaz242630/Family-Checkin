@@ -84,5 +84,5 @@ This feature owns scripts, not HTTP routes. All run from `apps/backend` and read
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` "Supabase Status" (lines 85–183), §24 RLS hardening (1964–1991), §25 Security Advisor WARN fixes (1992–2032), §29e (2384–2438), §29h existing-surface audit (2519–2582), partitioned operational logs applied 2026-05-10 (563–586), Prisma 7 note (781–784).
 - Audits: `docs/audits/2026-09-05/backend-robustness.md`, `docs/audits/2026-09-06/sprint1-acceptance.md` (SQL seeding used the same ciphertext layout and hash).
-- PRs: #18 (audit PII guard exempts `Id`/`Ids`/`Ref` keys, CB-002), #PR_NUMBER (CB-075 language columns to `varchar(8)`, CB-010 seed migration).
+- PRs: #18 (audit PII guard exempts `Id`/`Ids`/`Ref` keys, CB-002), #29 (CB-075 language columns to `varchar(8)`, CB-010 seed migration).
 - Hosted database: neither 2026-09-06 migration has been applied there (no `_prisma_migrations`); apply both `migration.sql` files by hand through node `pg` before the next hosted run — both are idempotent.
