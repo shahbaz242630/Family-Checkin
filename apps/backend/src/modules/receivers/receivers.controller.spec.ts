@@ -348,19 +348,18 @@ describe('ReceiversController', () => {
   });
 
   it('passes consentResendAllowedAt through on the detail so the app can hold "Resend invitation" (CB-081)', async () => {
-    class PendingReceiversService extends FakeReceiversService {
-      override async getForSender(input: { userId: string; receiverId: string }) {
-        return {
-          ...(await super.getForSender(input)),
-          consentStatus: ConsentStatus.PENDING,
-          consentResendAllowedAt: '2026-09-07T10:00:00.000Z',
-        };
-      }
-    }
+    const granted = new FakeReceiversService();
+    const pendingReceiversService = {
+      getForSender: async (input: { userId: string; receiverId: string }) => ({
+        ...(await granted.getForSender(input)),
+        consentStatus: ConsentStatus.PENDING,
+        consentResendAllowedAt: '2026-09-07T10:00:00.000Z',
+      }),
+    };
     const controller = new ReceiversController(
       new FakeSupabaseAuthService() as never,
       new FakeUsersService() as never,
-      new PendingReceiversService() as never,
+      pendingReceiversService as never,
       new FakeReceiverConsentService() as never,
     );
 
