@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { getTimezone, searchTimezones, type TimezoneOption } from '../../data/timezones';
+import { formatUtcOffsetLabel } from '../../utils/timezoneOffset';
 
 interface TimezoneSelectProps {
   value: string;
@@ -10,9 +11,16 @@ interface TimezoneSelectProps {
   hint?: string;
 }
 
+// The offset is computed from the IANA zone at render time so daylight saving is reflected (London is UTC+1 in
+// summer); the static `offset` on the option is only the fallback when Intl cannot format the zone (CB-073).
+function offsetLabel(option: TimezoneOption, now: Date): string {
+  return formatUtcOffsetLabel(option.value, now, option.offset || option.value);
+}
+
 export function TimezoneSelect({ value, onChange, label, hint }: TimezoneSelectProps) {
   const [showPicker, setShowPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const now = new Date();
 
   const selectedTimezone = getTimezone(value);
   const filteredTimezones = searchTimezones(searchQuery);
@@ -34,7 +42,7 @@ export function TimezoneSelect({ value, onChange, label, hint }: TimezoneSelectP
         <Text style={styles.timezoneLabel} numberOfLines={1}>
           {item.label}
         </Text>
-        <Text style={styles.timezoneOffset}>{item.offset || item.value}</Text>
+        <Text style={styles.timezoneOffset}>{offsetLabel(item, now)}</Text>
       </View>
       {item.value === value ? <Text style={styles.checkmark}>*</Text> : null}
     </Pressable>
@@ -49,7 +57,7 @@ export function TimezoneSelect({ value, onChange, label, hint }: TimezoneSelectP
           <Text style={styles.selectorLabel} numberOfLines={1}>
             {selectedTimezone?.label || 'Select timezone'}
           </Text>
-          {selectedTimezone ? <Text style={styles.selectorOffset}>{selectedTimezone.offset || selectedTimezone.value}</Text> : null}
+          {selectedTimezone ? <Text style={styles.selectorOffset}>{offsetLabel(selectedTimezone, now)}</Text> : null}
         </View>
         <Text style={styles.selectorArrow}>v</Text>
       </Pressable>

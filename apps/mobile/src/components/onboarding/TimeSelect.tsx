@@ -1,30 +1,22 @@
 import { useMemo, useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
+import { DEFAULT_MINUTE_STEP, buildTimeOptions } from '../../utils/timeOptions';
 
 interface TimeSelectProps {
   label: string;
   value: string;
   onChange: (time: string) => void;
   disabled?: boolean;
+  /** Minutes between options. Defaults to quarter hours (CB-073); a loaded value off the step is still listed. */
   minuteStep?: number;
 }
 
-function buildTimeOptions(minuteStep: number): string[] {
-  const options: string[] = [];
+const TIME_ROW_HEIGHT = 44;
 
-  for (let hour = 0; hour < 24; hour += 1) {
-    for (let minute = 0; minute < 60; minute += minuteStep) {
-      options.push(`${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`);
-    }
-  }
-
-  return options;
-}
-
-export function TimeSelect({ label, value, onChange, disabled, minuteStep = 1 }: TimeSelectProps) {
+export function TimeSelect({ label, value, onChange, disabled, minuteStep = DEFAULT_MINUTE_STEP }: TimeSelectProps) {
   const [showPicker, setShowPicker] = useState(false);
-  const options = useMemo(() => buildTimeOptions(minuteStep), [minuteStep]);
+  const options = useMemo(() => buildTimeOptions(minuteStep, value), [minuteStep, value]);
   const selectedValue = options.includes(value) ? value : '09:00';
 
   return (
@@ -63,7 +55,7 @@ export function TimeSelect({ label, value, onChange, disabled, minuteStep = 1 }:
               )}
               keyExtractor={(item) => item}
               initialScrollIndex={Math.max(options.indexOf(selectedValue) - 4, 0)}
-              getItemLayout={(_, index) => ({ length: 56, offset: 56 * index, index })}
+              getItemLayout={(_, index) => ({ length: TIME_ROW_HEIGHT, offset: TIME_ROW_HEIGHT * index, index })}
               showsVerticalScrollIndicator={false}
             />
           </View>
@@ -146,7 +138,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   timeItem: {
-    height: 44,
+    height: TIME_ROW_HEIGHT,
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
     borderBottomWidth: 1,

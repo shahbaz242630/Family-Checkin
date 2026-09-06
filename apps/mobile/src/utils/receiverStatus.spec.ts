@@ -16,11 +16,43 @@ describe('getReceiverStatusDisplay', () => {
     });
   });
 
-  it('marks skipped missed escalation outcomes as warning states', () => {
+  it('labels a skipped check-in "Skipped" when the API gives no reason (CB-077)', () => {
     expect(getReceiverStatusDisplay('GRANTED', 'SKIPPED')).toEqual({
+      label: 'Skipped',
+      tone: 'muted',
+    });
+    expect(getReceiverStatusDisplay('GRANTED', 'SKIPPED').label).not.toBe('No backup available');
+  });
+
+  it('labels a skipped check-in by its reason when one is known', () => {
+    expect(getReceiverStatusDisplay('GRANTED', 'SKIPPED', false, 'receiver_opted_out')).toEqual({
+      label: 'Opted out',
+      tone: 'muted',
+    });
+    expect(getReceiverStatusDisplay('GRANTED', 'SKIPPED', false, 'abuse_reported')).toEqual({
+      label: 'Reported',
+      tone: 'muted',
+    });
+    expect(getReceiverStatusDisplay('GRANTED', 'SKIPPED', false, 'receiver_paused')).toEqual({
+      label: 'Paused',
+      tone: 'muted',
+    });
+    expect(getReceiverStatusDisplay('GRANTED', 'SKIPPED', false, 'receiver_deleted')).toEqual({
+      label: 'Removed',
+      tone: 'muted',
+    });
+  });
+
+  it('keeps "No backup available" for the escalation-skipped case only', () => {
+    expect(getReceiverStatusDisplay('GRANTED', 'SKIPPED', false, 'no_backup_contacts')).toEqual({
       label: 'No backup available',
       tone: 'warning',
     });
+  });
+
+  it('lets consent and pause win over a skipped check-in', () => {
+    expect(getReceiverStatusDisplay('REVOKED', 'SKIPPED')).toEqual({ label: 'Opted out', tone: 'muted' });
+    expect(getReceiverStatusDisplay('GRANTED', 'SKIPPED', true)).toEqual({ label: 'Paused', tone: 'warning' });
   });
 
   it('marks resolved check-ins as closed', () => {

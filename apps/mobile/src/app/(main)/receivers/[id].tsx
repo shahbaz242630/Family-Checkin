@@ -1,9 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { StepUpCodeModal } from '../../../components/common';
 import { TextInput } from '../../../components/auth';
-import { CountrySelect, LanguageSelect, ReceiverPhoneInput, TimeSelect, TimezoneSelect } from '../../../components/onboarding';
+import {
+  CountrySelect,
+  LanguageSelect,
+  ReceiverPhoneInput,
+  TimeSelect,
+  TimezoneSelect,
+} from '../../../components/onboarding';
 import { COUNTRIES } from '../../../data/constants';
 import {
   alertBackupForReceiverCheckIn,
@@ -27,6 +33,7 @@ import {
   type BackendRelationshipType,
   type ReceiverUpdateInput,
 } from '../../../services/backendApi';
+import { isNotFoundError } from '../../../services/backendErrors';
 import { colors, spacing, fontSize, borderRadius } from '../../../theme';
 import { CHANNEL_PROFILE_OPTIONS } from '../../../utils/channelProfiles';
 import { getReceiverStatusDisplay, type ReceiverStatusTone } from '../../../utils/receiverStatus';
@@ -42,6 +49,18 @@ const relationshipOptions: Array<{ value: BackendRelationshipType; label: string
 ];
 
 const profileOptions = CHANNEL_PROFILE_OPTIONS;
+
+const RECEIVER_REMOVED_TITLE = 'This receiver was removed';
+const RECEIVER_REMOVED_MESSAGE = 'Check-ins for this receiver have already stopped. Returning to your dashboard.';
+
+function notify(title: string, message: string): void {
+  // Same web detection as the confirm dialogs below: react-native-web has no Alert implementation.
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function' && typeof window.alert === 'function') {
+    window.alert(`${title}\n\n${message}`);
+    return;
+  }
+  Alert.alert(title, message);
+}
 
 export default function ReceiverDetailScreen() {
   const router = useRouter();
@@ -66,6 +85,16 @@ export default function ReceiverDetailScreen() {
   const [stepUpPrompt, setStepUpPrompt] = useState<{ title: string; message: string } | null>(null);
   const [stepUpCode, setStepUpCode] = useState('');
   const stepUpResolver = useRef<((code: string | null) => void) | null>(null);
+  const hasLoadedRef = useRef(false);
+  const leavingRef = useRef(false);
+
+  // The receiver no longer exists (removed from another screen or device): say so once and go back (CB-071).
+  const leaveRemovedReceiver = useCallback(() => {
+    if (leavingRef.current) return;
+    leavingRef.current = true;
+    notify(RECEIVER_REMOVED_TITLE, RECEIVER_REMOVED_MESSAGE);
+    router.replace('/(main)');
+  }, [router]);
 
   const loadReceiver = useCallback(async () => {
     if (!id) {
@@ -75,22 +104,58 @@ export default function ReceiverDetailScreen() {
     }
 
     try {
-      setLoading(true);
+      // Only the first load blanks the screen; focus refetches keep the current detail visible.
+      if (!hasLoadedRef.current) {
+        setLoading(true);
+      }
       setError(null);
       setActionError(null);
       const [receiverDetail, receiverBackupContacts] = await Promise.all([getReceiver(id), listBackupContacts(id)]);
       setReceiver(receiverDetail);
       setBackupContacts(receiverBackupContacts);
+      hasLoadedRef.current = true;
     } catch (err) {
+      if (isNotFoundError(err)) {
+        leaveRemovedReceiver();
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Unable to load receiver');
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, leaveRemovedReceiver]);
 
-  useEffect(() => {
-    loadReceiver();
-  }, [loadReceiver]);
+  // Refetch whenever the screen gains focus so a reply, a removal or an edit made elsewhere is reflected (CB-071).
+  useFocusEffect(
+    useCallback(() => {
+      void loadReceiver();
+    }, [loadReceiver]),
+  );
+
+  /**
+   * An action answered 404: either the receiver is gone, or what it acted on changed underneath (for example the
+   * latest check-in was superseded). Reload to tell them apart: a missing receiver leaves the screen, anything
+   * else refreshes the detail and shows the message.
+   */
+  const handleActionError = async (err: unknown, fallback: string): Promise<void> => {
+    if (!id || !isNotFoundError(err)) {
+      setActionError(err instanceof Error ? err.message : fallback);
+      return;
+    }
+
+    try {
+      const [receiverDetail, receiverBackupContacts] = await Promise.all([getReceiver(id), listBackupContacts(id)]);
+      setReceiver(receiverDetail);
+      setBackupContacts(receiverBackupContacts);
+      setActionError(err instanceof Error ? err.message : fallback);
+    } catch (reloadErr) {
+      if (isNotFoundError(reloadErr)) {
+        leaveRemovedReceiver();
+        return;
+      }
+      setActionError(reloadErr instanceof Error ? reloadErr.message : fallback);
+    }
+  };
 
   if (loading) {
     return (
@@ -168,7 +233,7 @@ export default function ReceiverDetailScreen() {
       setIsEditing(false);
       setDraft(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to update receiver');
+      await handleActionError(err, 'Unable to update receiver');
     } finally {
       setIsSaving(false);
     }
@@ -182,7 +247,7 @@ export default function ReceiverDetailScreen() {
       setActionError(null);
       setReceiver(isPaused ? await resumeReceiver(id) : await pauseReceiver(id));
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to update receiver');
+      await handleActionError(err, 'Unable to update receiver');
     } finally {
       setIsSaving(false);
     }
@@ -190,9 +255,15 @@ export default function ReceiverDetailScreen() {
 
   const latestStatus = receiver.latestCheckIn?.status ?? '';
   const needsAttention = latestStatus === 'NEEDS_ATTENTION';
-  const canResolveLatestCheckIn = ['RESPONDED_HELP', 'ESCALATED', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(latestStatus);
-  const canAlertBackupForLatestCheckIn = ['RESPONDED_HELP', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(latestStatus);
-  const canTryLatestCheckInLater = ['SENT', 'RESPONDED_HELP', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(latestStatus);
+  const canResolveLatestCheckIn = ['RESPONDED_HELP', 'ESCALATED', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(
+    latestStatus,
+  );
+  const canAlertBackupForLatestCheckIn = ['RESPONDED_HELP', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(
+    latestStatus,
+  );
+  const canTryLatestCheckInLater = ['SENT', 'RESPONDED_HELP', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(
+    latestStatus,
+  );
   const backupPhoneError = backupDraft.phone.trim().startsWith('0')
     ? 'Remove the leading 0. Use the local number after the country code.'
     : undefined;
@@ -205,7 +276,7 @@ export default function ReceiverDetailScreen() {
       setActionError(null);
       setReceiver(await resolveReceiverCheckIn(id, receiver.latestCheckIn.id));
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to mark check-in resolved');
+      await handleActionError(err, 'Unable to mark check-in resolved');
     } finally {
       setIsSaving(false);
     }
@@ -219,7 +290,7 @@ export default function ReceiverDetailScreen() {
       setActionError(null);
       setReceiver(await alertBackupForReceiverCheckIn(id, receiver.latestCheckIn.id));
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to alert backup contacts');
+      await handleActionError(err, 'Unable to alert backup contacts');
     } finally {
       setIsSaving(false);
     }
@@ -233,7 +304,7 @@ export default function ReceiverDetailScreen() {
       setActionError(null);
       setReceiver(await tryReceiverCheckInLater(id, receiver.latestCheckIn.id));
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to record try later');
+      await handleActionError(err, 'Unable to record try later');
     } finally {
       setIsSaving(false);
     }
@@ -274,8 +345,15 @@ export default function ReceiverDetailScreen() {
   const saveBackupContact = async () => {
     if (!id) return;
 
-    if (!backupDraft.name.trim() || (!editingBackupContactId && !backupDraft.phone.trim()) || !backupDraft.relationshipToReceiver.trim()) {
-      Alert.alert('Missing details', editingBackupContactId ? 'Name and relationship are required.' : 'Name, phone, and relationship are required.');
+    if (
+      !backupDraft.name.trim() ||
+      (!editingBackupContactId && !backupDraft.phone.trim()) ||
+      !backupDraft.relationshipToReceiver.trim()
+    ) {
+      Alert.alert(
+        'Missing details',
+        editingBackupContactId ? 'Name and relationship are required.' : 'Name, phone, and relationship are required.',
+      );
       return;
     }
 
@@ -294,14 +372,17 @@ export default function ReceiverDetailScreen() {
         locationInstructions: backupDraft.locationInstructions?.trim() || undefined,
       };
       if (backupDraft.phone.trim()) {
-        const selectedBackupCountry = COUNTRIES.find((country) => country.isoCode === backupDraft.phoneCountry?.toUpperCase()) ?? COUNTRIES[0];
+        const selectedBackupCountry =
+          COUNTRIES.find((country) => country.isoCode === backupDraft.phoneCountry?.toUpperCase()) ?? COUNTRIES[0];
         backupContactInput.phone = `${selectedBackupCountry.dialCode}${backupDraft.phone.trim()}`;
       }
 
       if (editingBackupContactId) {
         const updated = await updateBackupContact(id, editingBackupContactId, backupContactInput);
         setBackupContacts((current) =>
-          current.map((contact) => (contact.id === updated.id ? updated : contact)).sort((a, b) => a.priorityOrder - b.priorityOrder),
+          current
+            .map((contact) => (contact.id === updated.id ? updated : contact))
+            .sort((a, b) => a.priorityOrder - b.priorityOrder),
         );
       } else {
         const created = await createBackupContact(id, backupContactInput as BackupContactSetupInput);
@@ -317,7 +398,7 @@ export default function ReceiverDetailScreen() {
         locationInstructions: '',
       });
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Unable to add backup contact');
+      await handleActionError(err, 'Unable to add backup contact');
     } finally {
       setIsSaving(false);
     }
@@ -338,7 +419,7 @@ export default function ReceiverDetailScreen() {
           setEditingBackupContactId(null);
         }
       } catch (err) {
-        setActionError(err instanceof Error ? err.message : 'Unable to remove backup contact');
+        await handleActionError(err, 'Unable to remove backup contact');
       } finally {
         setIsSaving(false);
       }
@@ -351,18 +432,14 @@ export default function ReceiverDetailScreen() {
       return;
     }
 
-    Alert.alert(
-      'Remove backup contact',
-      removeMessage,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: performRemove,
-        },
-      ],
-    );
+    Alert.alert('Remove backup contact', removeMessage, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: performRemove,
+      },
+    ]);
   };
 
   const removeReceiver = async () => {
@@ -381,6 +458,11 @@ export default function ReceiverDetailScreen() {
         await deleteReceiver(id, stepUpToken);
         router.replace('/(main)');
       } catch (err) {
+        if (isNotFoundError(err)) {
+          // Already removed elsewhere: nothing left to delete.
+          leaveRemovedReceiver();
+          return;
+        }
         setActionError(err instanceof Error ? err.message : 'Unable to remove receiver');
       } finally {
         setIsSaving(false);
@@ -394,18 +476,14 @@ export default function ReceiverDetailScreen() {
       return;
     }
 
-    Alert.alert(
-      'Remove receiver',
-      removeMessage,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: performRemove,
-        },
-      ],
-    );
+    Alert.alert('Remove receiver', removeMessage, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: performRemove,
+      },
+    ]);
   };
 
   const completeStepUpForReceiverRemoval = async (): Promise<string | null> => {
@@ -452,266 +530,304 @@ export default function ReceiverDetailScreen() {
 
   return (
     <>
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Pressable style={styles.backButton} onPress={() => router.back()}>
-        <Text style={styles.backButtonText}>Back</Text>
-      </Pressable>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <Pressable style={styles.backButton} onPress={() => router.back()}>
+          <Text style={styles.backButtonText}>Back</Text>
+        </Pressable>
 
-      <View style={styles.header}>
-        <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{receiver.displayName.charAt(0).toUpperCase()}</Text>
-        </View>
-        <View style={styles.headerText}>
-          <Text style={styles.title}>{receiver.displayName}</Text>
-          <Text style={styles.subtitle}>{formatRelationship(receiver.relationshipType)} - {receiver.phoneMasked}</Text>
-        </View>
-      </View>
-
-      <View style={styles.statusBand}>
-        <Text style={styles.statusLabel}>Current status</Text>
-        <Text style={[styles.statusValue, { color: receiverStatusColor(currentStatus.tone) }]}>
-          {currentStatus.label}
-        </Text>
-      </View>
-
-      {actionError && <Text style={styles.inlineError}>{actionError}</Text>}
-
-      {isEditing && draft ? (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Edit receiver</Text>
-          <View style={styles.form}>
-            <TextInput label="Receiver name" value={draft.name} onChangeText={(name) => setDraft({ ...draft, name })} />
-
-            <View>
-              <Text style={styles.fieldLabel}>Relationship</Text>
-              <View style={styles.optionGrid}>
-                {relationshipOptions.map((option) => (
-                  <Pressable
-                    key={option.value}
-                    style={[styles.option, draft.relationshipType === option.value && styles.optionSelected]}
-                    onPress={() => setDraft({ ...draft, relationshipType: option.value })}
-                    disabled={isSaving}
-                  >
-                    <Text style={[styles.optionText, draft.relationshipType === option.value && styles.optionTextSelected]}>
-                      {option.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
-            <View>
-              <Text style={styles.fieldLabel}>Best channel</Text>
-              <View style={styles.optionStack}>
-                {profileOptions.map((option) => (
-                  <Pressable
-                    key={option.value}
-                    style={[styles.optionWide, draft.techProfile === option.value && styles.optionSelected]}
-                    onPress={() => selectProfile(option)}
-                    disabled={isSaving}
-                  >
-                    <Text style={[styles.optionText, draft.techProfile === option.value && styles.optionTextSelected]}>
-                      {option.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
-            <CountrySelect
-              label="Country"
-              value={draft.countryCode}
-              onChange={(countryCode) => setDraft({ ...draft, countryCode })}
-              disabled={isSaving}
-              showDialCode={false}
-            />
-            <LanguageSelect
-              label="Language"
-              value={draft.language}
-              onChange={(language) => setDraft({ ...draft, language })}
-              disabled={isSaving}
-            />
-
-            <TimezoneSelect label="Timezone" value={draft.timezone} onChange={(timezone) => setDraft({ ...draft, timezone })} />
-
-            <Text style={styles.fieldHint}>Check-in window uses the receiver timezone selected above.</Text>
-            <View style={styles.row}>
-              <View style={styles.rowItem}>
-                <TimeSelect
-                  label="From"
-                  value={draft.scheduleTimeWindow.start}
-                  onChange={(start) => setDraft({ ...draft, scheduleTimeWindow: { ...draft.scheduleTimeWindow, start } })}
-                  disabled={isSaving}
-                />
-              </View>
-              <View style={styles.rowItem}>
-                <TimeSelect
-                  label="To"
-                  value={draft.scheduleTimeWindow.end}
-                  onChange={(end) => setDraft({ ...draft, scheduleTimeWindow: { ...draft.scheduleTimeWindow, end } })}
-                  disabled={isSaving}
-                />
-              </View>
-            </View>
-
-            <View style={styles.editActionRow}>
-              <Pressable style={styles.secondaryButton} onPress={cancelEditing} disabled={isSaving}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.primaryActionButton} onPress={saveEdit} disabled={isSaving}>
-                <Text style={styles.primaryButtonText}>{isSaving ? 'Saving...' : 'Save'}</Text>
-              </Pressable>
-            </View>
+        <View style={styles.header}>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>{receiver.displayName.charAt(0).toUpperCase()}</Text>
           </View>
-        </View>
-      ) : null}
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Latest Check-in</Text>
-        {needsAttention ? (
-          <View style={styles.attentionPanel}>
-            <Text style={styles.attentionTitle}>Receiver did not respond</Text>
-            <Text style={styles.attentionText}>
-              Nearby tried the available check-in channels. Choose whether to retry, alert backup contacts, or close this check-in.
+          <View style={styles.headerText}>
+            <Text style={styles.title}>{receiver.displayName}</Text>
+            <Text style={styles.subtitle}>
+              {formatRelationship(receiver.relationshipType)} - {receiver.phoneMasked}
             </Text>
           </View>
-        ) : null}
-        <InfoRow label="Status" value={formatCheckInStatus(receiver.latestCheckIn?.status)} />
-        <InfoRow label="Scheduled" value={formatDateTime(receiver.latestCheckIn?.scheduledAt)} />
-        <InfoRow label="Sent" value={formatDateTime(receiver.latestCheckIn?.sentAt)} />
-        <InfoRow label="Responded" value={formatDateTime(receiver.latestCheckIn?.respondedAt)} />
-        <InfoRow label="Resolved" value={formatDateTime(receiver.latestCheckIn?.resolvedAt)} />
-        {canAlertBackupForLatestCheckIn || canTryLatestCheckInLater || canResolveLatestCheckIn ? (
-          <View style={styles.checkInActionStack}>
-            {canAlertBackupForLatestCheckIn ? (
-              <Pressable style={styles.resolveButton} onPress={alertBackupForLatestCheckIn} disabled={isSaving}>
-                <Text style={styles.resolveButtonText}>{isSaving ? 'Saving...' : 'Alert backup contacts'}</Text>
-              </Pressable>
-            ) : null}
-            {canTryLatestCheckInLater ? (
-              <Pressable style={styles.secondaryActionButton} onPress={tryLatestCheckInLater} disabled={isSaving}>
-                <Text style={styles.secondaryButtonText}>{isSaving ? 'Saving...' : 'Try again later'}</Text>
-              </Pressable>
-            ) : null}
-            {canResolveLatestCheckIn ? (
-              <Pressable style={styles.secondaryActionButton} onPress={resolveLatestCheckIn} disabled={isSaving}>
-                <Text style={styles.secondaryButtonText}>{isSaving ? 'Saving...' : 'Mark resolved'}</Text>
-              </Pressable>
-            ) : null}
+        </View>
+
+        <View style={styles.statusBand}>
+          <Text style={styles.statusLabel}>Current status</Text>
+          <Text style={[styles.statusValue, { color: receiverStatusColor(currentStatus.tone) }]}>
+            {currentStatus.label}
+          </Text>
+        </View>
+
+        {actionError && <Text style={styles.inlineError}>{actionError}</Text>}
+
+        {isEditing && draft ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Edit receiver</Text>
+            <View style={styles.form}>
+              <TextInput
+                label="Receiver name"
+                value={draft.name}
+                onChangeText={(name) => setDraft({ ...draft, name })}
+              />
+
+              <View>
+                <Text style={styles.fieldLabel}>Relationship</Text>
+                <View style={styles.optionGrid}>
+                  {relationshipOptions.map((option) => (
+                    <Pressable
+                      key={option.value}
+                      style={[styles.option, draft.relationshipType === option.value && styles.optionSelected]}
+                      onPress={() => setDraft({ ...draft, relationshipType: option.value })}
+                      disabled={isSaving}
+                    >
+                      <Text
+                        style={[
+                          styles.optionText,
+                          draft.relationshipType === option.value && styles.optionTextSelected,
+                        ]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <View>
+                <Text style={styles.fieldLabel}>Best channel</Text>
+                <View style={styles.optionStack}>
+                  {profileOptions.map((option) => (
+                    <Pressable
+                      key={option.value}
+                      style={[styles.optionWide, draft.techProfile === option.value && styles.optionSelected]}
+                      onPress={() => selectProfile(option)}
+                      disabled={isSaving}
+                    >
+                      <Text
+                        style={[styles.optionText, draft.techProfile === option.value && styles.optionTextSelected]}
+                      >
+                        {option.label}
+                      </Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+
+              <CountrySelect
+                label="Country"
+                value={draft.countryCode}
+                onChange={(countryCode) => setDraft({ ...draft, countryCode })}
+                disabled={isSaving}
+                showDialCode={false}
+              />
+              <LanguageSelect
+                label="Language"
+                value={draft.language}
+                onChange={(language) => setDraft({ ...draft, language })}
+                disabled={isSaving}
+              />
+
+              <TimezoneSelect
+                label="Timezone"
+                value={draft.timezone}
+                onChange={(timezone) => setDraft({ ...draft, timezone })}
+              />
+
+              <Text style={styles.fieldHint}>Check-in window uses the receiver timezone selected above.</Text>
+              <View style={styles.row}>
+                <View style={styles.rowItem}>
+                  <TimeSelect
+                    label="From"
+                    value={draft.scheduleTimeWindow.start}
+                    onChange={(start) =>
+                      setDraft({ ...draft, scheduleTimeWindow: { ...draft.scheduleTimeWindow, start } })
+                    }
+                    disabled={isSaving}
+                  />
+                </View>
+                <View style={styles.rowItem}>
+                  <TimeSelect
+                    label="To"
+                    value={draft.scheduleTimeWindow.end}
+                    onChange={(end) => setDraft({ ...draft, scheduleTimeWindow: { ...draft.scheduleTimeWindow, end } })}
+                    disabled={isSaving}
+                  />
+                </View>
+              </View>
+
+              <View style={styles.editActionRow}>
+                <Pressable style={styles.secondaryButton} onPress={cancelEditing} disabled={isSaving}>
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable style={styles.primaryActionButton} onPress={saveEdit} disabled={isSaving}>
+                  <Text style={styles.primaryButtonText}>{isSaving ? 'Saving...' : 'Save'}</Text>
+                </Pressable>
+              </View>
+            </View>
           </View>
         ) : null}
-      </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Schedule</Text>
-        <InfoRow label="Frequency" value={capitalize(receiver.scheduleFrequency)} />
-        <InfoRow label="Window" value={`${receiver.scheduleTimeWindow.start ?? '09:00'} - ${receiver.scheduleTimeWindow.end ?? '11:00'}`} />
-        <InfoRow label="Timezone" value={receiver.timezone} />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Channels</Text>
-        <InfoRow label="Primary" value={formatChannel(receiver.primaryChannel)} />
-        <InfoRow label="Fallbacks" value={receiver.fallbackChannels.map(formatChannel).join(', ') || 'None'} />
-      </View>
-
-      <View style={styles.section}>
-        <View style={styles.sectionHeaderRow}>
-          <Text style={styles.sectionTitle}>Backup Contacts</Text>
-          {!isAddingBackupContact && backupContacts.length < 5 ? (
-            <Pressable style={styles.smallButton} onPress={startAddingBackupContact} disabled={isSaving}>
-              <Text style={styles.smallButtonText}>Add</Text>
-            </Pressable>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Latest Check-in</Text>
+          {needsAttention ? (
+            <View style={styles.attentionPanel}>
+              <Text style={styles.attentionTitle}>Receiver did not respond</Text>
+              <Text style={styles.attentionText}>
+                Nearby tried the available check-in channels. Choose whether to retry, alert backup contacts, or close
+                this check-in.
+              </Text>
+            </View>
+          ) : null}
+          <InfoRow label="Status" value={formatCheckInStatus(receiver.latestCheckIn?.status)} />
+          <InfoRow label="Scheduled" value={formatDateTime(receiver.latestCheckIn?.scheduledAt)} />
+          <InfoRow label="Sent" value={formatDateTime(receiver.latestCheckIn?.sentAt)} />
+          <InfoRow label="Responded" value={formatDateTime(receiver.latestCheckIn?.respondedAt)} />
+          <InfoRow label="Resolved" value={formatDateTime(receiver.latestCheckIn?.resolvedAt)} />
+          {canAlertBackupForLatestCheckIn || canTryLatestCheckInLater || canResolveLatestCheckIn ? (
+            <View style={styles.checkInActionStack}>
+              {canAlertBackupForLatestCheckIn ? (
+                <Pressable style={styles.resolveButton} onPress={alertBackupForLatestCheckIn} disabled={isSaving}>
+                  <Text style={styles.resolveButtonText}>{isSaving ? 'Saving...' : 'Alert backup contacts'}</Text>
+                </Pressable>
+              ) : null}
+              {canTryLatestCheckInLater ? (
+                <Pressable style={styles.secondaryActionButton} onPress={tryLatestCheckInLater} disabled={isSaving}>
+                  <Text style={styles.secondaryButtonText}>{isSaving ? 'Saving...' : 'Try again later'}</Text>
+                </Pressable>
+              ) : null}
+              {canResolveLatestCheckIn ? (
+                <Pressable style={styles.secondaryActionButton} onPress={resolveLatestCheckIn} disabled={isSaving}>
+                  <Text style={styles.secondaryButtonText}>{isSaving ? 'Saving...' : 'Mark resolved'}</Text>
+                </Pressable>
+              ) : null}
+            </View>
           ) : null}
         </View>
 
-        {backupContacts.length > 0 ? (
-          <View style={styles.backupContactList}>
-            {backupContacts.map((contact) => (
-              <View key={contact.id} style={styles.backupContactItem}>
-                <View>
-                  <Text style={styles.backupContactName}>{contact.displayName}</Text>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Schedule</Text>
+          <InfoRow label="Frequency" value={capitalize(receiver.scheduleFrequency)} />
+          <InfoRow
+            label="Window"
+            value={`${receiver.scheduleTimeWindow.start ?? '09:00'} - ${receiver.scheduleTimeWindow.end ?? '11:00'}`}
+          />
+          <InfoRow label="Timezone" value={receiver.timezone} />
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Channels</Text>
+          <InfoRow label="Primary" value={formatChannel(receiver.primaryChannel)} />
+          <InfoRow label="Fallbacks" value={receiver.fallbackChannels.map(formatChannel).join(', ') || 'None'} />
+        </View>
+
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={styles.sectionTitle}>Backup Contacts</Text>
+            {!isAddingBackupContact && backupContacts.length < 5 ? (
+              <Pressable style={styles.smallButton} onPress={startAddingBackupContact} disabled={isSaving}>
+                <Text style={styles.smallButtonText}>Add</Text>
+              </Pressable>
+            ) : null}
+          </View>
+
+          {backupContacts.length > 0 ? (
+            <View style={styles.backupContactList}>
+              {backupContacts.map((contact) => (
+                <View key={contact.id} style={styles.backupContactItem}>
+                  <View>
+                    <Text style={styles.backupContactName}>{contact.displayName}</Text>
+                    <Text style={styles.backupContactMeta}>
+                      {contact.relationshipToReceiver} - {contact.phoneMasked}
+                    </Text>
+                  </View>
                   <Text style={styles.backupContactMeta}>
-                    {contact.relationshipToReceiver} - {contact.phoneMasked}
+                    {contact.hasLocationInstructions ? 'Instructions saved' : 'No instructions'}
                   </Text>
+                  <View style={styles.backupContactActions}>
+                    <Pressable
+                      style={styles.smallButton}
+                      onPress={() => startEditingBackupContact(contact)}
+                      disabled={isSaving}
+                    >
+                      <Text style={styles.smallButtonText}>Edit</Text>
+                    </Pressable>
+                    <Pressable
+                      style={styles.smallButton}
+                      onPress={() => removeBackupContact(contact)}
+                      disabled={isSaving}
+                    >
+                      <Text style={styles.smallButtonText}>Remove</Text>
+                    </Pressable>
+                  </View>
                 </View>
-                <Text style={styles.backupContactMeta}>{contact.hasLocationInstructions ? 'Instructions saved' : 'No instructions'}</Text>
-                <View style={styles.backupContactActions}>
-                  <Pressable style={styles.smallButton} onPress={() => startEditingBackupContact(contact)} disabled={isSaving}>
-                    <Text style={styles.smallButtonText}>Edit</Text>
-                  </Pressable>
-                  <Pressable style={styles.smallButton} onPress={() => removeBackupContact(contact)} disabled={isSaving}>
-                    <Text style={styles.smallButtonText}>Remove</Text>
-                  </Pressable>
-                </View>
-              </View>
-            ))}
-          </View>
-        ) : (
-          <Text style={styles.placeholderText}>{receiver.escalation.nextStep}</Text>
-        )}
+              ))}
+            </View>
+          ) : (
+            <Text style={styles.placeholderText}>{receiver.escalation.nextStep}</Text>
+          )}
 
-        {isAddingBackupContact ? (
-          <View style={styles.backupContactForm}>
-            <TextInput
-              label={editingBackupContactId ? 'Backup name' : 'Backup name'}
-              value={backupDraft.name}
-              onChangeText={(name) => setBackupDraft({ ...backupDraft, name })}
-            />
-            <ReceiverPhoneInput
-              phoneCountry={backupDraft.phoneCountry ?? 'AE'}
-              phone={backupDraft.phone}
-              onChangePhoneCountry={(phoneCountry) => setBackupDraft({ ...backupDraft, phoneCountry })}
-              onChangePhone={(phone) => setBackupDraft({ ...backupDraft, phone: phone.replace(/\D/g, '') })}
-              error={backupPhoneError}
-              disabled={isSaving}
-            />
-            {editingBackupContactId ? <Text style={styles.fieldHint}>Leave phone blank to keep the current number.</Text> : null}
-            <View>
+          {isAddingBackupContact ? (
+            <View style={styles.backupContactForm}>
               <TextInput
-                label="Relationship"
-                value={backupDraft.relationshipToReceiver}
-                onChangeText={(relationshipToReceiver) => setBackupDraft({ ...backupDraft, relationshipToReceiver })}
+                label={editingBackupContactId ? 'Backup name' : 'Backup name'}
+                value={backupDraft.name}
+                onChangeText={(name) => setBackupDraft({ ...backupDraft, name })}
               />
+              <ReceiverPhoneInput
+                label="Backup contact phone"
+                phoneCountry={backupDraft.phoneCountry ?? 'AE'}
+                phone={backupDraft.phone}
+                onChangePhoneCountry={(phoneCountry) => setBackupDraft({ ...backupDraft, phoneCountry })}
+                onChangePhone={(phone) => setBackupDraft({ ...backupDraft, phone: phone.replace(/\D/g, '') })}
+                error={backupPhoneError}
+                disabled={isSaving}
+              />
+              {editingBackupContactId ? (
+                <Text style={styles.fieldHint}>Leave phone blank to keep the current number.</Text>
+              ) : null}
+              <View>
+                <TextInput
+                  label="Relationship"
+                  value={backupDraft.relationshipToReceiver}
+                  onChangeText={(relationshipToReceiver) => setBackupDraft({ ...backupDraft, relationshipToReceiver })}
+                />
+              </View>
+              <TextInput
+                label="Location instructions"
+                value={backupDraft.locationInstructions}
+                onChangeText={(locationInstructions) => setBackupDraft({ ...backupDraft, locationInstructions })}
+              />
+              <View style={styles.editActionRow}>
+                <Pressable style={styles.secondaryButton} onPress={cancelAddingBackupContact} disabled={isSaving}>
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable style={styles.primaryActionButton} onPress={saveBackupContact} disabled={isSaving}>
+                  <Text style={styles.primaryButtonText}>
+                    {isSaving ? 'Saving...' : editingBackupContactId ? 'Update' : 'Save'}
+                  </Text>
+                </Pressable>
+              </View>
             </View>
-            <TextInput
-              label="Location instructions"
-              value={backupDraft.locationInstructions}
-              onChangeText={(locationInstructions) => setBackupDraft({ ...backupDraft, locationInstructions })}
-            />
-            <View style={styles.editActionRow}>
-              <Pressable style={styles.secondaryButton} onPress={cancelAddingBackupContact} disabled={isSaving}>
-                <Text style={styles.secondaryButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable style={styles.primaryActionButton} onPress={saveBackupContact} disabled={isSaving}>
-                <Text style={styles.primaryButtonText}>{isSaving ? 'Saving...' : editingBackupContactId ? 'Update' : 'Save'}</Text>
-              </Pressable>
-            </View>
-          </View>
-        ) : null}
-      </View>
+          ) : null}
+        </View>
 
-      <View style={styles.actionRow}>
-        <Pressable style={styles.secondaryButton} onPress={togglePause} disabled={isSaving}>
-          <Text style={styles.secondaryButtonText}>{isPaused ? 'Resume' : 'Pause'}</Text>
-        </Pressable>
-        <Pressable style={styles.secondaryButton} onPress={startEditing} disabled={isSaving || isEditing}>
-          <Text style={styles.secondaryButtonText}>Edit</Text>
-        </Pressable>
-        <Pressable style={styles.secondaryButton} onPress={removeReceiver} disabled={isSaving}>
-          <Text style={styles.secondaryButtonText}>Remove</Text>
-        </Pressable>
-      </View>
-    </ScrollView>
-    <StepUpCodeModal
-      visible={Boolean(stepUpPrompt)}
-      title={stepUpPrompt?.title ?? ''}
-      message={stepUpPrompt?.message ?? ''}
-      code={stepUpCode}
-      onChangeCode={setStepUpCode}
-      onCancel={() => resolveStepUpPrompt(null)}
-      onSubmit={() => resolveStepUpPrompt(stepUpCode.trim() || null)}
-    />
+        <View style={styles.actionRow}>
+          <Pressable style={styles.secondaryButton} onPress={togglePause} disabled={isSaving}>
+            <Text style={styles.secondaryButtonText}>{isPaused ? 'Resume' : 'Pause'}</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryButton} onPress={startEditing} disabled={isSaving || isEditing}>
+            <Text style={styles.secondaryButtonText}>Edit</Text>
+          </Pressable>
+          <Pressable style={styles.secondaryButton} onPress={removeReceiver} disabled={isSaving}>
+            <Text style={styles.secondaryButtonText}>Remove</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+      <StepUpCodeModal
+        visible={Boolean(stepUpPrompt)}
+        title={stepUpPrompt?.title ?? ''}
+        message={stepUpPrompt?.message ?? ''}
+        code={stepUpCode}
+        onChangeCode={setStepUpCode}
+        onCancel={() => resolveStepUpPrompt(null)}
+        onSubmit={() => resolveStepUpPrompt(stepUpCode.trim() || null)}
+      />
     </>
   );
 }
@@ -735,10 +851,7 @@ function receiverStatusColor(tone: ReceiverStatusTone): string {
 function formatCheckInStatus(status?: string): string {
   if (!status) return 'No check-ins yet';
   if (status === 'NEEDS_ATTENTION') return 'Needs attention';
-  return status
-    .split('_')
-    .map(capitalize)
-    .join(' ');
+  return status.split('_').map(capitalize).join(' ');
 }
 
 function formatRelationship(type: string): string {

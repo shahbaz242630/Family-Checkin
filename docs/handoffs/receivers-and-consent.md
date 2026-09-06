@@ -10,16 +10,16 @@ BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open
 - `STOP` revokes consent, writes a 7-day opt-out cooldown row and cancels any attempt still queued for today.
 - `REPORT` files an abuse report and pauses the receiver until an admin reviews it; the open check-in and its pending attempts are cancelled.
 - The sender can pause (optionally until a date), resume, edit and remove a receiver. Remove is a soft delete behind an SMS step-up code; pause and remove send the receiver a best-effort lifecycle message.
-- Mobile shows receivers on the dashboard with a consent/check-in status chip, and a detail screen with pause/resume, edit, backup contacts and remove.
+- Mobile shows receivers on the dashboard with a consent/check-in status chip, and a detail screen with pause/resume, edit, backup contacts and remove. Both refetch on focus; a detail whose receiver was removed elsewhere says "This receiver was removed" and returns to the dashboard.
 
 ## Where it lives
 
 | Layer   | Paths                                                                                                                                                                                                                                                                                                     |
 | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Backend | `apps/backend/src/modules/receivers/` — `receivers.controller.ts`, `receivers.service.ts`, `receiver-consent.service.ts`, `receiver-reply.service.ts`, `receiver-replies.controller.ts`, `receiver-replies.module.ts`, `prisma-receivers.repository.ts`, `abuse-review-pause.ts`                             |
-| Mobile  | `apps/mobile/src/app/(main)/index.tsx` (dashboard), `apps/mobile/src/app/(main)/receivers/[id].tsx` (detail), `apps/mobile/src/app/(main)/receiver-setup.tsx` (re-exports `apps/mobile/src/app/(auth)/onboarding.tsx`), `apps/mobile/src/hooks/useLovedOnes.ts`, `apps/mobile/src/utils/channelProfiles.ts`, `apps/mobile/src/utils/receiverStatus.ts` |
+| Mobile  | `apps/mobile/src/app/(main)/index.tsx` (dashboard), `apps/mobile/src/app/(main)/receivers/[id].tsx` (detail), `apps/mobile/src/app/(main)/receiver-setup.tsx` (re-exports `apps/mobile/src/app/(auth)/onboarding.tsx`), `apps/mobile/src/hooks/useLovedOnes.ts`, `apps/mobile/src/utils/channelProfiles.ts`, `apps/mobile/src/utils/receiverStatus.ts`, `apps/mobile/src/utils/checkInSkipReason.ts`, `apps/mobile/src/components/onboarding/TimeSelect.tsx` + `utils/timeOptions.ts`, `TimezoneSelect.tsx` + `utils/timezoneOffset.ts` |
 | Data    | `receivers`, `opt_out_cooldowns`, `abuse_reports`, `audit_logs`; migrations `202604260001_initial_nearby_schema`, `202605150001_receiver_remove_step_up`                                                                                                                                                   |
-| Tests   | `receivers.controller.spec.ts`, `receivers.service.spec.ts`, `receiver-consent.service.spec.ts`, `receiver-reply.service.spec.ts`, `receiver-replies.controller.spec.ts`, `prisma-receivers.repository.spec.ts`; mobile `utils/receiverStatus.spec.ts`, `utils/channelProfiles.spec.ts`, `services/backendApi.spec.ts` |
+| Tests   | `receivers.controller.spec.ts`, `receivers.service.spec.ts`, `receiver-consent.service.spec.ts`, `receiver-reply.service.spec.ts`, `receiver-replies.controller.spec.ts`, `prisma-receivers.repository.spec.ts`; mobile `utils/receiverStatus.spec.ts`, `utils/checkInSkipReason.spec.ts`, `utils/channelProfiles.spec.ts`, `utils/timeOptions.spec.ts`, `utils/timezoneOffset.spec.ts`, `services/backendApi.spec.ts`, `services/backendErrors.spec.ts` |
 
 ## Routes and contracts
 
@@ -97,5 +97,5 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §0a (lines 793–804), §5 (lines 928–1179), §6 (lines 1180–1257), §29f (lines 2439–2476).
 - Acceptance evidence: `docs/audits/2026-09-06/sprint1-acceptance.md` S4 (unrecognised/unknown/invalid replies), S6 (STOP), S7 (REPORT and admin unpause).
-- PRs: #17 (REPORT pause and unpause, replies never 500), #18 (fake reply route gated to fake mode plus the cron secret), #19 (consent request rendered from the message catalog), #20 (STOP/REPORT/pause/delete cancel in-flight attempts), #24 (CB-070: `DELETE /receivers/:id` could never consume a step-up token in the real graph).
+- PRs: #17 (REPORT pause and unpause, replies never 500), #18 (fake reply route gated to fake mode plus the cron secret), #19 (consent request rendered from the message catalog), #20 (STOP/REPORT/pause/delete cancel in-flight attempts), #24 (CB-070: `DELETE /receivers/:id` could never consume a step-up token in the real graph), #25 (CB-071 dashboard and detail refetch on focus, removed-receiver feedback; CB-072 phone labels; CB-073 quarter-hour pickers and live offsets; CB-077 skipped-status labels).
 - Emulator acceptance 2026-09-06: `docs/audits/2026-09-06/emulator-acceptance.md` (scenarios 2–5, 8–12; findings CB-071, CB-072, CB-073, CB-074, CB-075).
