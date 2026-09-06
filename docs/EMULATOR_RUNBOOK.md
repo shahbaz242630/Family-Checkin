@@ -63,7 +63,7 @@ Metro logs go to the terminal; the handoff's older runs used `expo-android*.log`
 
 ## 5. Driving the flows
 
-Fake providers send nothing. Until CB-067 is merged they also keep rendered bodies only in memory (nothing in the terminal, and the step-up OTP is stored hashed), so scenarios that need to read a message body or an OTP (2, 4, 7, 12) need CB-067 first: a `[fake-provider]` log line per send and a fake-mode-only route that returns the last sends. Inbound receiver replies are simulated with the fake reply route, which is only registered in fake mode and now requires the cron secret:
+Fake providers send nothing. Each send prints one `[fake-provider]` line in the backend terminal (channel, masked phone, template, and the rendered body or voice script), and the last 200 sends can be listed over HTTP, newest first (CB-067). That is how you read a consent request, a check-in body, a backup alert or the step-up OTP without a phone. Inbound receiver replies are simulated with the fake reply route. Both routes exist only in fake mode and require the cron secret:
 
 ```powershell
 $h = @{ Authorization = 'Bearer cron-secret'; 'Content-Type' = 'application/json' }
@@ -71,14 +71,16 @@ $h = @{ Authorization = 'Bearer cron-secret'; 'Content-Type' = 'application/json
 Invoke-RestMethod -Method Post -Uri http://localhost:3000/receiver-replies/fake -Headers $h -Body '{"fromPhone":"+971500000001","channel":"SMS","body":"YES"}'
 # run the scheduler tick (what GitHub Actions calls every 10 minutes)
 Invoke-RestMethod -Method Post -Uri http://localhost:3000/operations/check-ins/run -Headers $h
+# what the fake providers "sent", newest first (add ?limit=N, 1-200, default 50); OTP codes appear in the body text
+(Invoke-RestMethod -Uri http://localhost:3000/receiver-replies/fake/outbound -Headers $h).sends | Format-List
 ```
 
-Body fields: `fromPhone` (E.164), `channel` (`SMS` or `WHATSAPP`), `body` (the reply text), optional `providerMessageId` (set one to test replay handling). Source: `apps/backend/src/modules/receivers/receiver-replies.controller.ts`.
+Body fields: `fromPhone` (E.164), `channel` (`SMS` or `WHATSAPP`), `body` (the reply text), optional `providerMessageId` (set one to test replay handling). Outbound records: `kind` (`message` or `voice_call`), `at`, `channel`, `to`, `templateKey` or `scriptKey`, `language`, `fallback`, `body`. Source: `apps/backend/src/modules/receivers/receiver-replies.controller.ts`.
 
 Scenario list (each maps to a sprint-1 item; expected outcome in brackets):
 
 1. Email sign-up and login; profile shows name/phone (CB-033 is still open: expect the profile form quirks listed in the backlog).
-2. Add a receiver with a personal note → backend log shows a consent request in plain English containing the note (CB-010).
+2. Add a receiver with a personal note → the backend terminal (or the outbound route) shows a consent request in plain English containing the note (CB-010).
 3. Fake reply `YES` from the receiver → consent granted in the app.
 4. Run the scheduler tick → check-in sent (English sentence with the note); dashboard shows it.
 5. Fake reply `YES` → check-in resolved OK.
@@ -88,7 +90,7 @@ Scenario list (each maps to a sprint-1 item; expected outcome in brackets):
 9. Fake reply `STOP` between two attempts → remaining attempt SKIPPED, nothing else sent (CB-008).
 10. Free text ("thanks"), an unknown number, a short-code sender → 200 and an audit row, no crash (CB-015).
 11. Create a receiver with timezone `Dubai` (invalid) → 400; a valid one still gets its check-in on the next tick (CB-004).
-12. Step-up (remove receiver / export / delete) → OTP appears in the backend log as a sentence; enter it in the app.
+12. Step-up (remove receiver / export / delete) → the OTP appears in the backend terminal and the outbound route as a sentence; enter it in the app.
 
 Known-open mobile items to NOT chase (backlog Phase 3): social login (CB-028), push registration and tap handling (CB-030/031), dashboard error state (CB-032), placeholder settings screens (CB-034), siren asset (CB-038).
 

@@ -62,8 +62,10 @@ const configuredModeRoutes = [
   'POST /receivers/:receiverId/backup-contacts',
 ];
 
+const BOOT_TIMEOUT_MS = 60_000;
+
 /** Routes that must exist only while CHANNEL_PROVIDER_MODE=fake. */
-const fakeModeOnlyRoutes = ['POST /receiver-replies/fake'];
+const fakeModeOnlyRoutes = ['GET /receiver-replies/fake/outbound', 'POST /receiver-replies/fake'];
 
 interface ExpressRouteLayer {
   route?: { path: string; methods: Record<string, boolean> };
@@ -133,9 +135,11 @@ describe('AppModule', () => {
   describe('with CHANNEL_PROVIDER_MODE=fake', () => {
     let booted: BootedApp;
 
+    // Booting the full graph after vi.resetModules re-imports every module; under the whole suite running in
+    // parallel that can exceed vitest's default 10 s hook timeout, so give it room.
     beforeAll(async () => {
       booted = await bootApp('fake');
-    });
+    }, BOOT_TIMEOUT_MS);
 
     it('resolves the production AuditService, PII guard included', async () => {
       const auditService = booted.app.get(booted.AuditService);
@@ -165,8 +169,32 @@ describe('AppModule', () => {
       ).toBeDefined();
     });
 
-    it('maps every expected route plus the fake reply route', () => {
+    it('maps every expected route plus the fake reply and fake outbound routes', () => {
       expect(mappedRoutes(booted.app)).toEqual([...configuredModeRoutes, ...fakeModeOnlyRoutes].sort());
+    });
+
+    it('wires the one FakeOutboundRecorder into every fake provider and the fake outbound route', async () => {
+      // CB-067: the recorder the GET route reads must be the same instance the providers write to, otherwise the
+      // route lists nothing while the terminal shows sends (or vice versa). Asserted by identity because the
+      // catalog would hit the inert PrismaService on a real send in this spec.
+      const { FakeOutboundRecorder } = await import('./modules/channels/fake-outbound-recorder');
+      const { FakeChannelProvider } = await import('./modules/channels/fake-channel.provider');
+      const { CHANNEL_PROVIDERS } = await import('./modules/channels/channels.tokens');
+      const { ReceiverRepliesController } = await import('./modules/receivers/receiver-replies.controller');
+
+      const recorder = booted.app.get(FakeOutboundRecorder);
+      const providers = booted.app.get<unknown[]>(CHANNEL_PROVIDERS);
+      const controller = booted.app.get(ReceiverRepliesController) as unknown as Record<string, unknown>;
+
+      expect(recorder).toBeInstanceOf(FakeOutboundRecorder);
+      expect(providers).toHaveLength(3);
+      for (const provider of providers) {
+        expect(provider).toBeInstanceOf(FakeChannelProvider);
+        expect((provider as InstanceType<typeof FakeChannelProvider>).recorder).toBe(recorder);
+      }
+      expect(controller.fakeOutbound, 'FakeOutboundRecorder not injected into ReceiverRepliesController').toBe(
+        recorder,
+      );
     });
 
     it('closes cleanly without a database', async () => {
@@ -179,17 +207,19 @@ describe('AppModule', () => {
 
     beforeAll(async () => {
       booted = await bootApp('configured');
-    });
+    }, BOOT_TIMEOUT_MS);
 
     it('resolves the production AuditService', () => {
       expect(booted.app.get(booted.AuditService)).toBeInstanceOf(booted.AuditService);
     });
 
-    it('maps every expected route and leaves the fake reply route out', () => {
+    it('maps every expected route and leaves the fake reply and fake outbound routes out', () => {
       const routes = mappedRoutes(booted.app);
 
       expect(routes).toEqual(configuredModeRoutes);
-      expect(routes).not.toContain(fakeModeOnlyRoutes[0]);
+      for (const route of fakeModeOnlyRoutes) {
+        expect(routes).not.toContain(route);
+      }
     });
 
     it('closes cleanly without a database', async () => {

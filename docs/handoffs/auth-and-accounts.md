@@ -37,7 +37,7 @@ BRD: §5.1 FR-AUTH-01..04 · Open backlog: CB-024, CB-025, CB-028, CB-029, CB-03
 - Follow `docs/EMULATOR_RUNBOOK.md` §2–§4. Backend needs `SUPABASE_URL`, `SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY` (validated at boot, currently unused — CB-025); mobile needs `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_BACKEND_URL`.
 - Sign in through Expo Go with a real Supabase test user. The dashboard loading receivers is the proof that `getSession()` returned a token and the backend accepted it; a blank dashboard with 401s means session persistence broke.
 - Negative check: `POST http://localhost:3000/auth/sync-user` with no `Authorization` header must return 401.
-- The step-up OTP cannot be read locally end to end: `FakeChannelProvider` keeps sends in `sentMessages`/`renderedMessages` in memory and prints nothing (the backend has no `console.log`), and `step_up_challenges` stores only `codeHash`. Exercise export/delete through the specs instead.
+- The step-up OTP is readable in fake mode: the SMS body prints in the backend terminal as a `[fake-provider]` line and is returned by `GET /receiver-replies/fake/outbound` (cron-secret bearer), so export, delete and remove-receiver can be driven end to end from the app. `step_up_challenges` itself stores only `codeHash`.
 - Specs: `npm.cmd --prefix apps/backend test -- src/modules/auth src/modules/users src/modules/account`; `npx.cmd vitest run apps/mobile/src/services/auth.spec.ts apps/mobile/src/services/auth-storage.test.ts`.
 
 ## Invariants — do not break
