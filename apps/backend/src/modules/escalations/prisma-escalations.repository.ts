@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { CheckInStatus } from '@prisma/client';
 import type { BackupContact, Channel, EscalationEvent, EscalationResult } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
+import { ESCALATION_CHECK_IN_ALLOWED_FROM } from './escalations.repository';
 import type {
   CreateEscalationEventInput,
   EscalationBackupContactRecord,
@@ -53,7 +54,10 @@ interface EscalationsPrismaClient {
     }): Promise<EscalationEvent>;
   };
   checkIn: {
-    update(args: { where: { id: string }; data: { status: CheckInStatus } }): Promise<unknown>;
+    updateMany(args: {
+      where: { id: string; status: { in: CheckInStatus[] } };
+      data: { status: CheckInStatus };
+    }): Promise<{ count: number }>;
   };
 }
 
@@ -152,15 +156,15 @@ export class PrismaEscalationsRepository implements EscalationsRepository {
   }
 
   async markCheckInEscalated(input: { checkInId: string }): Promise<void> {
-    await this.prisma.checkIn.update({
-      where: { id: input.checkInId },
+    await this.prisma.checkIn.updateMany({
+      where: { id: input.checkInId, status: { in: [...ESCALATION_CHECK_IN_ALLOWED_FROM.escalated] } },
       data: { status: CheckInStatus.ESCALATED },
     });
   }
 
   async markCheckInTerminal(input: { checkInId: string; status: CheckInStatus }): Promise<void> {
-    await this.prisma.checkIn.update({
-      where: { id: input.checkInId },
+    await this.prisma.checkIn.updateMany({
+      where: { id: input.checkInId, status: { in: [...ESCALATION_CHECK_IN_ALLOWED_FROM.terminal] } },
       data: { status: input.status },
     });
   }

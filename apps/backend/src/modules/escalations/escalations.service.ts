@@ -32,6 +32,11 @@ export interface EscalateSenderRequestedBackupInput {
   checkInId: string;
 }
 
+export interface NotifySenderOfMissedCheckInInput {
+  receiverId: string;
+  checkInId: string;
+}
+
 export interface EscalateHelpResponseResult {
   checkInId: string;
   status: CheckInStatus;
@@ -131,6 +136,22 @@ export class EscalationsService {
         body: 'Backup contacts are being alerted for this check-in.',
         reason: 'sender_requested',
       },
+    });
+  }
+
+  /**
+   * Siren push to the sender, with a voice call when the push is not delivered, once every attempt of a
+   * check-in's cascade has gone unanswered (CB-005). Backup contacts are deliberately not alerted here: BRD
+   * FR-BAK-03 leaves that to the sender's own "alert backup" action, so the check-in status is untouched too.
+   */
+  async notifySenderOfMissedCheckIn(input: NotifySenderOfMissedCheckInInput): Promise<void> {
+    await this.notifySender({
+      receiverId: input.receiverId,
+      checkInId: input.checkInId,
+      title: 'Missed check-in',
+      body: 'A receiver has not answered any check-in attempt today. Open the app to decide what to do next.',
+      reason: 'cascade_exhausted',
+      deepLink: `/(main)/receivers/${input.receiverId}`,
     });
   }
 
@@ -394,6 +415,8 @@ export class EscalationsService {
     title: string;
     body: string;
     reason: string;
+    /** In-app route the push opens; `NotificationsService` falls back to the home tab when absent. */
+    deepLink?: string;
   }): Promise<Date | undefined> {
     if (!this.notificationsService) {
       return undefined;
@@ -413,6 +436,7 @@ export class EscalationsService {
           checkInId: input.checkInId,
           receiverId: input.receiverId,
           reason: input.reason,
+          ...(input.deepLink ? { deepLink: input.deepLink } : {}),
         },
       });
 

@@ -6,6 +6,7 @@ import { AuditService } from '../audit/audit.service';
 import type { BackupContactsRepository } from '../backup-contacts/backup-contacts.repository';
 import { BACKUP_CONTACTS_REPOSITORY } from '../backup-contacts/backup-contacts.tokens';
 import type { CheckInRecord, CheckInsRepository } from '../check-ins/check-ins.repository';
+import { CheckInsService } from '../check-ins/check-ins.service';
 import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
@@ -57,6 +58,9 @@ export class ReceiverReplyService {
     @Inject(BACKUP_CONTACTS_REPOSITORY)
     private readonly backupContactsRepository?: Pick<BackupContactsRepository, 'findActiveByPhoneHash'>,
     @Optional() private readonly now: () => Date = () => new Date(),
+    @Optional()
+    @Inject(CheckInsService)
+    private readonly checkInsService?: Pick<CheckInsService, 'cancelOpenCheckInsForReceiver'>,
   ) {}
 
   async handleInboundReply(input: HandleInboundReceiverReplyInput): Promise<HandleInboundReceiverReplyResult> {
@@ -178,6 +182,11 @@ export class ReceiverReplyService {
         optOutChannel: input.channel,
         optOutKeyword: normalizedReply,
       });
+      // Opting out must be immediate: a fallback attempt scheduled for later today is cancelled now (CB-008).
+      await this.checkInsService?.cancelOpenCheckInsForReceiver({
+        receiverId: receiver.id,
+        reason: 'receiver_opted_out',
+      });
     }
 
     return {
@@ -293,8 +302,11 @@ export class ReceiverReplyService {
       receiverId: input.receiverId,
       pausedReason: ABUSE_REVIEW_PAUSE_REASON,
     });
-    // CB-008: cancel in-flight attempts here (CheckInsService.cancelOpenCheckInsForReceiver) so a receiver paused
-    // for review receives nothing further from a cascade that is already running today.
+    // A receiver paused for review must receive nothing further from a cascade already running today (CB-008).
+    await this.checkInsService?.cancelOpenCheckInsForReceiver({
+      receiverId: input.receiverId,
+      reason: 'abuse_reported',
+    });
 
     await this.auditService.append({
       entityType: 'receiver',
@@ -353,6 +365,22 @@ export class ReceiverReplyService {
         }),
       ),
     });
+    if (!checkIn) {
+      // Closed between the lookup and the guarded write (a cancellation or a backup contact's DONE): the
+      // status stays as it is and the reply is only recorded (CB-006).
+      await this.auditUnactionedReply(input.input, {
+        entityType: 'receiver',
+        entityId: input.receiverId,
+        action: 'receiver.check_in_reply_ignored',
+        metadata: {
+          channel: input.input.channel,
+          normalizedReply: input.normalizedReply,
+          providerMessageId: input.input.providerMessageId,
+          reason: 'check_in_closed',
+        },
+      });
+      return null;
+    }
     await this.checkInsRepository.markLatestSentAttemptResponded({
       checkInId: openCheckIn.id,
       completedAt: input.receivedAt,
@@ -459,6 +487,26 @@ export class ReceiverReplyService {
       checkInId: checkIn.id,
       resolvedAt: input.receivedAt,
     });
+    if (!resolvedCheckIn) {
+      await this.auditUnactionedReply(input.input, {
+        entityType: 'backup_contact',
+        entityId: backupContact.id,
+        action: 'backup_contact.reply_ignored',
+        metadata: {
+          receiverId: backupContact.receiverId,
+          channel: input.input.channel,
+          normalizedReply,
+          providerMessageId: input.input.providerMessageId,
+          reason: 'check_in_not_actionable',
+        },
+      });
+
+      return {
+        receiverId: backupContact.receiverId,
+        backupContactId: backupContact.id,
+        action: 'no_actionable_check_in',
+      };
+    }
 
     await this.auditService.append({
       entityType: 'check_in',

@@ -836,6 +836,116 @@ describe('EscalationsService', () => {
   });
 });
 
+describe('EscalationsService notifies the sender of a missed check-in (CB-005)', () => {
+  it('sends one siren push that deep-links to the receiver and alerts no backup contact', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const notifications = new InMemoryNotificationsService();
+    const sms = new FakeChannelProvider(Channel.SMS);
+    repository.backupContacts = [
+      backupContactFixture(crypto, {
+        id: 'backup-contact-first',
+        phone: '+971502222222',
+        priorityOrder: 1,
+        createdAt: new Date('2026-04-29T08:20:00.000Z'),
+      }),
+    ];
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms]),
+      auditService,
+      notifications as unknown as NotificationsService,
+      () => new Date('2026-04-29T10:00:00.000Z'),
+    );
+
+    await service.notifySenderOfMissedCheckIn({ receiverId: 'receiver-1', checkInId: 'check-in-1' });
+
+    expect(notifications.sent).toEqual([
+      {
+        userId: 'sender-1',
+        title: 'Missed check-in',
+        body: 'A receiver has not answered any check-in attempt today. Open the app to decide what to do next.',
+        data: {
+          checkInId: 'check-in-1',
+          receiverId: 'receiver-1',
+          reason: 'cascade_exhausted',
+          deepLink: '/(main)/receivers/receiver-1',
+        },
+      },
+    ]);
+    expect(audit.events).toEqual([
+      {
+        entityType: 'check_in',
+        entityId: 'check-in-1',
+        action: 'sender_push.sent',
+        actorType: ActorType.SYSTEM,
+        metadata: {
+          receiverId: 'receiver-1',
+          attempted: 1,
+          sent: 1,
+          failed: 0,
+          reason: 'cascade_exhausted',
+        },
+      },
+    ]);
+    expect(sms.sentMessages).toEqual([]);
+    expect(repository.createdEvents).toEqual([]);
+    expect(repository.escalatedCheckIns).toEqual([]);
+    expect(repository.terminalStatuses).toEqual([]);
+  });
+
+  it('calls the sender with the siren script when the missed check-in push is not delivered', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const notifications = new InMemoryNotificationsService({ attempted: 0, sent: 0, failed: 0, sentAt: undefined });
+    const voice = new FakeChannelProvider(Channel.VOICE, { now: () => new Date('2026-04-29T10:00:00.000Z') });
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([voice]),
+      auditService,
+      notifications as unknown as NotificationsService,
+      () => new Date('2026-04-29T10:00:00.000Z'),
+    );
+
+    await service.notifySenderOfMissedCheckIn({ receiverId: 'receiver-1', checkInId: 'check-in-1' });
+
+    expect(voice.voiceCalls.map((call) => call.to)).toEqual(['+971509999999']);
+    expect(voice.voiceCalls[0]?.script).toMatchObject({
+      scriptKey: 'sender_escalation_siren_voice',
+      variables: expect.objectContaining({ reason: 'cascade_exhausted' }) as unknown,
+    });
+    expect(audit.events.map((event) => event.action)).toEqual([
+      'sender_push.not_delivered',
+      'sender_voice_fallback.sent',
+    ]);
+    expect(JSON.stringify(audit.events)).not.toContain('+971509999999');
+  });
+
+  it('does nothing when the receiver has no owner to notify', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const notifications = new InMemoryNotificationsService();
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([]),
+      auditService,
+      notifications as unknown as NotificationsService,
+      () => new Date('2026-04-29T10:00:00.000Z'),
+    );
+
+    await service.notifySenderOfMissedCheckIn({ receiverId: 'receiver-deleted', checkInId: 'check-in-1' });
+
+    expect(notifications.sent).toEqual([]);
+    expect(audit.events).toEqual([]);
+  });
+});
+
 function backupContactFixture(
   crypto: CryptoService,
   input: { id: string; phone: string; priorityOrder: number; createdAt: Date },

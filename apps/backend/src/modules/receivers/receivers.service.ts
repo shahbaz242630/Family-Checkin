@@ -4,12 +4,14 @@ import type { RelationshipType } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import type { CheckInsRepository } from '../check-ins/check-ins.repository';
+import { CheckInsService } from '../check-ins/check-ins.service';
 import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
+import { assertSupportedTimeZone, parseScheduleTimeWindow } from '../../shared/schedule/receiver-schedule';
 import type {
   CreateReceiverRecordInput,
   ReceiverRecord,
@@ -121,6 +123,7 @@ export class ReceiversService {
   private readonly escalationsService?: Pick<EscalationsService, 'escalateSenderRequestedBackup'>;
   private readonly checkInsRepository?: Pick<CheckInsRepository, 'createPending' | 'createAttempts'>;
   private readonly channelRouter?: Pick<ChannelRouterService, 'sendMessage' | 'makeVoiceCall' | 'resolveReachablePlan'>;
+  private readonly checkInsService?: Pick<CheckInsService, 'cancelOpenCheckInsForReceiver'>;
 
   constructor(
     @Inject(RECEIVERS_REPOSITORY) private readonly receiversRepository: ReceiversRepository,
@@ -140,8 +143,12 @@ export class ReceiversService {
     @Optional()
     @Inject(ChannelRouterService)
     channelRouter?: Pick<ChannelRouterService, 'sendMessage' | 'makeVoiceCall' | 'resolveReachablePlan'>,
+    @Optional()
+    @Inject(CheckInsService)
+    checkInsService?: Pick<CheckInsService, 'cancelOpenCheckInsForReceiver'>,
   ) {
     this.channelRouter = channelRouter;
+    this.checkInsService = checkInsService;
     this.now = () => new Date();
     if (this.isCheckInsRepository(checkInsOrEscalationsOrNow)) {
       this.checkInsRepository = checkInsOrEscalationsOrNow;
@@ -255,6 +262,9 @@ export class ReceiversService {
       return null;
     }
 
+    // Stop today's cascade too, or a fallback SMS or voice call still goes out after the pause (CB-008).
+    await this.checkInsService?.cancelOpenCheckInsForReceiver({ receiverId: receiver.id, reason: 'receiver_paused' });
+
     await this.notifyReceiverLifecycle({
       receiver,
       actionName: 'pause',
@@ -316,6 +326,8 @@ export class ReceiversService {
     if (!receiver) {
       return null;
     }
+
+    await this.checkInsService?.cancelOpenCheckInsForReceiver({ receiverId: receiver.id, reason: 'receiver_deleted' });
 
     await this.notifyReceiverLifecycle({
       receiver,
@@ -647,6 +659,10 @@ export class ReceiversService {
     if (personalNote && Array.from(personalNote).length > MAX_PERSONAL_NOTE_LENGTH) {
       throw new Error(PERSONAL_NOTE_TOO_LONG_MESSAGE);
     }
+    // The scheduler evaluates these on every tick; an invalid value is rejected here rather than stalling
+    // every receiver's check-in later (CB-004).
+    assertSupportedTimeZone(timezone);
+    const scheduleTimeWindow = parseScheduleTimeWindow(input.scheduleTimeWindow);
 
     const resolvedPhone = normalizePhone(phone, input.phoneCountry);
     const channelPlan = await this.resolveChannelPlan({
@@ -664,6 +680,7 @@ export class ReceiversService {
       language,
       timezone,
       scheduleFrequency,
+      scheduleTimeWindow,
       primaryChannel: channelPlan.primaryChannel,
       fallbackChannels: channelPlan.fallbackChannels,
       scheduleCustomCron: input.scheduleCustomCron?.trim() || undefined,
@@ -713,6 +730,8 @@ export class ReceiversService {
     if (!scheduleFrequency) {
       throw new Error('Receiver schedule frequency is required');
     }
+    assertSupportedTimeZone(timezone);
+    const scheduleTimeWindow = parseScheduleTimeWindow(input.scheduleTimeWindow);
 
     const existingReceiver = await this.receiversRepository.findForUserById({ userId, receiverId });
     const phone = existingReceiver ? this.cryptoService.decrypt(existingReceiver.phoneEncrypted) : '';
@@ -739,6 +758,7 @@ export class ReceiversService {
       language,
       timezone,
       scheduleFrequency,
+      scheduleTimeWindow,
       primaryChannel: channelPlan.primaryChannel,
       fallbackChannels: channelPlan.fallbackChannels,
       scheduleCustomCron: input.scheduleCustomCron?.trim() || undefined,
