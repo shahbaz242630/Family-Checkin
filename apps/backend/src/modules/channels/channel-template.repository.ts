@@ -12,8 +12,9 @@ export interface ChannelTemplateRecord {
 
 /**
  * Read side of the `channel_templates` table: an active row for (key, language, channel) overrides the in-code
- * copy of `MessageCatalogService`. Rows are seeded by migration in a later slice of CB-010; until then every lookup
- * misses and the in-code English copy is what goes out.
+ * copy of `MessageCatalogService`. Migration `202609060103_seed_channel_templates_8_languages` seeds every template
+ * key for SMS and WhatsApp in en, ar, es, hi, ur, ml, ta and bn (machine translations pending native review, see
+ * `docs/handoffs/message-copy-review.md`); a language outside that set still falls back to the in-code English copy.
  */
 export interface ChannelTemplateRepository {
   findActive(input: FindActiveChannelTemplateInput): Promise<ChannelTemplateRecord | null>;

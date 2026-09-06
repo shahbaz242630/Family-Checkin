@@ -127,7 +127,7 @@ model User {
   phoneEncrypted    String
   phoneHash         String    @unique
   country           String    @db.Char(2)
-  preferredLanguage String    @db.Char(5)
+  preferredLanguage String    @db.VarChar(8)
   timezone          String
   authProviderId    String?   @unique
   stripeCustomerId  String?   @unique
@@ -158,7 +158,7 @@ model Receiver {
   phoneHash             String
   countryCode           String           @db.Char(2)
   relationshipType      RelationshipType
-  language              String           @db.Char(5)
+  language              String           @db.VarChar(8)
   timezone              String
   techProfile           TechProfile
   primaryChannel        Channel
@@ -449,7 +449,7 @@ model AdminUser {
 model ChannelTemplate {
   id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   templateKey String
-  language    String    @db.Char(5)
+  language    String    @db.VarChar(8)
   channel     Channel
   externalId  String?
   bodyText    String
