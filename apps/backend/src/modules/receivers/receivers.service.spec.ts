@@ -1,4 +1,12 @@
-import { AbuseReportStatus, ActorType, Channel, CheckInStatus, ConsentStatus, RelationshipType, TechProfile } from '@prisma/client';
+import {
+  AbuseReportStatus,
+  ActorType,
+  Channel,
+  CheckInStatus,
+  ConsentStatus,
+  RelationshipType,
+  TechProfile,
+} from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
@@ -90,7 +98,11 @@ class InMemoryReceiversRepository implements ReceiversRepository {
       : null;
   }
 
-  async deleteForUserById(input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverWithLatestCheckInRecord | null> {
+  async deleteForUserById(input: {
+    userId: string;
+    receiverId: string;
+    deletedAt: Date;
+  }): Promise<ReceiverWithLatestCheckInRecord | null> {
     const receiver = this.receiversForUser.find((item) => item.id === input.receiverId && item.userId === input.userId);
     return receiver
       ? {
@@ -297,7 +309,9 @@ class InMemoryChannelRouter {
       if (this.availability.get(channel) ?? true) {
         return {
           primaryChannel: channel,
-          fallbackChannels: channels.filter((candidate) => candidate !== channel && !unavailableChannels.includes(candidate)),
+          fallbackChannels: channels.filter(
+            (candidate) => candidate !== channel && !unavailableChannels.includes(candidate),
+          ),
           detectionStatus: channel === input.primaryChannel ? 'PRIMARY_AVAILABLE' : 'FALLBACK_SELECTED',
           unavailableChannels,
           detectionConfidence: 'provider_availability_check',
@@ -410,9 +424,9 @@ describe('ReceiversService', () => {
 
     await expect(service.createForSender({ ...baseInput, name: '' })).rejects.toThrow('Receiver name is required');
     await expect(service.createForSender({ ...baseInput, phone: '' })).rejects.toThrow('Receiver phone is required');
-    await expect(service.createForSender({ ...baseInput, primaryChannel: undefined as unknown as Channel })).rejects.toThrow(
-      'Receiver primary channel is required',
-    );
+    await expect(
+      service.createForSender({ ...baseInput, primaryChannel: undefined as unknown as Channel }),
+    ).rejects.toThrow('Receiver primary channel is required');
   });
 
   it('falls back from unavailable WhatsApp during receiver creation and audits the channel plan', async () => {
@@ -747,8 +761,8 @@ describe('ReceiversService', () => {
           templateKey: 'receiver_checkins_paused',
           language: 'en',
           variables: {
-            receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
-            pausedUntil: '2026-05-10T18:00:00.000Z',
+            receiverName: 'Fatima Parent',
+            senderDisplayName: 'your family member',
           },
         },
       },
@@ -890,7 +904,8 @@ describe('ReceiversService', () => {
           templateKey: 'receiver_checkins_ended',
           language: 'en',
           variables: {
-            receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+            receiverName: 'Fatima Parent',
+            senderDisplayName: 'your family member',
           },
         },
       },
@@ -952,7 +967,12 @@ describe('ReceiversService', () => {
         updatedAt: new Date('2026-04-30T06:01:00.000Z'),
       },
     ];
-    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService, () => new Date('2026-04-30T10:00:00.000Z'));
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      audit as unknown as AuditService,
+      () => new Date('2026-04-30T10:00:00.000Z'),
+    );
 
     const receiver = await service.resolveCheckInForSender({
       userId: '  61a5639c-c902-4950-9924-1a4d6db1e02d  ',
@@ -1253,5 +1273,36 @@ describe('ReceiversService', () => {
         receiverId: 'missing-receiver',
       }),
     ).resolves.toBeNull();
+  });
+
+  it('rejects a personal note longer than 50 characters before anything is stored, and accepts exactly 50', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const crypto = new CryptoService(masterKey);
+    const service = new ReceiversService(repository, crypto, audit as unknown as AuditService);
+    const input = {
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      name: 'Fatima Parent',
+      phone: '050 123 4567',
+      phoneCountry: 'AE',
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+    };
+
+    await expect(service.createForSender({ ...input, personalNote: `  ${'x'.repeat(51)}  ` })).rejects.toThrow(
+      'Receiver personal note must be 50 characters or fewer',
+    );
+    expect(repository.lastInput).toBeNull();
+    expect(audit.events).toEqual([]);
+
+    await service.createForSender({ ...input, personalNote: 'ع'.repeat(50) });
+    expect(crypto.decrypt(repository.lastInput?.personalNoteEncrypted ?? '')).toBe('ع'.repeat(50));
   });
 });

@@ -1,4 +1,5 @@
 import type { Channel } from '@prisma/client';
+import type { MessageRendering } from './message-catalog.service';
 
 export interface TemplatedMessage {
   templateKey: string;
@@ -16,6 +17,8 @@ export interface ChannelSendResult {
   providerMessageId: string;
   acceptedAt: Date;
   providerStatus: 'accepted' | 'queued' | 'sent';
+  /** Present when the provider rendered the body itself (SMS, fake); absent for provider-side templates. */
+  rendering?: MessageRendering;
 }
 
 export interface ChannelCallResult {

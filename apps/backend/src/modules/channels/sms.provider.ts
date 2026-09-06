@@ -1,8 +1,14 @@
 import { Channel } from '@prisma/client';
-import type { ChannelCallResult, ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceScript } from './channel-provider';
+import type {
+  ChannelCallResult,
+  ChannelProvider,
+  ChannelSendResult,
+  TemplatedMessage,
+  VoiceScript,
+} from './channel-provider';
 import { ChannelProviderConfigurationError } from './configured-provider-errors';
+import { MessageCatalogService } from './message-catalog.service';
 import { FetchTwilioHttpClient, type TwilioHttpClient } from './twilio-http-client';
-import { renderTwilioMessage } from './twilio-rendering';
 
 export interface SmsProviderConfig {
   accountSid?: string;
@@ -17,17 +23,19 @@ export class SmsProvider implements ChannelProvider {
     private readonly config: SmsProviderConfig,
     private readonly httpClient: TwilioHttpClient = new FetchTwilioHttpClient(),
     private readonly now: () => Date = () => new Date(),
+    private readonly catalog: MessageCatalogService = new MessageCatalogService(),
   ) {}
 
   async sendMessage(to: string, message: TemplatedMessage): Promise<ChannelSendResult> {
     const config = this.configured();
+    const rendered = await this.catalog.render({ ...message, channel: this.channel });
 
     const response = await this.httpClient.postForm(
       this.messagesUrl(config.accountSid),
       new URLSearchParams({
         To: to,
         From: config.fromNumber,
-        Body: renderTwilioMessage(message),
+        Body: rendered.body,
       }),
       config.authToken,
     );
@@ -36,6 +44,7 @@ export class SmsProvider implements ChannelProvider {
       providerMessageId: stringFrom(response.sid, 'unknown-twilio-message'),
       acceptedAt: this.now(),
       providerStatus: toMessageStatus(response.status),
+      rendering: { language: rendered.language, fallback: rendered.fallback },
     };
   }
 

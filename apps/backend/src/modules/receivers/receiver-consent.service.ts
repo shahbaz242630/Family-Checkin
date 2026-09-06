@@ -2,6 +2,7 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ActorType, Channel } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
+import { renderingAuditMetadata } from '../channels/message-catalog.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type { ReceiverRecord, ReceiversRepository } from './receivers.repository';
 import { RECEIVERS_REPOSITORY } from './receivers.tokens';
@@ -82,12 +83,16 @@ export class ReceiverConsentService {
     transcript: { templateKey: string; providerMessageId: string; providerStatus: string };
   }> {
     const templateKey = 'consent_request';
+    const personalNote = receiver.personalNoteEncrypted
+      ? this.cryptoService.decrypt(receiver.personalNoteEncrypted)
+      : undefined;
     const result = await this.channelRouter.sendMessage(receiver.primaryChannel, to, {
       templateKey,
       language: receiver.language,
       variables: {
+        receiverName: receiverDisplayName,
         senderDisplayName,
-        receiverDisplayName,
+        ...(personalNote ? { personalNote } : {}),
       },
     });
 
@@ -98,6 +103,7 @@ export class ReceiverConsentService {
         templateKey,
         providerMessageId: result.providerMessageId,
         providerStatus: result.providerStatus,
+        ...renderingAuditMetadata(result.rendering),
       },
     };
   }

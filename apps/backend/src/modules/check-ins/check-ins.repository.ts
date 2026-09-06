@@ -4,7 +4,9 @@ import type { Prisma } from '@prisma/client';
 export interface CheckInReceiverCandidate {
   id: string;
   userId: string;
+  nameEncrypted: string;
   phoneEncrypted: string;
+  personalNoteEncrypted?: string;
   countryCode: string;
   language: string;
   timezone: string;
@@ -56,6 +58,8 @@ export interface CheckInAttemptWithCheckInRecord extends CheckInAttemptRecord {
     receiverPhoneEncrypted: string;
     receiverCountryCode: string;
     receiverLanguage: string;
+    receiverNameEncrypted?: string;
+    receiverPersonalNoteEncrypted?: string;
   };
 }
 
@@ -136,7 +140,9 @@ export interface CheckInsRepository {
   findTimedOutSentAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]>;
   markAttemptSent(input: MarkCheckInAttemptSentInput): Promise<CheckInAttemptRecord>;
   markAttemptFailed(input: MarkCheckInAttemptFailedInput): Promise<CheckInAttemptRecord>;
-  markSentAttemptProviderFailure(input: MarkSentCheckInAttemptProviderFailureInput): Promise<CheckInAttemptRecord | null>;
+  markSentAttemptProviderFailure(
+    input: MarkSentCheckInAttemptProviderFailureInput,
+  ): Promise<CheckInAttemptRecord | null>;
   markAttemptTimedOut(input: MarkCheckInAttemptTimedOutInput): Promise<CheckInAttemptRecord>;
   markLatestSentAttemptResponded(input: { checkInId: string; completedAt: Date }): Promise<CheckInAttemptRecord | null>;
   skipPendingAttemptsForCheckIn(input: SkipPendingCheckInAttemptsInput): Promise<number>;

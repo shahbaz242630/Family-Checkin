@@ -70,7 +70,9 @@ describe('configured channel providers', () => {
       templateKey: 'checkin_daily',
       language: 'en',
       variables: {
-        receiverDisplayName: 'Salma',
+        receiverName: 'Salma',
+        senderDisplayName: 'Ahmed',
+        personalNote: 'Take your pills at 8',
       },
     });
 
@@ -78,6 +80,7 @@ describe('configured channel providers', () => {
       providerMessageId: 'SM123',
       acceptedAt: new Date('2026-05-01T06:00:00.000Z'),
       providerStatus: 'queued',
+      rendering: { language: 'en', fallback: false },
     });
     expect(httpClient.requests).toHaveLength(1);
     const [request] = httpClient.requests;
@@ -85,9 +88,64 @@ describe('configured channel providers', () => {
     expect(Object.fromEntries(request?.body ?? new URLSearchParams())).toEqual({
       To: '+971501234567',
       From: '+15550001111',
-      Body: 'checkin_daily\nreceiverDisplayName: Salma',
+      Body:
+        'Hi Salma, Ahmed is checking in on you today. Their note: "Take your pills at 8" ' +
+        "Reply YES if you're okay or HELP if you need help. Reply STOP to stop, REPORT to report.",
     });
     expect(request?.authToken).toBe('twilio-auth-token');
+  });
+
+  it('sends the English copy with fallback recorded when the receiver language has no SMS copy yet', async () => {
+    const httpClient = new FakeTwilioHttpClient({ sid: 'SM124', status: 'queued' });
+    const provider = new SmsProvider(
+      { accountSid: 'AC123', authToken: 'twilio-auth-token', fromNumber: '+15550001111' },
+      httpClient,
+      () => new Date('2026-05-01T06:00:00.000Z'),
+    );
+
+    const result = await provider.sendMessage('+971501234567', {
+      templateKey: 'checkin_daily',
+      language: 'ar',
+      variables: { receiverName: 'Salma', senderDisplayName: 'Ahmed', personalNote: 'Call me after lunch' },
+    });
+
+    expect(result.rendering).toEqual({ language: 'en', fallback: true });
+    const body = httpClient.requests[0]?.body.get('Body') ?? '';
+    expect(body).toContain('Hi Salma, Ahmed is checking in on you today.');
+    expect(body).toContain('Call me after lunch');
+    expect(body).not.toContain('{{');
+  });
+
+  it('sends the step-up OTP as a sentence with the code and its validity', async () => {
+    const httpClient = new FakeTwilioHttpClient({ sid: 'SM125', status: 'sent' });
+    const provider = new SmsProvider(
+      { accountSid: 'AC123', authToken: 'twilio-auth-token', fromNumber: '+15550001111' },
+      httpClient,
+      () => new Date('2026-05-01T06:00:00.000Z'),
+    );
+
+    await provider.sendMessage('+971501234567', {
+      templateKey: 'account_step_up_otp',
+      language: 'en',
+      variables: { code: '482913', validityMinutes: '10' },
+    });
+
+    expect(httpClient.requests[0]?.body.get('Body')).toBe(
+      'Your Nearby verification code is 482913. It is valid for 10 minutes. Do not share this code with anyone.',
+    );
+  });
+
+  it('never calls Twilio when the SMS body cannot be rendered', async () => {
+    const httpClient = new FakeTwilioHttpClient({ sid: 'SM126', status: 'queued' });
+    const provider = new SmsProvider(
+      { accountSid: 'AC123', authToken: 'twilio-auth-token', fromNumber: '+15550001111' },
+      httpClient,
+    );
+
+    await expect(
+      provider.sendMessage('+971501234567', { templateKey: 'checkin_daily', language: 'en', variables: {} }),
+    ).rejects.toThrow('requires variable "receiverName"');
+    expect(httpClient.requests).toEqual([]);
   });
 
   it('sends WhatsApp messages through Twilio approved content templates', async () => {

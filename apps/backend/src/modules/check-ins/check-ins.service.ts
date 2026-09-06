@@ -3,6 +3,8 @@ import { ActorType, Channel, CheckInStatus, ConsentStatus, TechProfile } from '@
 import { AuditService } from '../audit/audit.service';
 import { BillingService } from '../billing/billing.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
+import { renderingAuditMetadata, type MessageRendering } from '../channels/message-catalog.service';
+import { NEUTRAL_RECEIVER_GREETING_NAME, NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type { CheckInReceiverCandidate, CheckInsRepository } from './check-ins.repository';
@@ -82,7 +84,9 @@ export class CheckInsService {
         scheduledAt: now,
       });
       result.created += 1;
-      const attempts = await this.checkInsRepository.createAttempts(this.buildCascadeAttempts(receiver, checkIn.id, now));
+      const attempts = await this.checkInsRepository.createAttempts(
+        this.buildCascadeAttempts(receiver, checkIn.id, now),
+      );
 
       await this.auditService.append({
         entityType: 'check_in',
@@ -122,6 +126,7 @@ export class CheckInsService {
           receiverId: receiver.id,
           channel: receiver.primaryChannel,
           providerStatus: providerResult.providerStatus,
+          ...renderingAuditMetadata(providerResult.rendering),
         },
       });
     }
@@ -269,15 +274,20 @@ export class CheckInsService {
 
   private async sendInitialCheckIn(
     receiver: CheckInReceiverCandidate,
-  ): Promise<{ providerId: string; providerStatus: string }> {
+  ): Promise<{ providerId: string; providerStatus: string; rendering?: MessageRendering }> {
     const to = this.cryptoService.decrypt(receiver.phoneEncrypted);
 
     if (receiver.primaryChannel === Channel.VOICE) {
-      const result = await this.channelRouter.makeVoiceCall(Channel.VOICE, to, {
-        scriptKey: 'checkin_daily_voice',
-        language: receiver.language,
-        variables: {},
-      }, await this.voiceCallOptions(receiver.id, receiver.countryCode));
+      const result = await this.channelRouter.makeVoiceCall(
+        Channel.VOICE,
+        to,
+        {
+          scriptKey: 'checkin_daily_voice',
+          language: receiver.language,
+          variables: {},
+        },
+        await this.voiceCallOptions(receiver.id, receiver.countryCode),
+      );
 
       return {
         providerId: result.providerCallId,
@@ -288,12 +298,27 @@ export class CheckInsService {
     const result = await this.channelRouter.sendMessage(receiver.primaryChannel, to, {
       templateKey: 'checkin_daily',
       language: receiver.language,
-      variables: {},
+      variables: this.checkInMessageVariables(receiver.nameEncrypted, receiver.personalNoteEncrypted),
     });
 
     return {
       providerId: result.providerMessageId,
       providerStatus: result.providerStatus,
+      rendering: result.rendering,
+    };
+  }
+
+  /** Receiver-facing copy names the receiver, the sender (neutral until sender names are stored) and the note. */
+  private checkInMessageVariables(
+    nameEncrypted: string | undefined,
+    personalNoteEncrypted: string | undefined,
+  ): Record<string, string> {
+    const personalNote = personalNoteEncrypted ? this.cryptoService.decrypt(personalNoteEncrypted) : undefined;
+
+    return {
+      receiverName: nameEncrypted ? this.cryptoService.decrypt(nameEncrypted) : NEUTRAL_RECEIVER_GREETING_NAME,
+      senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME,
+      ...(personalNote ? { personalNote } : {}),
     };
   }
 
@@ -311,10 +336,9 @@ export class CheckInsService {
       }));
     }
 
-    const channels =
-      [receiver.primaryChannel, ...(receiver.fallbackChannels ?? [])].filter(
-        (channel, index, all) => all.indexOf(channel) === index,
-      );
+    const channels = [receiver.primaryChannel, ...(receiver.fallbackChannels ?? [])].filter(
+      (channel, index, all) => all.indexOf(channel) === index,
+    );
     const offsets = channels.map((channel, index) => {
       if (index === 0) {
         return 0;
@@ -331,19 +355,30 @@ export class CheckInsService {
     }));
   }
 
-  private async sendAttempt(attempt: Awaited<ReturnType<CheckInsRepository['findDuePendingAttempts']>>[number], now: Date): Promise<void> {
+  private async sendAttempt(
+    attempt: Awaited<ReturnType<CheckInsRepository['findDuePendingAttempts']>>[number],
+    now: Date,
+  ): Promise<void> {
     const to = this.cryptoService.decrypt(attempt.checkIn.receiverPhoneEncrypted);
     const result =
       attempt.channel === Channel.VOICE
-        ? await this.channelRouter.makeVoiceCall(Channel.VOICE, to, {
-            scriptKey: 'checkin_daily_voice',
-            language: attempt.checkIn.receiverLanguage,
-            variables: {},
-          }, await this.voiceCallOptions(attempt.checkIn.receiverId, attempt.checkIn.receiverCountryCode))
+        ? await this.channelRouter.makeVoiceCall(
+            Channel.VOICE,
+            to,
+            {
+              scriptKey: 'checkin_daily_voice',
+              language: attempt.checkIn.receiverLanguage,
+              variables: {},
+            },
+            await this.voiceCallOptions(attempt.checkIn.receiverId, attempt.checkIn.receiverCountryCode),
+          )
         : await this.channelRouter.sendMessage(attempt.channel, to, {
             templateKey: 'checkin_daily',
             language: attempt.checkIn.receiverLanguage,
-            variables: {},
+            variables: this.checkInMessageVariables(
+              attempt.checkIn.receiverNameEncrypted,
+              attempt.checkIn.receiverPersonalNoteEncrypted,
+            ),
           });
 
     await this.checkInsRepository.markAttemptSent({

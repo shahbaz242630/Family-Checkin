@@ -5,13 +5,19 @@ import { ChannelRouterService } from '../channels/channel-router.service';
 import type { AppendAuditLogInput } from '../audit/audit.repository';
 import type { AuditService } from '../audit/audit.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
-import type { CreateReceiverRecordInput, ReceiverRecord, ReceiversRepository, UpdateReceiverRecordInput } from './receivers.repository';
+import type {
+  CreateReceiverRecordInput,
+  ReceiverRecord,
+  ReceiversRepository,
+  UpdateReceiverRecordInput,
+} from './receivers.repository';
 import { ReceiverConsentService } from './receiver-consent.service';
 
 const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 
 class InMemoryReceiversRepository implements ReceiversRepository {
-  public markedConsentRequest: { receiverId: string; consentRequestedAt: Date; consentTranscript: string } | null = null;
+  public markedConsentRequest: { receiverId: string; consentRequestedAt: Date; consentTranscript: string } | null =
+    null;
 
   async create(input: CreateReceiverRecordInput): Promise<ReceiverRecord> {
     return this.record(input);
@@ -46,7 +52,11 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     return null;
   }
 
-  async deleteForUserById(_input: { userId: string; receiverId: string; deletedAt: Date }): Promise<ReceiverRecord | null> {
+  async deleteForUserById(_input: {
+    userId: string;
+    receiverId: string;
+    deletedAt: Date;
+  }): Promise<ReceiverRecord | null> {
     return null;
   }
 
@@ -168,12 +178,16 @@ describe('ReceiverConsentService', () => {
           templateKey: 'consent_request',
           language: 'en',
           variables: {
+            receiverName: 'Fatima Parent',
             senderDisplayName: 'Ahmed',
-            receiverDisplayName: 'Fatima Parent',
           },
         },
       },
     ]);
+    expect(whatsapp.renderedMessages[0]?.body).toBe(
+      'Hi Fatima Parent, Ahmed asked Nearby to check in on you with a short daily message. Reply YES to agree. ' +
+        'Reply STOP to stop, REPORT to report.',
+    );
     expect(repository.markedConsentRequest?.receiverId).toBe('1aef91f9-64c9-4548-baa5-d70b52386efb');
     expect(repository.markedConsentRequest?.consentRequestedAt).toEqual(new Date('2026-04-26T10:00:00.000Z'));
     const transcript = JSON.parse(crypto.decrypt(repository.markedConsentRequest?.consentTranscript ?? ''));
@@ -181,6 +195,8 @@ describe('ReceiverConsentService', () => {
       channel: Channel.WHATSAPP,
       templateKey: 'consent_request',
       providerMessageId: 'fake-WHATSAPP-message-1',
+      renderedLanguage: 'en',
+      renderFallback: false,
     });
     expect(audit.events).toEqual([
       {
@@ -258,6 +274,44 @@ describe('ReceiverConsentService', () => {
         senderDisplayName: 'Ahmed',
       }),
     ).rejects.toThrow('Receiver consent has already been requested');
+  });
+
+  it('carries the personal note into the consent request and records the English fallback for other languages', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const audit = new InMemoryAuditService();
+    const sms = new FakeChannelProvider(Channel.SMS, {
+      now: () => new Date('2026-04-26T10:00:00.000Z'),
+    });
+    const service = new ReceiverConsentService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms]),
+      audit as unknown as AuditService,
+      () => new Date('2026-04-26T10:00:00.000Z'),
+    );
+
+    await service.requestConsent({
+      receiver: {
+        ...receiverFixture(crypto),
+        primaryChannel: Channel.SMS,
+        language: 'ar',
+        personalNoteEncrypted: crypto.encrypt('Call me after lunch'),
+      },
+      actorUserId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      senderDisplayName: 'Ahmed',
+    });
+
+    expect(sms.sentMessages[0]?.message.variables).toEqual({
+      receiverName: 'Fatima Parent',
+      senderDisplayName: 'Ahmed',
+      personalNote: 'Call me after lunch',
+    });
+    expect(sms.renderedMessages[0]).toMatchObject({ language: 'en', fallback: true });
+    expect(sms.renderedMessages[0]?.body).toContain('Their note: "Call me after lunch"');
+    const transcript = JSON.parse(crypto.decrypt(repository.markedConsentRequest?.consentTranscript ?? ''));
+    expect(transcript).toMatchObject({ renderedLanguage: 'en', renderFallback: true });
+    expect(JSON.stringify(audit.events)).not.toContain('Call me after lunch');
   });
 });
 

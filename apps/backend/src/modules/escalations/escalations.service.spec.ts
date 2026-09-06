@@ -181,8 +181,10 @@ describe('EscalationsService', () => {
           templateKey: 'backup_contact_help_alert',
           language: 'en',
           variables: {
-            checkInId: 'check-in-1',
-            receiverId: 'receiver-1',
+            receiverName: 'the person you are a backup contact for',
+            senderDisplayName: 'their family member',
+            reason: 'help_response',
+            contactName: 'First Backup',
           },
         },
       },
@@ -192,8 +194,10 @@ describe('EscalationsService', () => {
           templateKey: 'backup_contact_help_alert',
           language: 'en',
           variables: {
-            checkInId: 'check-in-1',
-            receiverId: 'receiver-1',
+            receiverName: 'the person you are a backup contact for',
+            senderDisplayName: 'their family member',
+            reason: 'help_response',
+            contactName: 'Second Backup',
           },
         },
       },
@@ -576,8 +580,10 @@ describe('EscalationsService', () => {
           templateKey: 'backup_contact_missed_checkin_alert',
           language: 'en',
           variables: {
-            checkInId: 'check-in-1',
-            receiverId: 'receiver-1',
+            receiverName: 'the person you are a backup contact for',
+            senderDisplayName: 'their family member',
+            reason: 'missed_check_in',
+            contactName: 'First Backup',
           },
         },
       },
@@ -749,6 +755,84 @@ describe('EscalationsService', () => {
     });
     expect(JSON.stringify(audit.events)).not.toContain('+971502222222');
     expect(JSON.stringify(audit.events)).not.toContain('+971501111111');
+  });
+
+  it('names the receiver, the channels already tried and where to find them in every backup alert', async () => {
+    const crypto = new CryptoService(masterKey);
+    class NamedReceiverRepository extends InMemoryEscalationsRepository {
+      override async findReceiverOwner(input: { receiverId: string }) {
+        const owner = await super.findReceiverOwner(input);
+        return owner ? { ...owner, receiverNameEncrypted: crypto.encrypt('Fatima'), receiverLanguage: 'ar' } : null;
+      }
+
+      async findChannelsTriedForCheckIn(): Promise<Channel[]> {
+        return [Channel.WHATSAPP, Channel.SMS];
+      }
+    }
+    const repository = new NamedReceiverRepository();
+    const { auditService, audit } = createRealAuditService();
+    const sms = new FakeChannelProvider(Channel.SMS, {
+      now: () => new Date('2026-04-29T10:00:00.000Z'),
+    });
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP, {
+      now: () => new Date('2026-04-29T10:00:00.000Z'),
+    });
+    repository.backupContacts = [
+      {
+        ...backupContactFixture(crypto, {
+          id: 'backup-contact-first',
+          phone: '+971502222222',
+          priorityOrder: 1,
+          createdAt: new Date('2026-04-29T08:20:00.000Z'),
+        }),
+        locationInstructionsEncrypted: crypto.encrypt('Flat 12, blue door'),
+      },
+    ];
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms, whatsapp]),
+      auditService,
+      () => new Date('2026-04-29T10:00:00.000Z'),
+    );
+
+    const result = await service.escalateMissedCheckIn({
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      sentAt: new Date('2026-04-29T09:00:00.000Z'),
+      responseWindowMinutes: 30,
+    });
+
+    expect(result.status).toBe(CheckInStatus.ESCALATED);
+    expect(sms.sentMessages[0]?.message).toEqual({
+      templateKey: 'backup_contact_missed_checkin_alert',
+      language: 'ar',
+      variables: {
+        receiverName: 'Fatima',
+        senderDisplayName: 'their family member',
+        reason: 'missed_check_in',
+        channelsTried: 'WhatsApp and SMS',
+        contactName: 'First Backup',
+        locationInstructions: 'Flat 12, blue door',
+      },
+    });
+    expect(sms.renderedMessages[0]).toEqual({
+      to: '+971502222222',
+      templateKey: 'backup_contact_missed_checkin_alert',
+      language: 'en',
+      fallback: true,
+      body:
+        "Hi First Backup, this is Nearby. Fatima did not answer today's check-in from their family member. " +
+        'We tried WhatsApp and SMS. Please check on them. Where to find them: Flat 12, blue door ' +
+        'Reply DONE once you have reached them.',
+    });
+    expect(whatsapp.sentMessages[0]?.message.variables).toEqual(sms.sentMessages[0]?.message.variables);
+    expect(audit.events.find((event) => event.action === 'escalation.backup_contact_alerted')).toMatchObject({
+      metadata: { backupContactId: 'backup-contact-first', renderedLanguage: 'en', renderFallback: true },
+    });
+    expect(JSON.stringify(audit.events)).not.toContain('Fatima');
+    expect(JSON.stringify(audit.events)).not.toContain('Flat 12');
+    expect(JSON.stringify(audit.events)).not.toContain('+971502222222');
   });
 });
 

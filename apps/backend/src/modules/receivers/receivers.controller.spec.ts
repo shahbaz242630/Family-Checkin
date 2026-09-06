@@ -2,6 +2,7 @@ import { Channel, ConsentStatus, RelationshipType, SensitiveAction, TechProfile 
 import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { ReceiversController } from './receivers.controller';
+import { PERSONAL_NOTE_TOO_LONG_MESSAGE } from './receivers.service';
 
 class FakeSupabaseAuthService {
   async verifyAccessToken(accessToken: string) {
@@ -83,7 +84,13 @@ class FakeReceiversService {
     };
   }
 
-  async pauseForSender(input: { userId: string; receiverId: string; pausedUntil?: Date; ipAddress?: string; userAgent?: string }) {
+  async pauseForSender(input: {
+    userId: string;
+    receiverId: string;
+    pausedUntil?: Date;
+    ipAddress?: string;
+    userAgent?: string;
+  }) {
     this.detailInput = input;
     return {
       id: input.receiverId,
@@ -668,5 +675,72 @@ describe('ReceiversController', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(receiverConsentService.requestInput).toBeNull();
+  });
+
+  it('maps an over-long personal note to a bad request before consent is requested', async () => {
+    const receiversService = new FakeReceiversService();
+    receiversService.nextCreateError = new Error(PERSONAL_NOTE_TOO_LONG_MESSAGE);
+    const receiverConsentService = new FakeReceiverConsentService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      receiverConsentService as never,
+      undefined,
+      new FakeBillingService(true) as never,
+    );
+
+    await expect(
+      controller.create('Bearer access-token', 'Nearby Mobile/1.0', '203.0.113.10', {
+        name: 'Fatima Parent',
+        phone: '+971501234567',
+        countryCode: 'AE',
+        relationshipType: RelationshipType.PARENT,
+        language: 'en',
+        timezone: 'Asia/Dubai',
+        techProfile: TechProfile.WHATSAPP,
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+        scheduleFrequency: 'daily',
+        scheduleTimeWindow: { start: '09:00', end: '11:00' },
+        personalNote: 'x'.repeat(51),
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(receiverConsentService.requestInput).toBeNull();
+  });
+
+  it('requests consent with a neutral sender name, never the sender email', async () => {
+    const receiversService = new FakeReceiversService();
+    const receiverConsentService = new FakeReceiverConsentService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      receiverConsentService as never,
+      undefined,
+      new FakeBillingService(true) as never,
+    );
+
+    await controller.create('Bearer access-token', 'Nearby Mobile/1.0', '203.0.113.10', {
+      name: 'Fatima Parent',
+      phone: '+971501234567',
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      personalNote: 'Take your pills at 8',
+    });
+
+    expect(receiversService.createInput).toMatchObject({ personalNote: 'Take your pills at 8' });
+    expect(receiverConsentService.requestInput).toMatchObject({
+      actorUserId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      senderDisplayName: 'your family member',
+    });
+    expect(JSON.stringify(receiverConsentService.requestInput)).not.toContain('sender@example.com');
   });
 });

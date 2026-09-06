@@ -13,6 +13,7 @@ describe('ChannelRouterService', () => {
       templateKey: 'consent_request',
       language: 'en',
       variables: {
+        receiverName: 'Fatima',
         senderDisplayName: 'Ahmed',
       },
     });
@@ -25,6 +26,7 @@ describe('ChannelRouterService', () => {
           templateKey: 'consent_request',
           language: 'en',
           variables: {
+            receiverName: 'Fatima',
             senderDisplayName: 'Ahmed',
           },
         },

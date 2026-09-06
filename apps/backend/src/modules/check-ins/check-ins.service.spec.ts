@@ -363,7 +363,7 @@ describe('CheckInsService', () => {
         message: {
           templateKey: 'checkin_daily',
           language: 'en',
-          variables: {},
+          variables: { receiverName: 'Fatima', senderDisplayName: 'your family member' },
         },
       },
     ]);
@@ -396,9 +396,68 @@ describe('CheckInsService', () => {
           receiverId: 'receiver-1',
           channel: Channel.WHATSAPP,
           providerStatus: 'accepted',
+          renderedLanguage: 'en',
+          renderFallback: false,
         },
       },
     ]);
+  });
+
+  it('sends human English copy with the personal note for a receiver whose language has no copy yet, and records the fallback', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const sms = new FakeChannelProvider(Channel.SMS, {
+      now: () => new Date('2026-04-27T05:30:00.000Z'),
+    });
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [
+      {
+        ...receiverCandidate(crypto),
+        language: 'ar',
+        primaryChannel: Channel.SMS,
+        personalNoteEncrypted: crypto.encrypt('Take your pills at 8'),
+      },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms]),
+      auditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    await service.sendDueCheckIns();
+
+    expect(sms.sentMessages[0]?.message).toEqual({
+      templateKey: 'checkin_daily',
+      language: 'ar',
+      variables: {
+        receiverName: 'Fatima',
+        senderDisplayName: 'your family member',
+        personalNote: 'Take your pills at 8',
+      },
+    });
+    expect(sms.renderedMessages).toEqual([
+      {
+        to: '+971501234567',
+        templateKey: 'checkin_daily',
+        language: 'en',
+        fallback: true,
+        body:
+          'Hi Fatima, your family member is checking in on you today. Their note: "Take your pills at 8" ' +
+          "Reply YES if you're okay or HELP if you need help. Reply STOP to stop, REPORT to report.",
+      },
+    ]);
+    expect(audit.events.at(-1)).toMatchObject({
+      action: 'check_in.sent',
+      metadata: { receiverId: 'receiver-1', channel: Channel.SMS, renderedLanguage: 'en', renderFallback: true },
+    });
+    expect(JSON.stringify(audit.events)).not.toContain('Take your pills');
+    expect(JSON.stringify(audit.events)).not.toContain('Fatima');
   });
 
   it('skips candidates that are not currently eligible for a check-in', async () => {
@@ -814,6 +873,7 @@ function receiverCandidate(crypto: CryptoService): CheckInReceiverCandidate {
   return {
     id: 'receiver-1',
     userId: 'sender-user-1',
+    nameEncrypted: crypto.encrypt('Fatima'),
     phoneEncrypted: crypto.encrypt('+971501234567'),
     countryCode: 'AE',
     language: 'en',

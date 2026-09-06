@@ -2,6 +2,13 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ActorType, Channel, CheckInStatus, EscalationResult } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
+import { renderingAuditMetadata } from '../channels/message-catalog.service';
+import {
+  DEFAULT_MESSAGE_LANGUAGE,
+  NEUTRAL_RECEIVER_NAME_FOR_BACKUP_CONTACTS,
+  NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS,
+  describeChannelsTried,
+} from '../channels/message-catalog.templates';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import type { EscalationBackupContactRecord, EscalationsRepository } from './escalations.repository';
@@ -191,6 +198,11 @@ export class EscalationsService {
 
     let succeeded = 0;
     let failed = 0;
+    const alert = await this.backupAlertContext({
+      receiverId: input.receiverId,
+      checkInId: input.checkInId,
+      reason: input.senderPush.reason,
+    });
 
     for (const [index, contact] of backupContacts.entries()) {
       const attemptNumber = index + 1;
@@ -203,6 +215,8 @@ export class EscalationsService {
             attemptNumber,
             channel,
             templateKey: input.templateKey,
+            language: alert.language,
+            variables: alert.variables,
             senderNotifiedAt,
             auditMetadata: input.auditMetadata,
           }),
@@ -256,6 +270,33 @@ export class EscalationsService {
     };
   }
 
+  /**
+   * What every backup alert for this escalation says: who the receiver is, in their language, what was already
+   * tried, and why. The sender's own name is not stored yet, so a neutral "their family member" stands in.
+   */
+  private async backupAlertContext(input: {
+    receiverId: string;
+    checkInId: string;
+    reason: string;
+  }): Promise<{ language: string; variables: Record<string, string> }> {
+    const owner = await this.escalationsRepository.findReceiverOwner({ receiverId: input.receiverId });
+    const channelsTried = describeChannelsTried(
+      (await this.escalationsRepository.findChannelsTriedForCheckIn?.({ checkInId: input.checkInId })) ?? [],
+    );
+
+    return {
+      language: owner?.receiverLanguage ?? DEFAULT_MESSAGE_LANGUAGE,
+      variables: {
+        receiverName: owner?.receiverNameEncrypted
+          ? this.cryptoService.decrypt(owner.receiverNameEncrypted)
+          : NEUTRAL_RECEIVER_NAME_FOR_BACKUP_CONTACTS,
+        senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS,
+        reason: input.reason,
+        ...(channelsTried ? { channelsTried } : {}),
+      },
+    };
+  }
+
   private async alertBackupContactChannel(input: {
     receiverId: string;
     checkInId: string;
@@ -263,21 +304,27 @@ export class EscalationsService {
     attemptNumber: number;
     channel: Channel;
     templateKey: string;
+    language: string;
+    variables: Record<string, string>;
     senderNotifiedAt?: Date;
     auditMetadata: Record<string, string | number>;
   }): Promise<boolean> {
     const startedAt = this.now();
 
     try {
+      const locationInstructions = input.contact.locationInstructionsEncrypted
+        ? this.cryptoService.decrypt(input.contact.locationInstructionsEncrypted)
+        : undefined;
       const providerResult = await this.channelRouter.sendMessage(
         input.channel,
         this.cryptoService.decrypt(input.contact.phoneEncrypted),
         {
           templateKey: input.templateKey,
-          language: 'en',
+          language: input.language,
           variables: {
-            checkInId: input.checkInId,
-            receiverId: input.receiverId,
+            ...input.variables,
+            contactName: this.cryptoService.decrypt(input.contact.nameEncrypted),
+            ...(locationInstructions ? { locationInstructions } : {}),
           },
         },
       );
@@ -304,6 +351,7 @@ export class EscalationsService {
           channel: input.channel,
           attemptNumber: input.attemptNumber,
           providerStatus: providerResult.providerStatus,
+          ...renderingAuditMetadata(providerResult.rendering),
           ...input.auditMetadata,
         },
       });
