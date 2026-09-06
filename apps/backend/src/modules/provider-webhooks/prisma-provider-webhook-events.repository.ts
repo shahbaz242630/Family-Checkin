@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import type {
   CreateProviderWebhookEventInput,
+  ProviderWebhookEventKey,
   ProviderWebhookEventsRepository,
 } from './provider-webhook-events.repository';
 
@@ -65,17 +66,18 @@ export class PrismaProviderWebhookEventsRepository implements ProviderWebhookEve
     });
   }
 
+  // The dedupe index is non-unique until CB-016 restores it, so a concurrent duplicate can still slip past this
+  // check; it closes the retry/replay window that matters in practice.
+  async findEvent(key: ProviderWebhookEventKey): Promise<{ id: string } | null> {
+    return this.prisma.providerWebhookEvent.findFirst({ where: key, select: { id: true } });
+  }
+
   async createEventIfAbsent(input: CreateProviderWebhookEventInput): Promise<{ id: string; created: boolean }> {
     if (input.providerEventId) {
-      // The dedupe index is non-unique until CB-016 restores it, so a concurrent duplicate can still slip past this
-      // check; it closes the retry/replay window that matters in practice.
-      const existing = await this.prisma.providerWebhookEvent.findFirst({
-        where: {
-          provider: input.provider,
-          eventType: input.eventType,
-          providerEventId: input.providerEventId,
-        },
-        select: { id: true },
+      const existing = await this.findEvent({
+        provider: input.provider,
+        eventType: input.eventType,
+        providerEventId: input.providerEventId,
       });
       if (existing) {
         return { id: existing.id, created: false };

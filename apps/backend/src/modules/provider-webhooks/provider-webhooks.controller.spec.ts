@@ -9,7 +9,14 @@ import type { CreateProviderWebhookEventInput } from './provider-webhook-events.
 class FakeReceiverReplyService {
   public handled: HandleInboundReceiverReplyInput[] = [];
 
+  public failNextWith?: Error;
+
   async handleInboundReply(input: HandleInboundReceiverReplyInput) {
+    if (this.failNextWith) {
+      const error = this.failNextWith;
+      this.failNextWith = undefined;
+      throw error;
+    }
     this.handled.push(input);
     return {
       receiverId: 'receiver-1',
@@ -24,6 +31,16 @@ class FakeProviderWebhookEventsRepository {
   async createEvent(input: CreateProviderWebhookEventInput) {
     this.events.push(input);
     return { id: `event-${this.events.length}` };
+  }
+
+  async findEvent(key: { provider: string; eventType: string; providerEventId: string }) {
+    const index = this.events.findIndex(
+      (event) =>
+        event.provider === key.provider &&
+        event.eventType === key.eventType &&
+        event.providerEventId === key.providerEventId,
+    );
+    return index >= 0 ? { id: `event-${index + 1}` } : null;
   }
 
   async createEventIfAbsent(input: CreateProviderWebhookEventInput) {
@@ -463,6 +480,28 @@ describe('ProviderWebhooksController', () => {
     expect(service.handled).toHaveLength(1);
     expect(eventsRepository.events).toHaveLength(1);
     expect(eventsRepository.events[0]?.payload.channel).toBe('whatsapp');
+  });
+
+  it('does not record the event when processing throws, so the Twilio retry is processed', async () => {
+    const { controller, service, eventsRepository } = makeController();
+    const params = {
+      From: 'whatsapp:+971501234570',
+      Body: 'OK',
+      MessageSid: 'SM902',
+    };
+    const signature = signatureFor('https://api.nearby.test/provider-webhooks/twilio/messaging', params);
+    service.failNextWith = new Error('database unavailable');
+
+    await expect(controller.handleTwilioMessagingWebhook(signature, params, undefined, undefined)).rejects.toThrow(
+      'database unavailable',
+    );
+    expect(eventsRepository.events).toHaveLength(0);
+
+    const retry = await controller.handleTwilioMessagingWebhook(signature, params, undefined, undefined);
+
+    expect(retry).toEqual({ ok: true, processed: 1 });
+    expect(service.handled).toHaveLength(1);
+    expect(eventsRepository.events).toHaveLength(1);
   });
 
   it('accepts a short-code sender and still records exactly one event', async () => {

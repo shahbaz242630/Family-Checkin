@@ -133,25 +133,28 @@ export class ProviderWebhooksController {
   ): Promise<ProviderWebhookResponse> {
     this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/messaging', body);
 
-    // Twilio can deliver the same MessageSid more than once (retries, fallback URL); the first delivery wins (CB-015).
-    const event = await this.providerWebhookEventsRepository.createEventIfAbsent({
-      provider: 'twilio',
-      eventType: 'messaging_inbound',
-      providerEventId: body.MessageSid,
-      providerMessageId: body.MessageSid,
-      payload: this.toInboundMessagingEventPayload(body),
-    });
-    if (!event.created) {
+    // Twilio can deliver the same MessageSid more than once (retries, fallback URL). Check for a stored event before
+    // processing, and store it only after processing succeeded: a transient failure then leaves nothing behind, so
+    // Twilio's retry is processed instead of being mistaken for a replay (CB-015).
+    const eventKey = { provider: 'twilio', eventType: 'messaging_inbound', providerEventId: body.MessageSid };
+    if (
+      body.MessageSid &&
+      (await this.providerWebhookEventsRepository.findEvent({ ...eventKey, providerEventId: body.MessageSid }))
+    ) {
       return { ok: true, processed: 0 };
     }
 
     const reply = this.extractTwilioMessagingReply(body, ipAddress, userAgent);
-    if (!reply) {
-      return { ok: true, processed: 0 };
+    if (reply) {
+      await this.receiverReplyService.handleInboundReply(reply);
     }
 
-    await this.receiverReplyService.handleInboundReply(reply);
-    return { ok: true, processed: 1 };
+    await this.providerWebhookEventsRepository.createEventIfAbsent({
+      ...eventKey,
+      providerMessageId: body.MessageSid,
+      payload: this.toInboundMessagingEventPayload(body),
+    });
+    return { ok: true, processed: reply ? 1 : 0 };
   }
 
   @Post('twilio/voice')
