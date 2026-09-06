@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   backupAlertNotice,
   CONSENT_REQUEST_FAILED_NOTICE,
+  consentResendAvailability,
   consentResendNotice,
   MAX_RESOLUTION_NOTE_LENGTH,
   normalizeResolutionNote,
@@ -39,6 +40,38 @@ describe('backupAlertNotice (CB-074)', () => {
       message: 'Could not reach any backup contact',
       tone: 'error',
     });
+  });
+});
+
+describe('consentResendAvailability (CB-081)', () => {
+  const now = new Date('2026-09-06T12:00:00.000Z');
+  const formatDate = (iso: string) => `<${iso}>`;
+
+  it('keeps the button enabled when the backend sets no window', () => {
+    expect(consentResendAvailability(null, now, formatDate)).toEqual({ available: true });
+    expect(consentResendAvailability(undefined, now, formatDate)).toEqual({ available: true });
+  });
+
+  it('disables the button until a future unlock time and names it in local words', () => {
+    expect(consentResendAvailability('2026-09-07T10:00:00.000Z', now, formatDate)).toEqual({
+      available: false,
+      message: 'Resend available <2026-09-07T10:00:00.000Z>',
+    });
+  });
+
+  it('re-enables the button once the unlock time has passed, boundary included', () => {
+    expect(consentResendAvailability('2026-09-06T11:59:59.000Z', now, formatDate)).toEqual({ available: true });
+    expect(consentResendAvailability('2026-09-06T12:00:00.000Z', now, formatDate)).toEqual({ available: true });
+  });
+
+  it('never locks the button on a value it cannot parse', () => {
+    expect(consentResendAvailability('not-a-date', now, formatDate)).toEqual({ available: true });
+  });
+
+  it('formats with the device locale by default', () => {
+    const result = consentResendAvailability('2026-09-07T10:00:00.000Z', now);
+    expect(result.available).toBe(false);
+    expect(result.available ? '' : result.message).toMatch(/^Resend available .*2026/);
   });
 });
 

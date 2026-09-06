@@ -35,7 +35,9 @@ import {
   type ReceiverUpdateInput,
 } from '../../../services/backendApi';
 import {
+  BackendRequestError,
   CONSENT_NOT_PENDING_CODE,
+  CONSENT_RESEND_LIMIT_CODE,
   describeBackendError,
   isBackendErrorCode,
   isNotFoundError,
@@ -45,6 +47,7 @@ import { CHANNEL_PROFILE_OPTIONS } from '../../../utils/channelProfiles';
 import {
   backupAlertNotice,
   CONSENT_REQUEST_FAILED_NOTICE,
+  consentResendAvailability,
   consentResendNotice,
   MAX_RESOLUTION_NOTE_LENGTH,
   normalizeResolutionNote,
@@ -212,6 +215,11 @@ export default function ReceiverDetailScreen() {
   const isPaused = Boolean(receiver.pausedReason || receiver.pausedUntil);
   const currentStatus = getReceiverStatusDisplay(receiver.consentStatus, receiver.latestCheckIn?.status, isPaused);
   const scheduleAttention = getScheduleAttentionDisplay(receiver.scheduleInvalidAt);
+  // "Resend invitation" waits for the window the backend announced; the unlock time is shown next to it (CB-081).
+  const resendAvailability =
+    receiver.consentStatus === 'PENDING'
+      ? consentResendAvailability(receiver.consentResendAllowedAt)
+      : ({ available: true } as const);
 
   const startEditing = () => {
     setDraft({
@@ -286,7 +294,8 @@ export default function ReceiverDetailScreen() {
     }
   };
 
-  // One invitation per receiver per 7 days; the 429 is explained with the next allowed date (CB-009).
+  // Resend opens 24 h after the first invitation, then 7 days after each resend (CB-081). The backend says when
+  // on the detail, on the resend response and on the 429, so the button state follows without another fetch.
   const resendInvitation = async () => {
     if (!id) return;
 
@@ -296,7 +305,18 @@ export default function ReceiverDetailScreen() {
       setNotice(null);
       const result = await resendReceiverConsent(id);
       setNotice(consentResendNotice(result.consentRequestStatus));
+      if (result.consentResendAllowedAt !== undefined) {
+        const consentResendAllowedAt = result.consentResendAllowedAt;
+        setReceiver((current) => (current ? { ...current, consentResendAllowedAt } : current));
+      }
     } catch (err) {
+      const nextAllowedAt =
+        err instanceof BackendRequestError && err.code === CONSENT_RESEND_LIMIT_CODE
+          ? err.details.nextAllowedAt
+          : undefined;
+      if (typeof nextAllowedAt === 'string') {
+        setReceiver((current) => (current ? { ...current, consentResendAllowedAt: nextAllowedAt } : current));
+      }
       await handleActionError(err, 'Unable to resend the invitation');
     } finally {
       setIsSaving(false);
@@ -636,9 +656,19 @@ export default function ReceiverDetailScreen() {
           {receiver.consentStatus === 'PENDING' ? (
             <View style={styles.consentRow}>
               <Text style={styles.consentText}>Waiting for {receiver.displayName} to reply YES.</Text>
-              <Pressable style={styles.inlineActionButton} onPress={resendInvitation} disabled={isSaving}>
-                <Text style={styles.smallButtonText}>{isSaving ? 'Sending...' : 'Resend invitation'}</Text>
+              <Pressable
+                style={[styles.inlineActionButton, !resendAvailability.available && styles.inlineActionButtonDisabled]}
+                onPress={resendInvitation}
+                disabled={isSaving || !resendAvailability.available}
+                accessibilityState={{ disabled: isSaving || !resendAvailability.available }}
+              >
+                <Text style={[styles.smallButtonText, !resendAvailability.available && styles.smallButtonTextDisabled]}>
+                  {isSaving ? 'Sending...' : 'Resend invitation'}
+                </Text>
               </Pressable>
+              {!resendAvailability.available ? (
+                <Text style={styles.consentText}>{resendAvailability.message}</Text>
+              ) : null}
             </View>
           ) : null}
         </View>
@@ -1106,6 +1136,12 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     backgroundColor: colors.surface,
     marginTop: spacing.xs,
+  },
+  inlineActionButtonDisabled: {
+    opacity: 0.55,
+  },
+  smallButtonTextDisabled: {
+    color: colors.textSecondary,
   },
   noticeBox: {
     borderWidth: 1,

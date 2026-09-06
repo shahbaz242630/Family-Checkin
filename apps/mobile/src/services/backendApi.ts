@@ -44,6 +44,8 @@ export interface BackendConsentResendResult {
   consentStatus: BackendConsentStatus;
   consentRequestStatus: BackendConsentRequestStatus;
   consentRequestedAt?: string;
+  /** When "Resend invitation" reopens after this attempt; null when nothing restricts it (CB-081). */
+  consentResendAllowedAt?: string | null;
 }
 
 export interface SyncedBackendUser {
@@ -227,6 +229,11 @@ export interface BackendReceiverSummary {
   };
   consentStatus: BackendConsentStatus;
   consentGrantedAt?: string;
+  /**
+   * When the sender may next resend the consent invitation: 24 hours after the first one, 7 days after a resend
+   * (CB-081). Null (or absent from an older backend) when consent is not PENDING or a resend is allowed now.
+   */
+  consentResendAllowedAt?: string | null;
   pausedUntil?: string;
   pausedReason?: string;
   /**

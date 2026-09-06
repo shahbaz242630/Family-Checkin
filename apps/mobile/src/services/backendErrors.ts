@@ -81,7 +81,7 @@ export function describeBackendError(
         const next = detailDate(error.details, 'nextAllowedAt', formatDate);
         return next
           ? `You can resend on ${next}.`
-          : 'You can resend once 7 days have passed since the last invitation.';
+          : 'The invitation was sent recently. You can resend it once the waiting period has passed.';
       }
       default:
         break;

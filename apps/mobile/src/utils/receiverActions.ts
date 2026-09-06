@@ -1,4 +1,5 @@
 import type { BackendBackupAlertResult, BackendConsentRequestStatus } from '../services/backendApi';
+import { formatBackendDate } from '../services/backendErrors';
 import type { ReceiverStatusTone } from './receiverStatus';
 
 /** An in-screen message shown under the status band after a sender action on the receiver detail. */
@@ -31,6 +32,28 @@ export function consentResendNotice(status: BackendConsentRequestStatus): Action
   return status === 'requested'
     ? { message: 'Invitation sent again. Check-ins start once they reply YES.', tone: 'success' }
     : { message: 'The invitation could not be sent. Try again in a moment.', tone: 'error' };
+}
+
+export type ConsentResendAvailability = { available: true } | { available: false; message: string };
+
+/**
+ * Whether "Resend invitation" may be tapped, from the backend's `consentResendAllowedAt` (CB-081): null, absent,
+ * unparseable or already past means the window is open; a future time disables the button and names the moment it
+ * unlocks in the sender's local date and time.
+ */
+export function consentResendAvailability(
+  allowedAt: string | null | undefined,
+  now: Date = new Date(),
+  formatDate: (isoDate: string) => string = formatBackendDate,
+): ConsentResendAvailability {
+  if (!allowedAt) {
+    return { available: true };
+  }
+  const unlocksAt = new Date(allowedAt);
+  if (Number.isNaN(unlocksAt.getTime()) || unlocksAt.getTime() <= now.getTime()) {
+    return { available: true };
+  }
+  return { available: false, message: `Resend available ${formatDate(allowedAt)}` };
 }
 
 /** Shown on the detail the add-receiver form lands on when the first consent send failed (CB-009). */
