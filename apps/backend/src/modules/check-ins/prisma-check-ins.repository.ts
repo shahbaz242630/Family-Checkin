@@ -25,6 +25,7 @@ import type {
   CheckInsRepository,
   CreateCheckInAttemptInput,
   CreatePendingCheckInInput,
+  ExclusiveRunResult,
   MarkCheckInAttemptFailedInput,
   MarkCheckInAttemptSentInput,
   MarkCheckInAttemptTimedOutInput,
@@ -32,6 +33,7 @@ import type {
   MarkCheckInSentInput,
   MarkSentCheckInAttemptProviderFailureInput,
   ReceiversDueForCheckIn,
+  RecordCheckInAttemptSendResultInput,
   SkipPendingCheckInAttemptsInput,
 } from './check-ins.repository';
 
@@ -69,7 +71,17 @@ type AttemptWithCheckIn = CheckInAttempt & {
   };
 };
 
-interface CheckInsPrismaClient {
+/** The slice of an interactive transaction the run lock needs. */
+export interface LockTransactionClient {
+  $queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): Promise<T>;
+}
+
+/** The slice of the Prisma client this repository uses; exported so its spec can build a typed double. */
+export interface CheckInsPrismaClient {
+  $transaction<T>(
+    fn: (tx: LockTransactionClient) => Promise<T>,
+    options?: { maxWait?: number; timeout?: number },
+  ): Promise<T>;
   receiver: {
     findMany(args: {
       where: {
@@ -140,8 +152,10 @@ interface CheckInsPrismaClient {
   };
   checkInAttempt: {
     createManyAndReturn(args: { data: CreateCheckInAttemptInput[] }): Promise<CheckInAttempt[]>;
+    count(args: { where: { checkInId: string; status: CheckInAttemptStatus } }): Promise<number>;
     findMany(args: {
       where: {
+        checkInId?: string;
         status: CheckInAttemptStatus;
         scheduledAt?: { lte: Date };
         sentAt?: { lte: Date };
@@ -163,6 +177,7 @@ interface CheckInsPrismaClient {
         };
       };
       orderBy: Array<{ scheduledAt?: 'asc' } | { attemptNumber?: 'asc' }>;
+      take: number;
     }): Promise<AttemptWithCheckIn[]>;
     findFirst(args: {
       where:
@@ -196,10 +211,75 @@ interface DueReceiver {
 
 /** Prisma's error code for a unique-constraint violation, checked structurally so a mock can raise it too. */
 const UNIQUE_VIOLATION_CODE = 'P2002';
+/** Prisma's error code for an interactive transaction that expired before it could commit. */
+const TRANSACTION_EXPIRED_CODE = 'P2028';
+/**
+ * Attempts a tick processes at most from each scan (CB-045). Both scans order by `scheduledAt`, so a backlog after
+ * an outage drains oldest-first across the 10-minute ticks instead of loading every row at once.
+ */
+export const ATTEMPT_SCAN_LIMIT = 500;
+/**
+ * Two-key `pg_try_advisory_xact_lock` identity of the scheduler tick (arbitrary constants, `int4` each). Every
+ * backend instance that ticks the same database contends on it; nothing else in the schema uses advisory locks.
+ */
+export const CHECK_INS_RUN_LOCK_KEY: readonly [number, number] = [4045, 1];
+/** How long the lock transaction may wait for a pooled connection before the tick gives up. */
+const RUN_LOCK_MAX_WAIT_MS = 5000;
+
+const attemptWithCheckInInclude = {
+  checkIn: {
+    include: {
+      receiver: {
+        select: {
+          userId: true,
+          phoneEncrypted: true,
+          countryCode: true,
+          language: true,
+          nameEncrypted: true,
+          personalNoteEncrypted: true,
+        },
+      },
+    },
+  },
+} as const;
 
 @Injectable()
 export class PrismaCheckInsRepository implements CheckInsRepository {
   constructor(@Inject(PrismaService) private readonly prisma: CheckInsPrismaClient | PrismaService) {}
+
+  async runExclusively<T>(work: () => Promise<T>, options: { timeoutMs: number }): Promise<ExclusiveRunResult<T>> {
+    let outcome: ExclusiveRunResult<T> | undefined;
+    const [lockClass, lockId] = CHECK_INS_RUN_LOCK_KEY;
+    // Narrowed to the structural client: PrismaClient's overloaded $transaction cannot be called through the union.
+    const client = this.prisma as CheckInsPrismaClient;
+
+    try {
+      await client.$transaction(
+        async (tx) => {
+          // Transaction-scoped: released at commit or rollback, so a crashed tick never leaves it held.
+          const rows = await tx.$queryRaw<Array<{ acquired: boolean }>>`
+            SELECT pg_try_advisory_xact_lock(${lockClass}::int, ${lockId}::int) AS acquired`;
+          if (!rows[0]?.acquired) {
+            outcome = { locked: true };
+            return;
+          }
+          outcome = { locked: false, result: await work() };
+        },
+        { maxWait: RUN_LOCK_MAX_WAIT_MS, timeout: options.timeoutMs },
+      );
+    } catch (error) {
+      // A run longer than `timeoutMs` loses the lock when Prisma expires the transaction, and the commit then fails
+      // with P2028 - but the work ran on the normal client and finished; its counts are still the truth.
+      if (outcome === undefined || !this.isTransactionExpired(error)) {
+        throw error;
+      }
+    }
+
+    if (outcome === undefined) {
+      throw new Error('Check-ins run lock transaction ended without an outcome');
+    }
+    return outcome;
+  }
 
   async findReceiversDueForCheckIn(now: Date): Promise<ReceiversDueForCheckIn> {
     const receivers = await this.prisma.receiver.findMany({
@@ -327,26 +407,36 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         status: CheckInAttemptStatus.PENDING,
         scheduledAt: { lte: input.now },
       },
-      include: {
-        checkIn: {
-          include: {
-            receiver: {
-              select: {
-                userId: true,
-                phoneEncrypted: true,
-                countryCode: true,
-                language: true,
-                nameEncrypted: true,
-                personalNoteEncrypted: true,
-              },
-            },
-          },
-        },
-      },
+      include: attemptWithCheckInInclude,
       orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
+      take: ATTEMPT_SCAN_LIMIT,
     });
 
     return attempts.map((attempt) => this.toAttemptWithCheckInRecord(attempt));
+  }
+
+  async findNextDuePendingAttempt(input: {
+    checkInId: string;
+    now: Date;
+  }): Promise<CheckInAttemptWithCheckInRecord | null> {
+    const [next] = await this.prisma.checkInAttempt.findMany({
+      where: {
+        checkInId: input.checkInId,
+        status: CheckInAttemptStatus.PENDING,
+        scheduledAt: { lte: input.now },
+      },
+      include: attemptWithCheckInInclude,
+      orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
+      take: 1,
+    });
+
+    return next ? this.toAttemptWithCheckInRecord(next) : null;
+  }
+
+  async countPendingAttempts(input: { checkInId: string }): Promise<number> {
+    return this.prisma.checkInAttempt.count({
+      where: { checkInId: input.checkInId, status: CheckInAttemptStatus.PENDING },
+    });
   }
 
   async findTimedOutSentAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]> {
@@ -355,23 +445,9 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
         status: CheckInAttemptStatus.SENT,
         sentAt: { lte: input.now },
       },
-      include: {
-        checkIn: {
-          include: {
-            receiver: {
-              select: {
-                userId: true,
-                phoneEncrypted: true,
-                countryCode: true,
-                language: true,
-                nameEncrypted: true,
-                personalNoteEncrypted: true,
-              },
-            },
-          },
-        },
-      },
+      include: attemptWithCheckInInclude,
       orderBy: [{ scheduledAt: 'asc' }, { attemptNumber: 'asc' }],
+      take: ATTEMPT_SCAN_LIMIT,
     });
 
     return attempts.map((attempt) => this.toAttemptWithCheckInRecord(attempt));
@@ -381,6 +457,15 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
     return this.transitionAttempt(input.attemptId, CHECK_IN_ATTEMPT_ALLOWED_FROM.sent, {
       status: CheckInAttemptStatus.SENT,
       sentAt: input.sentAt,
+      providerStatus: input.providerStatus,
+      // Absent on the cron's pre-send claim; `recordAttemptSendResult` fills it in after the provider answers.
+      ...(input.providerMessageId !== undefined ? { providerMessageId: input.providerMessageId } : {}),
+    });
+  }
+
+  async recordAttemptSendResult(input: RecordCheckInAttemptSendResultInput): Promise<boolean> {
+    // Guarded on SENT like every attempt write: a reply that closed the attempt in the meantime keeps its state.
+    return this.transitionAttempt(input.attemptId, [CheckInAttemptStatus.SENT], {
       providerMessageId: input.providerMessageId,
       providerStatus: input.providerStatus,
     });
@@ -629,12 +714,17 @@ export class PrismaCheckInsRepository implements CheckInsRepository {
   }
 
   private isUniqueViolation(error: unknown): boolean {
-    return (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: unknown }).code === UNIQUE_VIOLATION_CODE
-    );
+    return this.prismaErrorCode(error) === UNIQUE_VIOLATION_CODE;
+  }
+
+  private isTransactionExpired(error: unknown): boolean {
+    return this.prismaErrorCode(error) === TRANSACTION_EXPIRED_CODE;
+  }
+
+  private prismaErrorCode(error: unknown): unknown {
+    return typeof error === 'object' && error !== null && 'code' in error
+      ? (error as { code?: unknown }).code
+      : undefined;
   }
 
   private scheduleInvalidReason(error: unknown): string {

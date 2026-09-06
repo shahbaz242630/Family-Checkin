@@ -16,11 +16,14 @@ import type {
   CheckInReceiverCandidate,
   CheckInsRepository,
   CreatePendingCheckInInput,
+  ExclusiveRunResult,
+  MarkCheckInAttemptSentInput,
   MarkCheckInSentInput,
   MarkCheckInRespondedInput,
   CreateCheckInAttemptInput,
   CheckInAttemptRecord,
   CheckInAttemptWithCheckInRecord,
+  RecordCheckInAttemptSendResultInput,
   ScheduleInvalidReceiver,
 } from './check-ins.repository';
 import { CheckInsService } from './check-ins.service';
@@ -42,6 +45,14 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
   public recovered: string[] = [];
   /** `Receiver.scheduleInvalidAt` per receiver id (CB-069). */
   public scheduleInvalidAt = new Map<string, Date>();
+  /** Attempt ids an overlapping tick already claimed: `markAttemptSent` answers false for them (CB-045). */
+  public claimedElsewhere = new Set<string>();
+  public providerResults: RecordCheckInAttemptSendResultInput[] = [];
+  /** How often the service asked for the far-future scan `hasPendingAttempts` used before CB-045. */
+  public farFutureScans = 0;
+  /** When true, `runExclusively` reports the lock as held by another tick (CB-045). */
+  public lockHeld = false;
+  public exclusiveRuns = 0;
 
   async findReceiversDueForCheckIn(_now: Date): Promise<{
     candidates: CheckInReceiverCandidate[];
@@ -129,9 +140,34 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
   }
 
   async findDuePendingAttempts(input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]> {
+    if (input.now.getUTCFullYear() === 9999) {
+      this.farFutureScans += 1;
+    }
     return this.attempts
       .filter((attempt) => attempt.status === CheckInAttemptStatus.PENDING && attempt.scheduledAt <= input.now)
       .map((attempt) => this.withCheckIn(attempt));
+  }
+
+  async findNextDuePendingAttempt(input: {
+    checkInId: string;
+    now: Date;
+  }): Promise<CheckInAttemptWithCheckInRecord | null> {
+    const due = await this.findDuePendingAttempts({ now: input.now });
+    return due.find((attempt) => attempt.checkInId === input.checkInId) ?? null;
+  }
+
+  async countPendingAttempts(input: { checkInId: string }): Promise<number> {
+    return this.attempts.filter(
+      (attempt) => attempt.checkInId === input.checkInId && attempt.status === CheckInAttemptStatus.PENDING,
+    ).length;
+  }
+
+  async runExclusively<T>(work: () => Promise<T>): Promise<ExclusiveRunResult<T>> {
+    this.exclusiveRuns += 1;
+    if (this.lockHeld) {
+      return { locked: true };
+    }
+    return { locked: false, result: await work() };
   }
 
   async findTimedOutSentAttempts(_input: { now: Date }): Promise<CheckInAttemptWithCheckInRecord[]> {
@@ -140,19 +176,25 @@ class InMemoryCheckInsRepository implements CheckInsRepository {
       .map((attempt) => this.withCheckIn(attempt));
   }
 
-  async markAttemptSent(input: {
-    attemptId: string;
-    sentAt: Date;
-    providerMessageId: string;
-    providerStatus: string;
-  }): Promise<boolean> {
+  async markAttemptSent(input: MarkCheckInAttemptSentInput): Promise<boolean> {
+    if (this.claimedElsewhere.has(input.attemptId)) {
+      return false;
+    }
     this.attemptsSent.push(input.attemptId);
     return this.transitionAttempt(input.attemptId, CHECK_IN_ATTEMPT_ALLOWED_FROM.sent, {
       status: CheckInAttemptStatus.SENT,
       sentAt: input.sentAt,
-      providerMessageId: input.providerMessageId,
+      ...(input.providerMessageId !== undefined ? { providerMessageId: input.providerMessageId } : {}),
       providerStatus: input.providerStatus,
       updatedAt: input.sentAt,
+    });
+  }
+
+  async recordAttemptSendResult(input: RecordCheckInAttemptSendResultInput): Promise<boolean> {
+    this.providerResults.push(input);
+    return this.transitionAttempt(input.attemptId, [CheckInAttemptStatus.SENT], {
+      providerMessageId: input.providerMessageId,
+      providerStatus: input.providerStatus,
     });
   }
 
@@ -1746,6 +1788,219 @@ describe('CheckInsService renders checkin_retry for later attempts of a check-in
     });
     expect(sms.renderedMessages[0]?.body).toMatch(/^Hi there, we have not heard back from you yet\./);
     expect(voice.voiceCalls[0]?.script).toMatchObject({ scriptKey: 'checkin_daily_voice', language: 'en' });
+  });
+});
+
+describe('CheckInsService claims each attempt before sending and locks the tick (CB-045)', () => {
+  it('skips an attempt another tick claimed first: no provider call, no audit, counted as skipped', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const sms = new FakeChannelProvider(Channel.SMS);
+    repository.attempts = [
+      pendingAttempt({
+        id: 'attempt-2',
+        attemptNumber: 2,
+        channel: Channel.SMS,
+        scheduledAt: new Date('2026-04-27T05:45:00.000Z'),
+      }),
+    ];
+    repository.claimedElsewhere.add('attempt-2');
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([sms]),
+      auditService,
+      new InMemoryEscalationsService(),
+      () => new Date('2026-04-27T05:46:00.000Z'),
+    );
+
+    const result = await service.processCascadeAttempts();
+
+    expect(result).toEqual({ sent: 0, timedOut: 0, failed: 0, needsAttention: 0, skipped: 1 });
+    expect(sms.sentMessages).toEqual([]);
+    expect(audit.events).toEqual([]);
+    expect(repository.sent).toEqual([]);
+    expect(repository.attempts[0]?.status).toBe(CheckInAttemptStatus.PENDING);
+  });
+
+  it('counts a new check-in as skipped, not sent twice, when an overlapping cascade pass claimed its first attempt', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [receiverCandidate(crypto)];
+    repository.claimedElsewhere.add('attempt-1');
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([whatsapp]),
+      auditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    const result = await service.sendDueCheckIns();
+
+    expect(result).toEqual({ created: 1, sent: 0, skipped: 1, failed: 0 });
+    expect(whatsapp.sentMessages).toEqual([]);
+    expect(audit.events.map((event) => event.action)).toEqual(['check_in.created']);
+  });
+
+  it('moves the attempt to SENT before the provider is called and records the provider ids afterwards', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService } = createRealAuditService();
+    const fake = new FakeChannelProvider(Channel.WHATSAPP, { now: () => new Date('2026-04-27T05:30:00.000Z') });
+    const seenByProvider: string[] = [];
+    const observing: ChannelProvider = {
+      channel: Channel.WHATSAPP,
+      async sendMessage(to, message) {
+        seenByProvider.push(`${repository.attempts[0]?.status}:${repository.attempts[0]?.providerStatus}`);
+        return fake.sendMessage(to, message);
+      },
+      makeVoiceCall: (to, script, options) => fake.makeVoiceCall(to, script, options),
+      isAvailableForNumber: () => Promise.resolve(true),
+    };
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [receiverCandidate(crypto)];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([observing]),
+      auditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    await service.sendDueCheckIns();
+
+    expect(seenByProvider).toEqual(['SENT:sending']);
+    expect(repository.attempts[0]).toMatchObject({
+      id: 'attempt-1',
+      status: CheckInAttemptStatus.SENT,
+      sentAt: new Date('2026-04-27T05:30:00.000Z'),
+      providerMessageId: 'fake-WHATSAPP-message-1',
+      providerStatus: 'accepted',
+    });
+    expect(repository.providerResults).toEqual([
+      { attemptId: 'attempt-1', providerMessageId: 'fake-WHATSAPP-message-1', providerStatus: 'accepted' },
+    ]);
+  });
+
+  it('returns locked without running either pass while another tick holds the run lock, and runs once it is free', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [receiverCandidate(crypto)];
+    repository.lockHeld = true;
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([whatsapp]),
+      auditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    await expect(service.runScheduledTick()).resolves.toEqual({ locked: true });
+    expect(repository.exclusiveRuns).toBe(1);
+    expect(repository.created).toEqual([]);
+    expect(whatsapp.sentMessages).toEqual([]);
+    expect(audit.events).toEqual([]);
+
+    repository.lockHeld = false;
+    await expect(service.runScheduledTick()).resolves.toEqual({
+      locked: false,
+      dueCheckIns: { created: 1, sent: 1, skipped: 0, failed: 0 },
+      cascadeAttempts: { sent: 0, timedOut: 0, failed: 0, needsAttention: 0, skipped: 0 },
+    });
+    expect(repository.exclusiveRuns).toBe(2);
+    expect(whatsapp.sentMessages).toHaveLength(1);
+  });
+
+  it('runs unlocked when the repository offers no lock', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    (repository as { runExclusively?: unknown }).runExclusively = undefined;
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([new FakeChannelProvider(Channel.WHATSAPP)]),
+      createRealAuditService().auditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+    );
+
+    await expect(service.runScheduledTick()).resolves.toEqual({
+      locked: false,
+      dueCheckIns: { created: 0, sent: 0, skipped: 0, failed: 0 },
+      cascadeAttempts: { sent: 0, timedOut: 0, failed: 0, needsAttention: 0, skipped: 0 },
+    });
+  });
+
+  it('looks billing up once per sender per tick, however many receivers the sender has', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [
+      receiverCandidate(crypto),
+      { ...receiverCandidate(crypto), id: 'receiver-1b' },
+      { ...receiverCandidate(crypto), id: 'receiver-2', userId: 'sender-user-2' },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([whatsapp]),
+      createRealAuditService().auditService,
+      undefined,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    const result = await service.sendDueCheckIns();
+
+    expect(result).toEqual({ created: 2, sent: 2, skipped: 1, failed: 0 });
+    expect(billing.checkedUserIds).toEqual(['sender-user-1', 'sender-user-2']);
+  });
+
+  it('asks the repository to count the remaining attempts instead of scanning every pending row', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const escalations = new InMemoryEscalationsService();
+    repository.attempts = [
+      sentAttempt({
+        id: 'attempt-3',
+        attemptNumber: 3,
+        channel: Channel.VOICE,
+        sentAt: new Date('2026-04-27T06:15:00.000Z'),
+      }),
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([new FakeChannelProvider(Channel.VOICE)]),
+      createRealAuditService().auditService,
+      escalations,
+      () => new Date('2026-04-27T06:46:00.000Z'),
+    );
+
+    const result = await service.processCascadeAttempts();
+
+    expect(result).toEqual({ sent: 0, timedOut: 1, failed: 0, needsAttention: 1, skipped: 0 });
+    expect(repository.farFutureScans).toBe(0);
+    expect(escalations.missedCheckIns).toEqual([{ receiverId: 'receiver-1', checkInId: 'check-in-1' }]);
   });
 });
 

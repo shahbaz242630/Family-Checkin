@@ -53,4 +53,7 @@ tags = ["generic"]
 regexTarget = "match"
 regexes = [
   '''(?i)(example|placeholder|fixture|redacted|dummy|fake|test-|-test|your[_-]?|xxx|changeme|local[_-]dev[_-]only|ExpoPushToken\[)''',
+  # Wrong-secret fixture in the first commit of the CB-024 auth spec (PR #35). The tip
+  # uses fixture-wrong-project-secret; the PR-range scan still sees the old value.
+  '''not-the-project-secret''',
 ]

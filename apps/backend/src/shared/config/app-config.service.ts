@@ -33,6 +33,7 @@ const envSchema = z.object({
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().int().positive().default(300),
   TRUST_PROXY: z.string().optional(),
   CORS_ALLOWED_ORIGINS: z.string().optional(),
+  SUPABASE_JWT_SECRET: z.string().min(1).optional(),
 });
 
 export type BackendEnv = Record<string, string | undefined>;
@@ -228,5 +229,13 @@ export class AppConfigService {
       .split(',')
       .map((origin) => origin.trim())
       .filter((origin) => origin.length > 0);
+  }
+
+  /**
+   * The Supabase project's legacy JWT secret, used to verify HS256-signed access tokens locally (CB-024). Unset on
+   * a project that signs with asymmetric keys: those tokens are verified against the project's published JWKS.
+   */
+  get supabaseJwtSecret(): string | undefined {
+    return this.env.SUPABASE_JWT_SECRET?.trim() || undefined;
   }
 }

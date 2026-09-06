@@ -37,6 +37,14 @@ export interface ProcessCascadeAttemptsResult {
   skipped: number;
 }
 
+/** One scheduler tick: both passes under the run lock, or `locked` when another tick already holds it (CB-045). */
+export type RunScheduledTickResult =
+  | { locked: true }
+  | { locked: false; dueCheckIns: SendDueCheckInsResult; cascadeAttempts: ProcessCascadeAttemptsResult };
+
+/** How a claimed attempt's send ended; `claimed_elsewhere` means an overlapping tick took it first (CB-045). */
+type AttemptSendOutcome = 'sent' | 'failed' | 'claimed_elsewhere';
+
 export interface RecordVoiceProviderFailureInput {
   providerMessageId?: string;
   providerStatus?: string;
@@ -81,6 +89,13 @@ interface CheckInRef {
 
 const PROVIDER_SEND_FAILED = 'provider_send_failed';
 const CASCADE_EXHAUSTED = 'cascade_exhausted';
+/** `providerStatus` of an attempt between its claim and the provider's answer (CB-045). */
+const ATTEMPT_CLAIMED_PROVIDER_STATUS = 'sending';
+/**
+ * The run lock must outlive the tick: `.github/workflows/operations-check-ins.yml` gives a run five minutes, so a
+ * tick that is still working then loses the lock to the next one (CB-045).
+ */
+export const CHECK_INS_RUN_LOCK_TIMEOUT_MS = 5 * 60 * 1000;
 /** Audit and push `reason` for a receiver whose stored schedule cannot be evaluated (CB-069). */
 const SCHEDULE_INVALID = 'schedule_invalid';
 /** Twilio message statuses that mean the message will never reach the handset (CB-016). */
@@ -117,10 +132,31 @@ export class CheckInsService {
     private readonly notificationsService?: Pick<NotificationsService, 'sendQuietUpdateToUser'>,
   ) {}
 
+  /**
+   * The scheduler tick (`POST /operations/check-ins/run`): `sendDueCheckIns` then `processCascadeAttempts`, under
+   * the database advisory lock so an overlapping tick returns `locked` at once instead of racing this one (CB-045).
+   * A repository without the lock (in-memory doubles) runs unlocked.
+   */
+  async runScheduledTick(): Promise<RunScheduledTickResult> {
+    const work = async () => ({
+      dueCheckIns: await this.sendDueCheckIns(),
+      cascadeAttempts: await this.processCascadeAttempts(),
+    });
+
+    if (!this.checkInsRepository.runExclusively) {
+      return { locked: false, ...(await work()) };
+    }
+    const outcome = await this.checkInsRepository.runExclusively(work, { timeoutMs: CHECK_INS_RUN_LOCK_TIMEOUT_MS });
+
+    return outcome.locked ? { locked: true } : { locked: false, ...outcome.result };
+  }
+
   async sendDueCheckIns(): Promise<SendDueCheckInsResult> {
     const now = this.now();
     const due = await this.checkInsRepository.findReceiversDueForCheckIn(now);
     const result: SendDueCheckInsResult = { created: 0, sent: 0, skipped: 0, failed: 0 };
+    // One billing lookup per sender per tick, however many receivers the sender has (CB-045).
+    const paidAccess = new Map<string, Promise<boolean>>();
 
     for (const invalid of due.skipped) {
       result.failed += 1;
@@ -150,7 +186,7 @@ export class CheckInsService {
         result.skipped += 1;
         continue;
       }
-      if (!(await this.hasPaidAccess(receiver.userId))) {
+      if (!(await this.hasPaidAccess(receiver.userId, paidAccess))) {
         result.skipped += 1;
         continue;
       }
@@ -187,10 +223,17 @@ export class CheckInsService {
         },
       });
 
-      if (await this.sendFirstAttempt(receiver, checkIn.id, firstAttempt, now)) {
-        result.sent += 1;
-      } else {
-        result.failed += 1;
+      switch (await this.sendFirstAttempt(receiver, checkIn.id, firstAttempt, now)) {
+        case 'sent':
+          result.sent += 1;
+          break;
+        case 'failed':
+          result.failed += 1;
+          break;
+        case 'claimed_elsewhere':
+          // An overlapping cascade pass found the attempt due and claimed it first; it sends, this tick does not.
+          result.skipped += 1;
+          break;
       }
     }
 
@@ -230,8 +273,13 @@ export class CheckInsService {
           continue;
         }
 
-        if (await this.trySendAttempt(attempt, now)) {
+        const outcome = await this.trySendAttempt(attempt, now);
+        if (outcome === 'sent') {
           result.sent += 1;
+          continue;
+        }
+        if (outcome === 'claimed_elsewhere') {
+          result.skipped += 1;
           continue;
         }
         result.failed += 1;
@@ -379,8 +427,30 @@ export class CheckInsService {
     return true;
   }
 
-  private async hasPaidAccess(userId: string): Promise<boolean> {
-    return (await this.billingService?.getBillingStatus(userId))?.entitled ?? false;
+  private async hasPaidAccess(userId: string, cache: Map<string, Promise<boolean>>): Promise<boolean> {
+    let entitled = cache.get(userId);
+    if (!entitled) {
+      entitled = Promise.resolve(this.billingService?.getBillingStatus(userId)).then(
+        (status) => status?.entitled ?? false,
+      );
+      cache.set(userId, entitled);
+    }
+
+    return entitled;
+  }
+
+  /**
+   * The atomic claim (CB-045): PENDING -> SENT before the provider is called, so of two overlapping ticks exactly
+   * one sends each attempt. `false` means the other tick got there first. A claimed attempt whose process dies
+   * before the provider answers stays SENT with `providerStatus: 'sending'` and no provider id, and the timeout
+   * pass moves the cascade on after the response window like any unanswered message.
+   */
+  private async claimAttempt(attemptId: string, now: Date): Promise<boolean> {
+    return this.checkInsRepository.markAttemptSent({
+      attemptId,
+      sentAt: now,
+      providerStatus: ATTEMPT_CLAIMED_PROVIDER_STATUS,
+    });
   }
 
   /** True when this tick is the first to see the receiver's schedule as invalid; a repository without the stamp audits every tick. */
@@ -426,16 +496,20 @@ export class CheckInsService {
   }
 
   /**
-   * First attempt of a new check-in. A provider that throws (Twilio 21211, a stalled socket, a bad row) marks the
-   * attempt FAILED and returns false; the receiver's fallback attempts stay scheduled and the loop continues with
-   * the next receiver (CB-004).
+   * First attempt of a new check-in, claimed before the provider is called (CB-045). A provider that throws
+   * (Twilio 21211, a stalled socket, a bad row) marks the attempt FAILED and returns `failed`; the receiver's
+   * fallback attempts stay scheduled and the loop continues with the next receiver (CB-004).
    */
   private async sendFirstAttempt(
     receiver: CheckInReceiverCandidate,
     checkInId: string,
     attempt: CheckInAttemptRecord | undefined,
     now: Date,
-  ): Promise<boolean> {
+  ): Promise<AttemptSendOutcome> {
+    if (attempt && !(await this.claimAttempt(attempt.id, now))) {
+      return 'claimed_elsewhere';
+    }
+
     let providerResult: { providerId: string; providerStatus: string; rendering?: MessageRendering };
     try {
       providerResult = await this.sendInitialCheckIn(receiver);
@@ -454,13 +528,12 @@ export class CheckInsService {
         attemptNumber: attempt?.attemptNumber ?? 1,
       });
       await this.flagIfExhausted({ checkInId, receiverId: receiver.id });
-      return false;
+      return 'failed';
     }
 
     if (attempt) {
-      await this.checkInsRepository.markAttemptSent({
+      await this.checkInsRepository.recordAttemptSendResult?.({
         attemptId: attempt.id,
-        sentAt: now,
         providerMessageId: providerResult.providerId,
         providerStatus: providerResult.providerStatus,
       });
@@ -486,7 +559,7 @@ export class CheckInsService {
       },
     });
 
-    return true;
+    return 'sent';
   }
 
   private async sendInitialCheckIn(
@@ -588,8 +661,15 @@ export class CheckInsService {
     }));
   }
 
-  /** Sends one due attempt; a throwing provider marks it FAILED and returns false instead of ending the tick (CB-004). */
-  private async trySendAttempt(attempt: CheckInAttemptWithCheckInRecord, now: Date): Promise<boolean> {
+  /**
+   * Claims and sends one due attempt (CB-045); a throwing provider marks it FAILED and returns `failed` instead of
+   * ending the tick (CB-004).
+   */
+  private async trySendAttempt(attempt: CheckInAttemptWithCheckInRecord, now: Date): Promise<AttemptSendOutcome> {
+    if (!(await this.claimAttempt(attempt.id, now))) {
+      return 'claimed_elsewhere';
+    }
+
     try {
       await this.sendAttempt(attempt, now);
     } catch {
@@ -604,10 +684,10 @@ export class CheckInsService {
         channel: attempt.channel,
         attemptNumber: attempt.attemptNumber,
       });
-      return false;
+      return 'failed';
     }
 
-    return true;
+    return 'sent';
   }
 
   private async sendAttempt(
@@ -639,9 +719,8 @@ export class CheckInsService {
             }),
           });
 
-    await this.checkInsRepository.markAttemptSent({
+    await this.checkInsRepository.recordAttemptSendResult?.({
       attemptId: attempt.id,
-      sentAt: now,
       providerMessageId: 'providerMessageId' in result ? result.providerMessageId : result.providerCallId,
       providerStatus: result.providerStatus,
     });
@@ -656,9 +735,7 @@ export class CheckInsService {
 
   /** After an attempt ends unanswered: send the next attempt if it is due, or flag the check-in once none remain. */
   private async advanceCascade(checkIn: CheckInRef, now: Date, result: ProcessCascadeAttemptsResult): Promise<void> {
-    const next = (await this.checkInsRepository.findDuePendingAttempts({ now })).find(
-      (attempt) => attempt.checkIn.id === checkIn.checkInId,
-    );
+    const next = await this.findNextDuePendingAttempt(checkIn.checkInId, now);
     if (next && this.isClosed(next.checkIn.status)) {
       // A reply, a backup contact or a cancellation closed the check-in first: never reopen it (CB-006).
       result.skipped += await this.checkInsRepository.skipPendingAttemptsForCheckIn({
@@ -669,8 +746,14 @@ export class CheckInsService {
       return;
     }
     if (next) {
-      if (await this.trySendAttempt(next, now)) {
+      const outcome = await this.trySendAttempt(next, now);
+      if (outcome === 'sent') {
         result.sent += 1;
+        return;
+      }
+      if (outcome === 'claimed_elsewhere') {
+        // The overlapping tick that claimed it also judges the cascade's exhaustion.
+        result.skipped += 1;
         return;
       }
       result.failed += 1;
@@ -680,7 +763,28 @@ export class CheckInsService {
     }
   }
 
+  /** One row from the repository when it can ask for it; a double without the query scans the due list. */
+  private async findNextDuePendingAttempt(
+    checkInId: string,
+    now: Date,
+  ): Promise<CheckInAttemptWithCheckInRecord | null> {
+    if (this.checkInsRepository.findNextDuePendingAttempt) {
+      return this.checkInsRepository.findNextDuePendingAttempt({ checkInId, now });
+    }
+
+    return (
+      (await this.checkInsRepository.findDuePendingAttempts({ now })).find(
+        (attempt) => attempt.checkIn.id === checkInId,
+      ) ?? null
+    );
+  }
+
+  /** A count in the database (CB-045); a double without the query falls back to the far-future scan. */
   private async hasPendingAttempts(checkInId: string): Promise<boolean> {
+    if (this.checkInsRepository.countPendingAttempts) {
+      return (await this.checkInsRepository.countPendingAttempts({ checkInId })) > 0;
+    }
+
     return (await this.checkInsRepository.findDuePendingAttempts({ now: new Date('9999-12-31T23:59:59.999Z') })).some(
       (attempt) => attempt.checkIn.id === checkInId,
     );
