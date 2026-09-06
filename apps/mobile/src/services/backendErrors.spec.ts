@@ -132,7 +132,7 @@ describe('describeBackendError', () => {
     );
     expect(
       describeBackendError(new BackendRequestError('Limit', 429, 'CONSENT_RESEND_LIMIT'), 'Unable to resend'),
-    ).toBe('You can resend once 7 days have passed since the last invitation.');
+    ).toBe('The invitation was sent recently. You can resend it once the waiting period has passed.');
   });
 
   it('falls back to the backend message for other codes, then to the caller fallback', () => {
@@ -150,7 +150,7 @@ describe('describeBackendError', () => {
     const error = new BackendRequestError('Limit', 429, 'CONSENT_RESEND_LIMIT', { nextAllowedAt: 12345 });
 
     expect(describeBackendError(error, 'Unable to resend', { formatDate })).toBe(
-      'You can resend once 7 days have passed since the last invitation.',
+      'The invitation was sent recently. You can resend it once the waiting period has passed.',
     );
   });
 

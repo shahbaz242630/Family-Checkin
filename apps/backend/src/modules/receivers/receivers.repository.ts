@@ -46,6 +46,8 @@ export interface UpdateReceiverRecordInput {
 export interface ReceiverRecord extends CreateReceiverRecordInput {
   id: string;
   consentRequestedAt?: Date;
+  /** How many times the consent invitation was resent after the first one; drives the resend window (CB-081). */
+  consentResendCount?: number;
   consentGrantedAt?: Date;
   consentRevokedAt?: Date;
   consentTranscript?: string;
@@ -125,6 +127,8 @@ export interface ReceiversRepository {
     receiverId: string;
     consentRequestedAt: Date;
     consentTranscript: string;
+    /** True for a sender-triggered resend: bumps `consentResendCount` alongside the new request time (CB-081). */
+    resend?: boolean;
   }): Promise<ReceiverRecord>;
   updateConsentResponse(input: {
     receiverId: string;

@@ -18,8 +18,12 @@ import { ReceiverConsentService } from './receiver-consent.service';
 const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 
 class InMemoryReceiversRepository implements ReceiversRepository {
-  public markedConsentRequest: { receiverId: string; consentRequestedAt: Date; consentTranscript: string } | null =
-    null;
+  public markedConsentRequest: {
+    receiverId: string;
+    consentRequestedAt: Date;
+    consentTranscript: string;
+    resend?: boolean;
+  } | null = null;
   /** The sender-scoped row `resendConsent` looks up. */
   public receiverForUser: ReceiverRecord | null = null;
   public optOutCooldown: OptOutCooldownRecord | null = null;
@@ -85,12 +89,14 @@ class InMemoryReceiversRepository implements ReceiversRepository {
     receiverId: string;
     consentRequestedAt: Date;
     consentTranscript: string;
+    resend?: boolean;
   }): Promise<ReceiverRecord> {
     this.markedConsentRequest = input;
     return {
-      ...receiverFixture(new CryptoService(masterKey)),
+      ...(this.receiverForUser ?? receiverFixture(new CryptoService(masterKey))),
       consentRequestedAt: input.consentRequestedAt,
       consentTranscript: input.consentTranscript,
+      consentResendCount: (this.receiverForUser?.consentResendCount ?? 0) + (input.resend ? 1 : 0),
     };
   }
 
@@ -425,7 +431,7 @@ describe('ReceiverConsentService', () => {
   });
 });
 
-describe('ReceiverConsentService resends a consent request at most once per 7 days (CB-009)', () => {
+describe('ReceiverConsentService resend window: 24 h after the first invitation, 7 days after a resend (CB-009, CB-081)', () => {
   const now = () => new Date('2026-05-10T10:00:00.000Z');
   const resendInput = {
     userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
@@ -452,7 +458,37 @@ describe('ReceiverConsentService resends a consent request at most once per 7 da
     return { crypto, repository, audit, provider, service };
   }
 
-  it('resends to a pending receiver whose first request never went out and marks it requested', async () => {
+  async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
+    return promise.then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+  }
+
+  it('sends the first invitation right after create regardless of any window', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const provider = new FakeChannelProvider(Channel.WHATSAPP, { now });
+    const service = new ReceiverConsentService(
+      repository,
+      crypto,
+      new ChannelRouterService([provider]),
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+
+    const receiver = await service.requestConsent({
+      receiver: { ...receiverFixture(crypto), createdAt: new Date('2026-05-10T09:59:00.000Z') },
+      actorUserId: resendInput.userId,
+      senderDisplayName: 'Ahmed',
+    });
+
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(receiver.consentRequestedAt).toEqual(new Date('2026-05-10T10:00:00.000Z'));
+    expect(repository.markedConsentRequest?.resend).toBeUndefined();
+  });
+
+  it('resends to a pending receiver whose first request never went out, as a first invitation (24 h window next)', async () => {
     const crypto = new CryptoService(masterKey);
     const { repository, audit, provider, service } = harness(receiverFixture(crypto));
 
@@ -471,9 +507,12 @@ describe('ReceiverConsentService resends a consent request at most once per 7 da
     expect(repository.markedConsentRequest).toMatchObject({
       receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
       consentRequestedAt: new Date('2026-05-10T10:00:00.000Z'),
+      resend: false,
     });
     expect(result?.sent).toBe(true);
     expect(result?.receiver.consentRequestedAt).toEqual(new Date('2026-05-10T10:00:00.000Z'));
+    expect(result?.receiver.consentResendCount).toBe(0);
+    expect(result?.consentResendAllowedAt).toEqual(new Date('2026-05-11T10:00:00.000Z'));
     const transcript = JSON.parse(crypto.decrypt(repository.markedConsentRequest?.consentTranscript ?? ''));
     expect(transcript).toMatchObject({ resend: true, channel: Channel.WHATSAPP, templateKey: 'consent_request' });
     expect(audit.events).toEqual([
@@ -488,6 +527,7 @@ describe('ReceiverConsentService resends a consent request at most once per 7 da
           templateKey: 'consent_request',
           providerStatus: 'accepted',
           previousRequestAt: undefined,
+          resendCount: 0,
         },
         ipAddress: '203.0.113.10',
         userAgent: 'Nearby Mobile/1.0',
@@ -495,38 +535,73 @@ describe('ReceiverConsentService resends a consent request at most once per 7 da
     ]);
   });
 
-  it('resends once the previous request is at least 7 days old', async () => {
-    const crypto = new CryptoService(masterKey);
-    const { provider, audit, service } = harness({
-      ...receiverFixture(crypto),
-      consentRequestedAt: new Date('2026-05-03T10:00:00.000Z'),
-    });
-
-    await service.resendConsent(resendInput);
-
-    expect(provider.sentMessages).toHaveLength(1);
-    expect(audit.events[0]).toMatchObject({
-      action: 'receiver.consent_resent',
-      metadata: { previousRequestAt: '2026-05-03T10:00:00.000Z' },
-    });
-  });
-
-  it('refuses a second invitation inside 7 days with the time the next one is allowed', async () => {
+  it('refuses a resend 12 hours after the first invitation and says it opens 24 hours after it', async () => {
     const crypto = new CryptoService(masterKey);
     const { provider, repository, service } = harness({
       ...receiverFixture(crypto),
-      consentRequestedAt: new Date('2026-05-08T10:00:00.000Z'),
+      consentRequestedAt: new Date('2026-05-09T22:00:00.000Z'),
+      consentResendCount: 0,
     });
 
-    const error = await service.resendConsent(resendInput).then(
-      () => null,
-      (caught: unknown) => caught,
-    );
+    const error = await rejectionOf(service.resendConsent(resendInput));
 
     expect(error).toBeInstanceOf(ConsentResendLimitError);
-    expect((error as ConsentResendLimitError).nextAllowedAt).toEqual(new Date('2026-05-15T10:00:00.000Z'));
+    expect((error as ConsentResendLimitError).nextAllowedAt).toEqual(new Date('2026-05-10T22:00:00.000Z'));
     expect(provider.sentMessages).toEqual([]);
     expect(repository.markedConsentRequest).toBeNull();
+  });
+
+  it('allows one resend 24 hours after the first invitation, counts it and opens the next window 7 days later', async () => {
+    const crypto = new CryptoService(masterKey);
+    const { provider, repository, audit, service } = harness({
+      ...receiverFixture(crypto),
+      consentRequestedAt: new Date('2026-05-09T10:00:00.000Z'),
+      consentResendCount: 0,
+    });
+
+    const result = await service.resendConsent(resendInput);
+
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(repository.markedConsentRequest).toMatchObject({
+      consentRequestedAt: new Date('2026-05-10T10:00:00.000Z'),
+      resend: true,
+    });
+    expect(result?.receiver.consentResendCount).toBe(1);
+    expect(result?.consentResendAllowedAt).toEqual(new Date('2026-05-17T10:00:00.000Z'));
+    expect(audit.events[0]).toMatchObject({
+      action: 'receiver.consent_resent',
+      metadata: { previousRequestAt: '2026-05-09T10:00:00.000Z', resendCount: 1 },
+    });
+  });
+
+  it('refuses a second resend for 7 days after a resend', async () => {
+    const crypto = new CryptoService(masterKey);
+    const { provider, service } = harness({
+      ...receiverFixture(crypto),
+      consentRequestedAt: new Date('2026-05-07T10:00:00.000Z'),
+      consentResendCount: 1,
+    });
+
+    const error = await rejectionOf(service.resendConsent(resendInput));
+
+    expect(error).toBeInstanceOf(ConsentResendLimitError);
+    expect((error as ConsentResendLimitError).nextAllowedAt).toEqual(new Date('2026-05-14T10:00:00.000Z'));
+    expect(provider.sentMessages).toEqual([]);
+  });
+
+  it('allows another resend once 7 days have passed since the last one', async () => {
+    const crypto = new CryptoService(masterKey);
+    const { provider, service } = harness({
+      ...receiverFixture(crypto),
+      consentRequestedAt: new Date('2026-05-03T10:00:00.000Z'),
+      consentResendCount: 1,
+    });
+
+    const result = await service.resendConsent(resendInput);
+
+    expect(provider.sentMessages).toHaveLength(1);
+    expect(result?.receiver.consentResendCount).toBe(2);
+    expect(result?.consentResendAllowedAt).toEqual(new Date('2026-05-17T10:00:00.000Z'));
   });
 
   it('refuses to re-invite a receiver who already answered', async () => {
@@ -559,15 +634,18 @@ describe('ReceiverConsentService resends a consent request at most once per 7 da
     await expect(service.resendConsent(resendInput)).resolves.toBeNull();
   });
 
-  it('audits a failed resend and leaves the previous request time untouched', async () => {
+  it('audits a failed resend, leaves the previous request time untouched and keeps the same window', async () => {
     const crypto = new CryptoService(masterKey);
     // Provider wired for SMS only; the receiver's primary channel is WhatsApp.
-    const { repository, audit, service } = harness(receiverFixture(crypto), Channel.SMS);
+    const { repository, audit, service } = harness(
+      { ...receiverFixture(crypto), consentRequestedAt: new Date('2026-05-08T10:00:00.000Z'), consentResendCount: 0 },
+      Channel.SMS,
+    );
 
     const result = await service.resendConsent(resendInput);
 
-    expect(result).toMatchObject({ sent: false });
-    expect(result?.receiver.consentRequestedAt).toBeUndefined();
+    expect(result).toMatchObject({ sent: false, consentResendAllowedAt: new Date('2026-05-09T10:00:00.000Z') });
+    expect(result?.receiver.consentRequestedAt).toEqual(new Date('2026-05-08T10:00:00.000Z'));
     expect(repository.markedConsentRequest).toBeNull();
     expect(audit.events).toEqual([
       expect.objectContaining({

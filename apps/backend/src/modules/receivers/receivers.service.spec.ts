@@ -563,6 +563,7 @@ describe('ReceiversService', () => {
         scheduleTimeWindow: { start: '09:00', end: '11:00' },
         consentStatus: ConsentStatus.GRANTED,
         consentGrantedAt: '2026-04-26T09:00:00.000Z',
+        consentResendAllowedAt: null,
         pausedUntil: undefined,
         pausedReason: undefined,
         scheduleInvalidAt: null,
@@ -620,6 +621,53 @@ describe('ReceiversService', () => {
 
     expect(receivers.map((receiver) => receiver.scheduleInvalidAt)).toEqual(['2026-09-06T07:10:00.000Z', null]);
     expect(detail?.scheduleInvalidAt).toBe('2026-09-06T07:10:00.000Z');
+  });
+
+  it('tells the app when "Resend invitation" reopens: 24 h after the first send, 7 days after a resend, null otherwise (CB-081)', async () => {
+    const repository = new InMemoryReceiversRepository();
+    const crypto = new CryptoService(masterKey);
+    const baseReceiver: ReceiverWithLatestCheckInRecord = {
+      id: 'receiver-first',
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      nameEncrypted: crypto.encrypt('Fatima Parent'),
+      phoneEncrypted: crypto.encrypt('+971501234567'),
+      phoneHash: crypto.hashForLookup('+971501234567'),
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      consentStatus: ConsentStatus.PENDING,
+      consentRequestedAt: new Date('2026-09-06T10:00:00.000Z'),
+      consentResendCount: 0,
+      createdAt: new Date('2026-09-06T10:00:00.000Z'),
+      updatedAt: new Date('2026-09-06T10:00:00.000Z'),
+    };
+    repository.receiversForUser = [
+      baseReceiver,
+      { ...baseReceiver, id: 'receiver-resent', consentResendCount: 1 },
+      { ...baseReceiver, id: 'receiver-never-sent', consentRequestedAt: undefined },
+      { ...baseReceiver, id: 'receiver-granted', consentStatus: ConsentStatus.GRANTED },
+    ];
+    const service = new ReceiversService(repository, crypto, new InMemoryAuditService() as unknown as AuditService);
+
+    const receivers = await service.listForSender('61a5639c-c902-4950-9924-1a4d6db1e02d');
+    const detail = await service.getForSender({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: 'receiver-resent',
+    });
+
+    expect(receivers.map((receiver) => [receiver.id, receiver.consentResendAllowedAt])).toEqual([
+      ['receiver-first', '2026-09-07T10:00:00.000Z'],
+      ['receiver-resent', '2026-09-13T10:00:00.000Z'],
+      ['receiver-never-sent', null],
+      ['receiver-granted', null],
+    ]);
+    expect(detail?.consentResendAllowedAt).toBe('2026-09-13T10:00:00.000Z');
   });
 
   it('returns receiver detail with latest check-in and placeholder relationship surfaces', async () => {

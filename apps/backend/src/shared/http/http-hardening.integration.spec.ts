@@ -6,7 +6,13 @@ import { APP_GUARD, NestFactory } from '@nestjs/core';
 import { SkipThrottle, ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppConfigService } from '../config/app-config.service';
-import { applyHttpHardening, throttlerOptionsFromConfig } from './http-hardening';
+import {
+  applyHttpHardening,
+  HEADERS_TIMEOUT_MS,
+  KEEP_ALIVE_TIMEOUT_MS,
+  REQUEST_TIMEOUT_MS,
+  throttlerOptionsFromConfig,
+} from './http-hardening';
 
 const ALLOWED_ORIGIN = 'https://admin.nearby.test';
 
@@ -105,6 +111,32 @@ describe('applyHttpHardening (integration)', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('access-control-allow-origin')).toBe(ALLOWED_ORIGIN);
     expect(response.headers.get('access-control-allow-credentials')).toBe('true');
+  });
+
+  it('answers API responses with Cache-Control: no-store and no ETag (CB-080)', async () => {
+    const response = await get(`${baseUrl}/machine`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(response.headers.get('etag')).toBeNull();
+  });
+
+  it('never answers 304 to a conditional GET (CB-080)', async () => {
+    const response = await get(`${baseUrl}/machine`, { 'if-none-match': 'W/"anything"' });
+
+    expect(response.status).toBe(200);
+  });
+
+  it('sets the keep-alive, headers and request timeouts on the Node server (CB-080)', () => {
+    const server = app.getHttpServer() as {
+      keepAliveTimeout: number;
+      headersTimeout: number;
+      requestTimeout: number;
+    };
+
+    expect(server.keepAliveTimeout).toBe(KEEP_ALIVE_TIMEOUT_MS);
+    expect(server.headersTimeout).toBe(HEADERS_TIMEOUT_MS);
+    expect(server.requestTimeout).toBe(REQUEST_TIMEOUT_MS);
   });
 
   it('does not grant CORS to unlisted origins', async () => {

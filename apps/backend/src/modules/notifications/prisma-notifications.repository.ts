@@ -3,6 +3,7 @@ import { PrismaService } from '../../shared/prisma/prisma.service';
 import type {
   PushDeviceTokenRecord,
   PushNotificationsRepository,
+  PushTicketRecord,
   RegisterPushDeviceTokenInput,
 } from './notifications.repository';
 
@@ -42,10 +43,19 @@ interface NotificationsPrismaClient {
       where: { userId: string; active: true };
       orderBy: { lastRegisteredAt: 'desc' };
     }): Promise<DeviceTokenRow[]>;
-    updateMany(args: {
-      where: { token: string };
-      data: { active: false; updatedAt: Date };
+    updateMany(args: { where: { token: string }; data: { active: false; updatedAt: Date } }): Promise<unknown>;
+  };
+  expoPushTicket: {
+    createMany(args: {
+      data: Array<{ ticketId: string; token: string; createdAt: Date }>;
+      skipDuplicates: true;
     }): Promise<unknown>;
+    findMany(args: {
+      where: { createdAt: { lt: Date } };
+      orderBy: { createdAt: 'asc' };
+      take: number;
+    }): Promise<Array<{ ticketId: string; token: string; createdAt: Date }>>;
+    deleteMany(args: { where: { ticketId: { in: string[] } } }): Promise<unknown>;
   };
 }
 
@@ -102,6 +112,42 @@ export class PrismaNotificationsRepository implements PushNotificationsRepositor
         updatedAt: input.inactiveAt,
       },
     });
+  }
+
+  async recordPushTickets(input: {
+    tickets: Array<{ ticketId: string; token: string }>;
+    createdAt: Date;
+  }): Promise<void> {
+    if (input.tickets.length === 0) {
+      return;
+    }
+
+    await this.prisma.expoPushTicket.createMany({
+      data: input.tickets.map((ticket) => ({
+        ticketId: ticket.ticketId,
+        token: ticket.token,
+        createdAt: input.createdAt,
+      })),
+      skipDuplicates: true,
+    });
+  }
+
+  async findPushTicketsCreatedBefore(input: { before: Date; limit: number }): Promise<PushTicketRecord[]> {
+    const rows = await this.prisma.expoPushTicket.findMany({
+      where: { createdAt: { lt: input.before } },
+      orderBy: { createdAt: 'asc' },
+      take: input.limit,
+    });
+
+    return rows.map((row) => ({ ticketId: row.ticketId, token: row.token, createdAt: row.createdAt }));
+  }
+
+  async deletePushTickets(input: { ticketIds: string[] }): Promise<void> {
+    if (input.ticketIds.length === 0) {
+      return;
+    }
+
+    await this.prisma.expoPushTicket.deleteMany({ where: { ticketId: { in: input.ticketIds } } });
   }
 }
 

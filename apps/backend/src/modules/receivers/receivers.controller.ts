@@ -325,6 +325,8 @@ export class ReceiversController {
         consentStatus: result.receiver.consentStatus,
         consentRequestStatus,
         consentRequestedAt: result.receiver.consentRequestedAt?.toISOString(),
+        // So the app can disable "Resend invitation" until the window reopens without another fetch (CB-081).
+        consentResendAllowedAt: result.consentResendAllowedAt?.toISOString() ?? null,
       },
     };
   }

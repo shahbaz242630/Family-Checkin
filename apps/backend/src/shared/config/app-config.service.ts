@@ -34,6 +34,7 @@ const envSchema = z.object({
   TRUST_PROXY: z.string().optional(),
   CORS_ALLOWED_ORIGINS: z.string().optional(),
   SUPABASE_JWT_SECRET: z.string().min(1).optional(),
+  EXPO_ACCESS_TOKEN: z.string().optional(),
 });
 
 export type BackendEnv = Record<string, string | undefined>;
@@ -237,5 +238,10 @@ export class AppConfigService {
    */
   get supabaseJwtSecret(): string | undefined {
     return this.env.SUPABASE_JWT_SECRET?.trim() || undefined;
+  }
+
+  /** Optional Expo access token sent as a bearer to the push API; blank means unauthenticated sends (CB-023). */
+  get expoAccessToken(): string | undefined {
+    return this.env.EXPO_ACCESS_TOKEN?.trim() || undefined;
   }
 }

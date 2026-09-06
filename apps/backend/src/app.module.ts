@@ -10,6 +10,7 @@ import { BillingModule } from './modules/billing/billing.module';
 import { CheckInsModule } from './modules/check-ins/check-ins.module';
 import { ChannelsModule } from './modules/channels/channels.module';
 import { EscalationsModule } from './modules/escalations/escalations.module';
+import { HealthModule } from './modules/health/health.module';
 import { OperationsModule } from './modules/operations/operations.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { ProviderWebhooksModule } from './modules/provider-webhooks/provider-webhooks.module';
@@ -42,6 +43,7 @@ import { throttlerOptionsFromConfig } from './shared/http/http-hardening';
     CheckInsModule,
     EscalationsModule,
     NotificationsModule,
+    HealthModule,
     AdminAbuseModule,
     OperationsModule,
     ProviderWebhooksModule,

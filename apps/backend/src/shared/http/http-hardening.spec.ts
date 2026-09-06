@@ -1,7 +1,16 @@
 import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 import { describe, expect, it } from 'vitest';
 import { AppConfigService } from '../config/app-config.service';
-import { corsOptionsFromConfig, isOriginAllowed, throttlerOptionsFromConfig } from './http-hardening';
+import {
+  applyServerTimeouts,
+  corsOptionsFromConfig,
+  HEADERS_TIMEOUT_MS,
+  isOriginAllowed,
+  KEEP_ALIVE_TIMEOUT_MS,
+  noStoreCacheControl,
+  REQUEST_TIMEOUT_MS,
+  throttlerOptionsFromConfig,
+} from './http-hardening';
 
 function validEnv(overrides: Record<string, string | undefined> = {}) {
   return {
@@ -102,5 +111,50 @@ describe('isOriginAllowed', () => {
     expect(isOriginAllowed('https://a.example', ['https://a.example'])).toBe(true);
     expect(isOriginAllowed('https://a.example/', ['https://a.example'])).toBe(false);
     expect(isOriginAllowed('https://A.example', ['https://a.example'])).toBe(false);
+  });
+});
+
+describe('applyServerTimeouts (CB-080)', () => {
+  it('keeps idle connections open longer than the Android OkHttp pool reuses them (5 minutes)', () => {
+    expect(KEEP_ALIVE_TIMEOUT_MS).toBeGreaterThan(5 * 60 * 1000);
+  });
+
+  it('orders the timeouts as Node requires: keepAlive < headers <= request', () => {
+    expect(HEADERS_TIMEOUT_MS).toBeGreaterThan(KEEP_ALIVE_TIMEOUT_MS);
+    expect(REQUEST_TIMEOUT_MS).toBeGreaterThanOrEqual(HEADERS_TIMEOUT_MS);
+  });
+
+  it('writes all three onto the server', () => {
+    const server = { keepAliveTimeout: 5_000, headersTimeout: 60_000, requestTimeout: 300_000 };
+
+    applyServerTimeouts(server);
+
+    expect(server).toEqual({
+      keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS,
+      headersTimeout: HEADERS_TIMEOUT_MS,
+      requestTimeout: REQUEST_TIMEOUT_MS,
+    });
+  });
+});
+
+describe('noStoreCacheControl (CB-080)', () => {
+  it('marks the response no-store and passes control on', () => {
+    const headers: Record<string, string> = {};
+    let passedOn = false;
+
+    noStoreCacheControl(
+      {},
+      {
+        setHeader(name: string, value: string) {
+          headers[name] = value;
+        },
+      },
+      () => {
+        passedOn = true;
+      },
+    );
+
+    expect(headers).toEqual({ 'Cache-Control': 'no-store' });
+    expect(passedOn).toBe(true);
   });
 });

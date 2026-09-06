@@ -173,6 +173,7 @@ model Receiver {
   personalNoteEncrypted String?
   consentStatus         ConsentStatus    @default(PENDING)
   consentRequestedAt    DateTime?
+  consentResendCount    Int              @default(0)
   consentGrantedAt      DateTime?
   consentRevokedAt      DateTime?
   consentTranscript     String?
@@ -534,4 +535,17 @@ model DeviceToken {
   @@index([userId, active])
   @@index([lastRegisteredAt])
   @@map("device_tokens")
+}
+
+// Expo push tickets awaiting their delivery receipt (CB-023). Rows live for at most 24 hours; a receipt saying
+// DeviceNotRegistered deactivates the device token. No relation to device_tokens on purpose: the token text is
+// what the receipt has to be matched against, and tickets must not block token housekeeping.
+model ExpoPushTicket {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ticketId  String   @unique
+  token     String
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("expo_push_tickets")
 }
