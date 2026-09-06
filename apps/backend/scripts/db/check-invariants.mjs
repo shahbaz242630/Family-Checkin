@@ -51,11 +51,13 @@ const SRC = {
   partitions: 'supabase/migrations/20260510181345_partitioned_operational_logs.sql',
   partitionRls: 'apps/backend/scripts/db/sql/20260905_partition_rls_hardening.sql',
   applyAll: 'apps/backend/scripts/db/apply-all.mjs',
-  handoffStatus: 'PROJECT_HANDOFF.md "Supabase Status"',
-  handoff24: 'PROJECT_HANDOFF.md s24 "Supabase Security Advisor RLS hardening"',
-  handoff25: 'PROJECT_HANDOFF.md s25 "Supabase Security Advisor WARN fixes"',
-  handoff29h: 'PROJECT_HANDOFF.md s29h "Existing-surface production readiness audit"',
-  handoffPartitions: 'PROJECT_HANDOFF.md "Supabase partitioned operational logs migration applied 2026-05-10"',
+  handoffStatus: 'docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md "Supabase Status"',
+  handoff24: 'docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md s24 "Supabase Security Advisor RLS hardening"',
+  handoff25: 'docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md s25 "Supabase Security Advisor WARN fixes"',
+  handoff29h:
+    'docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md s29h "Existing-surface production readiness audit"',
+  handoffPartitions:
+    'docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md "Supabase partitioned operational logs migration applied 2026-05-10"',
 };
 
 // ---------------------------------------------------------------------------

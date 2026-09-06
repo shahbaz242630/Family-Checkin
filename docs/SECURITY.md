@@ -57,12 +57,12 @@ Every action is pinned to a full commit SHA with a `# vX.Y.Z` comment, every wor
 
 | Item | Status |
 | --- | --- |
-| Test-account password that appeared in `PROJECT_HANDOFF.md` (removed 2026-09-05, still in git history, repository is public) | **Rotate the account password.** Consider a history rewrite only if the account matters. |
-| Supabase access token and database password pasted in chat during earlier sessions (handoff sections 30/31) | **Rotate both**; then update `apps/backend/.env` and any hosting secrets. |
+| Test-account password that appeared in the old handoff (now `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md`; removed 2026-09-05, still in git history, repository is public) | Rotated; confirmed by the founder on 2026-09-05. No history rewrite (test account only). |
+| Supabase access token and database password pasted in chat during earlier sessions (handoff sections 30/31) | Rotated; confirmed by the founder on 2026-09-05. Hosting secrets do not exist yet; set them from the rotated values when the backend is hosted. |
 | Supabase "leaked password protection" | Enable in the Supabase dashboard (Auth settings). |
 | Monthly partitions of the four log tables had RLS disabled on the hosted project (found by the Database invariants job) | **Fixed 2026-09-05**: `apps/backend/scripts/db/sql/20260905_partition_rls_hardening.sql` applied to the hosted database through the session pooler; 96 partitions now have RLS and `ensure_monthly_range_partitions` enables it on new ones. |
 | `_prisma_migrations` does not exist on the hosted project (migrations were applied by hand) | Before ever running `prisma migrate deploy` against it, baseline with `prisma migrate resolve --applied <name>` for each existing migration, or keep applying SQL by hand. |
 | Scheduled workflow `operations-check-ins.yml` is disabled by GitHub for inactivity | Re-enable once the backend is hosted and `OPERATIONS_CHECK_INS_RUN_URL` / `OPERATIONS_CRON_SECRET` are set. |
 | Expo SDK 54 / React Native 0.81 / Prisma 7.8 carry build-time advisories (see allowlist, expiry 2026-12-31) | Coordinated upgrade before the expiry. |
-| Prettier `format:check` is not yet a CI gate (140 legacy files are unformatted) | Run `npm run format` in a dedicated commit after the outstanding `codex/production-readiness-gaps` branch merges, then add `format:check` to the Verify job. |
+| Prettier `format:check` is not yet a CI gate (140 legacy files are unformatted) | Unblocked (that branch merged as PR #13). Run `npm run format` in a dedicated commit, then add `format:check` to the Verify job. |
 | Request-body validation uses TypeScript interfaces only; auth bearer parsing is duplicated per controller | Follow-up: zod schemas on `@Body()` and a shared `AuthGuard`. |

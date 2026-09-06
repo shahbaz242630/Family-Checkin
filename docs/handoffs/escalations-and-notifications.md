@@ -1,0 +1,73 @@
+# Escalations and sender notifications — feature handoff
+
+Status: Built · Last verified: 2026-09-06 (acceptance run)
+BRD: FR-BAK-03, FR-CSC-04, FR-CSC-05, FR-CHN-03c-3/5/6/7/8, BRD-4.3 · Open backlog: CB-011, CB-012, CB-023, CB-030, CB-031, CB-035, CB-038, CB-058, CB-068
+Per area: HELP escalation, cascade-exhaustion notification and voice fallback — 2026-09-06 (acceptance run); sender-requested backup alert, device-token registration, push payload shape — 2026-09-06 (specs); mobile push registration — 2026-05-18 (emulator, Expo Go skips registration).
+
+## What it does
+
+- A receiver HELP reply marks the check-in `RESPONDED_HELP`, then alerts every active backup contact in `priorityOrder` on SMS and WhatsApp; one success marks the check-in `ESCALATED`.
+- When a check-in's whole cascade goes unanswered, the check-in becomes `NEEDS_ATTENTION` and the sender gets a siren push with a deep link to the receiver. Backup contacts are deliberately not alerted here (FR-BAK-03).
+- The sender can request the backup alert themselves from receiver detail (`Alert backup contacts`), which runs the same backup fan-out.
+- Sender escalation pushes use a dedicated Expo shape: `sound: escalation-siren.wav`, `priority: high`, `channelId: emergency-alerts`, `interruptionLevel: timeSensitive`, `data.notificationType: escalation_siren`, `data.deepLink`.
+- When zero pushes are accepted (no active token, or the Expo call throws), the backend places a voice call to the sender with script `sender_escalation_siren_voice`.
+- The mobile app registers an Expo push token after sign-in and creates the Android `emergency-alerts` channel first; the sender dashboard renders `ESCALATED`/`FAILED`/`SKIPPED` as `Backup alerted`/`Escalation failed`/`No backup available`.
+
+## Where it lives
+
+| Layer   | Paths                                                                                                                                                                                                                                                                                                        |
+| ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Backend | `apps/backend/src/modules/escalations/` (service, repository, module, tokens); `apps/backend/src/modules/notifications/` (controller, service, `expo-push.gateway.ts`, repository); callers: `check-ins.service.ts:551`, `receiver-reply.service.ts:410`, `receivers.service.ts:428`                            |
+| Mobile  | `apps/mobile/src/services/pushNotifications.ts`; trigger in `apps/mobile/src/contexts/AuthContext.tsx:58-77`; API client `apps/mobile/src/services/backendApi.ts:295`; `apps/mobile/assets/sounds/escalation-siren.wav` (5,644 bytes); bundling in `apps/mobile/app.json:76-78`; status labels `apps/mobile/src/utils/receiverStatus.ts`; `apps/mobile/src/app/(main)/escalations.tsx` is a 5-line redirect to `/(main)` |
+| Data    | `escalation_events` (`attemptNumber`, `channel`, `result`, `senderNotifiedAt`, `backupAlertedAt`); `device_tokens` (unique `token`, `active`, `lastRegisteredAt`), migration `apps/backend/prisma/migrations/202605070001_device_tokens/migration.sql`, model `DeviceToken` at `schema.prisma:499-517`         |
+| Tests   | `escalations.service.spec.ts`, `prisma-escalations.repository.spec.ts`, `notifications.service.spec.ts`, `check-ins.service.spec.ts` (exhaustion notifies once), `apps/mobile/src/services/pushNotifications.spec.ts`                                                                                          |
+
+## Routes and contracts
+
+- `POST /device-tokens` — sender, Supabase bearer. Body `{ token, platform: 'ios'|'android'|'web', deviceId? }`. Rejects anything not matching `/^Expo(nent)?PushToken\[...\]$/`; upserts by token; returns `{ deviceToken: { id, platform, active, registeredAt } }`.
+- `PATCH /receivers/:receiverId/check-ins/:checkInId/alert-backup` — sender, Supabase bearer, sender-owned receiver only, and only for the receiver's latest check-in in `RESPONDED_HELP`, `FAILED` or `SKIPPED`. Runs `escalateSenderRequestedBackup`.
+- There is no route for HELP escalation or cascade-exhaustion notification: both are internal, driven by inbound replies (`POST /receiver-replies/fake` in fake mode, the Twilio webhooks in configured mode) and by `POST /operations/check-ins/run`.
+
+Audit actions this feature writes: `escalation.backup_contact_alerted`, `escalation.backup_contact_failed`, `escalation.no_backup_contacts`, `check_in.escalated`, `check_in.escalation_failed`, `check_in.escalation_skipped`, `sender_push.sent`, `sender_push.not_delivered`, `sender_push.failed`, `sender_voice_fallback.sent`, `sender_voice_fallback.failed`, `push.device_token_registered`. `check_in.needs_attention` and `check_in.backup_alert_requested` are written by the check-ins and receivers modules that call in.
+
+## How to exercise it locally (fake mode)
+
+- Set up `apps/backend/.env` per `docs/EMULATOR_RUNBOOK.md` §3 (`CHANNEL_PROVIDER_MODE=fake`, `OPERATIONS_CRON_SECRET`) and start the backend.
+- HELP escalation: `POST /receiver-replies/fake` with `{"fromPhone":"<receiver>","channel":"SMS","body":"HELP"}` and the cron-secret bearer on an open check-in that has a backup contact. Expect two `escalation_events` rows (SMS + WHATSAPP, both `SUCCESS`) and `check_in.escalated`. The alert bodies stay in the fake provider's memory until CB-067 lands; check the copy through `message-catalog.service.spec.ts`.
+- Cascade exhaustion: send the check-in, then re-run `POST /operations/check-ins/run` (cron-secret bearer) until every attempt times out. Expect `NEEDS_ATTENTION`, exactly one `check_in.needs_attention {reason:"cascade_exhausted"}`, one `sender_push.not_delivered {attempted:0}` and one `sender_voice_fallback.sent {reason:"cascade_exhausted"}`. Re-running the tick adds nothing.
+- Sender-requested alert: `PATCH /receivers/:id/check-ins/:cid/alert-backup` with a Supabase bearer from the app.
+- There is no fake push gateway: `ExpoPushGateway` always calls `https://exp.host/--/api/v2/push/send`. With no device token registered the observable path is `sender_push.not_delivered` → voice fallback; registering a token makes a real outbound Expo request.
+
+## Invariants — do not break
+
+- `notifySender` runs *before* the backup fan-out, and the `sentAt` it returns is stamped as `senderNotifiedAt` on every `escalation_event` created in that pass.
+- Voice fallback fires only when the push result is `sent === 0` or the push call throws. Zero active tokens is not an error path — it is `attempted: 0` plus the fallback.
+- `notifySenderOfMissedCheckIn` must never fan out to backup contacts and must never write a check-in status (FR-BAK-03 reserves that for the sender's own action).
+- Exhaustion notification is once-only because `markNeedsAttention` is a guarded `updateMany`; a second timed-out attempt, a replayed callback or a re-run tick finds the row already flagged and neither audits nor notifies.
+- `escalateHelpResponse` has no terminal status: no contacts or all-failures leave the check-in `RESPONDED_HELP`. Only `escalateMissedCheckIn` passes `SKIPPED`/`FAILED`.
+- Audit metadata stays PII-free — ids, statuses, counts, channels, reasons. `backupContactId` is an id and must remain allowed by the audit PII guard (it caused a 500 before CB-002).
+- Backup-contact, receiver and sender phones are decrypted only at the moment of provider send.
+- The sound filename `escalation-siren.wav` must stay identical in three places: the backend push payload, the Android channel in `pushNotifications.ts`, and the `expo-notifications` `sounds` array in `app.json`.
+- `device_tokens.token` is unique; an Expo `DeviceNotRegistered` ticket must keep deactivating that row.
+- `escalateMissedCheckIn` currently has no production caller (only specs). Do not wire it to cascade exhaustion — that is the contradiction CB-005 resolved against.
+
+## Known gaps
+
+- Android push cannot arrive at all: `apps/mobile/app.json` has no `android.googleServicesFile` and no FCM project exists (CB-031).
+- Expo Go on Android is skipped by design (`Constants.appOwnership === 'expo'` returns early); Expo Go on SDK 53+ has no remote push, so a development build is required to see any push.
+- iOS Critical Alerts entitlement is not implemented and Android DND bypass is off (`bypassDnd: false`); neither may be claimed as granted behaviour.
+- CB-011 — backup alerts fire on SMS and WhatsApp at once in hard-coded `'en'`, producing an ERROR event per unconfigured channel.
+- CB-012 — no quiet (non-siren) sender pushes for consent, STOP or backup DONE.
+- CB-023 — Expo gateway has no access token, no 100-message chunking, no timeout, no receipt polling; `platform` is free text.
+- CB-030 — no foreground handler, no tap → deep-link navigation, no token unregister on sign-out, no permission-denied UX.
+- CB-035 — no "Test my siren" control or DND/permission status surface.
+- CB-038 — the bundled siren is a 0.35 s, 8 kHz blip; needs a real ≤ 30 s, 44.1 kHz siren at the same filename.
+- CB-058 — no 5-minute sender-acknowledgement timeout that auto-alerts backups.
+- CB-068 — `sender_push.*` and `sender_voice_fallback.sent` audit rows omit the `deepLink`, so the deep-link clause is proven only by unit specs (acceptance defect D2).
+
+## History
+
+- Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §11 (lines 1498–1540, HELP escalation), §12 (1543–1581, missed check-in), §16 (1710–1740, terminal outcomes), §18 (1766–1793, status labels), §27 (2152–2194, sender actions), §29g (2477–2518, sender push and device tokens), slice 10 (line 3253, siren baseline), slice 4 (line ~3413, bundled siren + voice fallback), §0a (793–804, sprint 1).
+- Acceptance: `docs/audits/2026-09-06/sprint1-acceptance.md` scenarios S5 and S8, defect D2.
+- PRs: #18 (CB-002 audit PII guard unblocked HELP escalation in production wiring), #20 (CB-005 cascade exhaustion notifies the sender; dead `escalateOverdueCheckIns` removed).
+- Related handoff: `docs/handoffs/backup-contacts.md` for backup-contact CRUD and the `DONE` reply that resolves an escalated check-in.
