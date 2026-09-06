@@ -1,5 +1,15 @@
-import { Body, Controller, Get, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Inject,
+  Post,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { BillingStore } from '@prisma/client';
+import { isMatchingSecret } from '../../shared/auth/bearer-secret';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
 import { UsersService } from '../users/users.service';
@@ -57,25 +67,32 @@ export class BillingController {
     return this.usersService.upsertFromSupabaseIdentity(identity);
   }
 
+  /**
+   * 401 only for a missing, unconfigured or wrong token. The comparison is constant-time so response timing
+   * cannot leak how much of a guessed token matched (CB-026).
+   */
   private assertRevenueCatAuth(authorization: string | undefined): void {
     const expected = this.config.revenueCatWebhookAuthToken;
     const provided = authorization?.startsWith('Bearer ') ? authorization.slice('Bearer '.length) : authorization;
-    if (!expected || !provided || provided !== expected) {
+    if (!expected || !provided || !isMatchingSecret(provided, expected)) {
       throw new UnauthorizedException('RevenueCat webhook authorization is required');
     }
   }
 
-  private parseRevenueCatEvent(body: RevenueCatWebhookBody): RevenueCatWebhookEvent {
-    const event = body.event;
+  /** A payload RevenueCat would never send is a 400, not an authorization failure (CB-026). */
+  private parseRevenueCatEvent(body: RevenueCatWebhookBody | undefined): RevenueCatWebhookEvent {
+    const event = body?.event;
     if (
-      !event?.type ||
-      !event.id ||
-      !event.app_user_id ||
-      !event.product_id ||
-      !event.transaction_id ||
-      !event.purchased_at_ms
+      !event ||
+      typeof event !== 'object' ||
+      !isNonEmptyString(event.type) ||
+      !isNonEmptyString(event.id) ||
+      !isNonEmptyString(event.app_user_id) ||
+      !isNonEmptyString(event.product_id) ||
+      !isNonEmptyString(event.transaction_id) ||
+      !isPositiveNumber(event.purchased_at_ms)
     ) {
-      throw new UnauthorizedException('RevenueCat webhook payload is invalid');
+      throw new BadRequestException('RevenueCat webhook payload is invalid');
     }
 
     return {
@@ -83,11 +100,11 @@ export class BillingController {
       eventId: event.id,
       appUserId: event.app_user_id,
       productId: event.product_id,
-      entitlementIds: event.entitlement_ids ?? [],
+      entitlementIds: Array.isArray(event.entitlement_ids) ? event.entitlement_ids.filter(isNonEmptyString) : [],
       store: this.parseStore(event.store),
       purchasedAt: new Date(event.purchased_at_ms),
-      expirationAt: event.expiration_at_ms ? new Date(event.expiration_at_ms) : null,
-      periodType: event.period_type ?? null,
+      expirationAt: isPositiveNumber(event.expiration_at_ms) ? new Date(event.expiration_at_ms) : null,
+      periodType: isNonEmptyString(event.period_type) ? event.period_type : null,
       transactionId: event.transaction_id,
     };
   }
@@ -114,4 +131,12 @@ export class BillingController {
     }
     return token;
   }
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+function isPositiveNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
