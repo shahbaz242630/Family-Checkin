@@ -28,13 +28,19 @@ export function createChannelProviders(
   }
 
   return [
-    new WhatsappProvider({
-      accountSid: config.twilioAccountSid,
-      authToken: config.twilioAuthToken,
-      fromNumber: config.twilioWhatsappFromNumber,
-      contentSidByTemplateKey: config.twilioWhatsappContentSids,
-      publicApiBaseUrl: config.publicApiBaseUrl,
-    }),
+    new WhatsappProvider(
+      {
+        accountSid: config.twilioAccountSid,
+        authToken: config.twilioAuthToken,
+        fromNumber: config.twilioWhatsappFromNumber,
+        contentSidByTemplateKey: config.twilioWhatsappContentSids,
+        publicApiBaseUrl: config.publicApiBaseUrl,
+      },
+      undefined,
+      undefined,
+      // The template text (channel_templates WHATSAPP row) decides the numbered placeholders (CB-020).
+      catalog,
+    ),
     new SmsProvider(
       {
         accountSid: config.twilioAccountSid,

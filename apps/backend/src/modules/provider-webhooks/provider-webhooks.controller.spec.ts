@@ -85,10 +85,11 @@ class FakeCheckInsService {
 }
 
 const config = {
-  channelWebhookSecret: 'provider-webhook-secret',
   twilioAuthToken: 'twilio-auth-token',
   publicApiBaseUrl: 'https://api.nearby.test',
 };
+
+const VOICE_URL = 'https://api.nearby.test/provider-webhooks/twilio/voice';
 
 describe('ProviderWebhooksController', () => {
   function makeController() {
@@ -99,130 +100,6 @@ describe('ProviderWebhooksController', () => {
 
     return { controller, service, eventsRepository, checkInsService };
   }
-
-  it('normalizes WhatsApp text messages into receiver replies', async () => {
-    const { controller, service } = makeController();
-
-    const response = await controller.handleWhatsappWebhook(
-      'provider-webhook-secret',
-      {
-        entry: [
-          {
-            changes: [
-              {
-                value: {
-                  messages: [
-                    {
-                      id: 'wamid.1',
-                      from: '971501234567',
-                      timestamp: '1777626000',
-                      type: 'text',
-                      text: {
-                        body: 'OK',
-                      },
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        ],
-      },
-      '198.51.100.20',
-      'MetaWebhook/1.0',
-    );
-
-    expect(response).toEqual({
-      ok: true,
-      processed: 1,
-    });
-    expect(service.handled).toEqual([
-      {
-        fromPhone: '+971501234567',
-        channel: Channel.WHATSAPP,
-        body: 'OK',
-        providerMessageId: 'wamid.1',
-        providerReceivedAt: new Date(1777626000 * 1000),
-        ipAddress: '198.51.100.20',
-        userAgent: 'MetaWebhook/1.0',
-      },
-    ]);
-  });
-
-  it('ignores WhatsApp non-text messages without exposing payload details', async () => {
-    const { controller, service } = makeController();
-
-    const response = await controller.handleWhatsappWebhook(
-      'provider-webhook-secret',
-      {
-        entry: [
-          {
-            changes: [
-              {
-                value: {
-                  messages: [
-                    {
-                      id: 'wamid.image',
-                      from: '971501234567',
-                      type: 'image',
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        ],
-      },
-      undefined,
-      undefined,
-    );
-
-    expect(response).toEqual({
-      ok: true,
-      processed: 0,
-    });
-    expect(JSON.stringify(response)).not.toContain('971501234567');
-    expect(service.handled).toEqual([]);
-  });
-
-  it('normalizes SMS provider payloads into receiver replies', async () => {
-    const { controller, service } = makeController();
-
-    const response = await controller.handleSmsWebhook(
-      'provider-webhook-secret',
-      {
-        From: '+971501234568',
-        Body: 'DONE',
-        MessageSid: 'SM123',
-      },
-      '198.51.100.21',
-      'SmsProvider/1.0',
-    );
-
-    expect(response).toEqual({
-      ok: true,
-      processed: 1,
-    });
-    expect(service.handled).toEqual([
-      {
-        fromPhone: '+971501234568',
-        channel: Channel.SMS,
-        body: 'DONE',
-        providerMessageId: 'SM123',
-        ipAddress: '198.51.100.21',
-        userAgent: 'SmsProvider/1.0',
-      },
-    ]);
-  });
-
-  it('rejects provider callbacks when the webhook secret is missing or wrong', async () => {
-    const { controller, service } = makeController();
-
-    await expect(controller.handleSmsWebhook('wrong-secret', { From: '+971501234568', Body: 'OK' })).rejects.toThrow(
-      UnauthorizedException,
-    );
-    expect(service.handled).toEqual([]);
-  });
 
   it('validates Twilio SMS signatures and normalizes inbound SMS replies', async () => {
     const { controller, service } = makeController();
@@ -319,36 +196,102 @@ describe('ProviderWebhooksController', () => {
     ]);
   });
 
-  it('validates Twilio voice signatures and normalizes DTMF replies', async () => {
-    const { controller, service } = makeController();
-    const params = {
-      From: '+15550003333',
-      To: '+971501234571',
-      Digits: '1',
-      CallSid: 'CA123',
-    };
+  describe('Twilio voice Gather action (CB-022)', () => {
+    const request = (query: string) => ({ originalUrl: `/provider-webhooks/twilio/voice${query}` });
 
-    const response = await controller.handleTwilioVoiceWebhook(
-      signatureFor('https://api.nearby.test/provider-webhooks/twilio/voice', params),
-      params,
-      '203.0.113.31',
-      'TwilioProxy/1.1',
-    );
+    it('answers a signed keypress with TwiML in the receiver language and hands YES to the reply service', async () => {
+      const { controller, service } = makeController();
+      const params = {
+        From: '+15550003333',
+        To: '+971501234571',
+        Digits: '1',
+        CallSid: 'CA123',
+      };
 
-    expect(response).toEqual({
-      ok: true,
-      processed: 1,
+      const twiml = await controller.handleTwilioVoiceWebhook(
+        signatureFor(`${VOICE_URL}?lang=ar`, params),
+        params,
+        request('?lang=ar'),
+        '203.0.113.31',
+        'TwilioProxy/1.1',
+      );
+
+      expect(twiml).toBe(
+        '<?xml version="1.0" encoding="UTF-8"?><Response><Say language="ar-XA" voice="Google.ar-XA-Standard-A">' +
+          'شكراً لك. تم استلام ردك. مع السلامة.</Say><Hangup/></Response>',
+      );
+      expect(service.handled).toEqual([
+        {
+          fromPhone: '+971501234571',
+          channel: Channel.VOICE,
+          body: 'YES',
+          providerMessageId: 'CA123',
+          ipAddress: '203.0.113.31',
+          userAgent: 'TwilioProxy/1.1',
+        },
+      ]);
     });
-    expect(service.handled).toEqual([
-      {
-        fromPhone: '+971501234571',
-        channel: Channel.VOICE,
-        body: '1',
-        providerMessageId: 'CA123',
-        ipAddress: '203.0.113.31',
-        userAgent: 'TwilioProxy/1.1',
-      },
-    ]);
+
+    it.each([
+      ['2', 'HELP'],
+      ['9', 'STOP'],
+    ])('maps digit %s to %s before the reply service sees it', async (Digits, keyword) => {
+      const { controller, service } = makeController();
+      const params = { From: '+15550003333', To: '+971501234571', Digits, CallSid: 'CA124' };
+
+      await controller.handleTwilioVoiceWebhook(
+        signatureFor(`${VOICE_URL}?lang=en`, params),
+        params,
+        request('?lang=en'),
+      );
+
+      expect(service.handled).toEqual([expect.objectContaining({ channel: Channel.VOICE, body: keyword })]);
+    });
+
+    it('ignores an unmapped digit but still ends the call politely with the same TwiML', async () => {
+      const { controller, service } = makeController();
+      const params = { From: '+15550003333', To: '+971501234571', Digits: '5', CallSid: 'CA125' };
+
+      const twiml = await controller.handleTwilioVoiceWebhook(
+        signatureFor(`${VOICE_URL}?lang=hi`, params),
+        params,
+        request('?lang=hi'),
+      );
+
+      expect(service.handled).toEqual([]);
+      expect(twiml).toContain('<Say language="hi-IN" voice="Google.hi-IN-Standard-A">');
+      expect(twiml).toContain('<Hangup/></Response>');
+    });
+
+    it('speaks English when the action URL carries no language', async () => {
+      const { controller } = makeController();
+      const params = { From: '+15550003333', To: '+971501234571', Digits: '1', CallSid: 'CA126' };
+
+      const twiml = await controller.handleTwilioVoiceWebhook(signatureFor(VOICE_URL, params), params, request(''));
+
+      expect(twiml).toContain(
+        '<Say language="en-GB" voice="Polly.Amy">Thank you. Your answer has been received. Goodbye.</Say>',
+      );
+    });
+
+    it('includes the query string in the signed URL, so a signature over the bare path is rejected', async () => {
+      const { controller, service } = makeController();
+      const params = { From: '+15550003333', To: '+971501234571', Digits: '9', CallSid: 'CA127' };
+
+      await expect(
+        controller.handleTwilioVoiceWebhook(signatureFor(VOICE_URL, params), params, request('?lang=ar')),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(service.handled).toEqual([]);
+    });
+
+    it('rejects an unsigned keypress before touching anything', async () => {
+      const { controller, service } = makeController();
+
+      await expect(
+        controller.handleTwilioVoiceWebhook(undefined, { To: '+971501234571', Digits: '1' }, request('?lang=en')),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(service.handled).toEqual([]);
+    });
   });
 
   it('accepts signed Twilio voice status callbacks without treating them as receiver replies', async () => {

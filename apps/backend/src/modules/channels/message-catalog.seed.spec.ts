@@ -4,7 +4,13 @@ import { Channel } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import { InMemoryChannelTemplateRepository } from './channel-template.repository';
 import { MessageCatalogService } from './message-catalog.service';
-import { IN_CODE_MESSAGE_TEMPLATES, MESSAGE_TEMPLATE_KEYS } from './message-catalog.templates';
+import {
+  IN_CODE_MESSAGE_TEMPLATES,
+  MESSAGE_TEMPLATE_KEYS,
+  NEUTRAL_SENDER_DISPLAY_NAME,
+  NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS,
+  NEUTRAL_SENDER_DISPLAY_NAMES_BY_LANGUAGE,
+} from './message-catalog.templates';
 
 /**
  * The seed migration is the single source of truth for the eight-language copy, so this spec reads the SQL the
@@ -138,6 +144,37 @@ describe('channel_templates seed migration (CB-010, eight BRD languages)', () =>
         expect(value, `${row.templateKey}:${row.language} unknown variable ${name}`).toBeDefined();
         expect(rendered.body, `${row.templateKey}:${row.language} value of ${name}`).toContain(value);
       }
+    }
+  });
+
+  it('renders every seeded row for a sender without a name in that language, never with the English fallback (CB-079)', async () => {
+    const templates = new InMemoryChannelTemplateRepository(
+      rows.map((row) => ({ ...row, channel: Channel.SMS, active: true })),
+    );
+    const catalog = new MessageCatalogService(templates);
+
+    for (const row of rows.filter((candidate) => candidate.bodyText.includes('{{senderDisplayName}}'))) {
+      const forBackupContact = row.templateKey.startsWith('backup_contact_');
+      const rendered = await catalog.render({
+        templateKey: row.templateKey,
+        language: row.language,
+        channel: Channel.SMS,
+        variables: {
+          ...allVariables,
+          senderDisplayName: forBackupContact
+            ? NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS
+            : NEUTRAL_SENDER_DISPLAY_NAME,
+        },
+      });
+      const phrases = NEUTRAL_SENDER_DISPLAY_NAMES_BY_LANGUAGE[row.language];
+      const label = `${row.templateKey}:${row.language}`;
+
+      expect(rendered.language, label).toBe(row.language);
+      expect(rendered.body, label).toContain(forBackupContact ? phrases?.backupContact : phrases?.receiver);
+      if (row.language !== 'en') {
+        expect(rendered.body, label).not.toMatch(/family member/i);
+      }
+      expect(rendered.body.length, `${label} length with the neutral phrase`).toBeLessThanOrEqual(MAX_BODY_LENGTH);
     }
   });
 

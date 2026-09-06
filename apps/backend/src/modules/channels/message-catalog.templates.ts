@@ -40,6 +40,47 @@ export const NEUTRAL_RECEIVER_NAME_FOR_BACKUP_CONTACTS = 'the person you are a b
 /** Greeting when a receiver name is unavailable ("Hi there,"). */
 export const NEUTRAL_RECEIVER_GREETING_NAME = 'there';
 
+/**
+ * The two neutral sender phrases per launch language (CB-079). `MessageCatalogService` swaps whichever English
+ * constant a caller passed for the phrase of the language it actually renders, so "your family member" never lands
+ * inside an Arabic or Hindi body whatever the call site. The backup-contact phrase is deliberately possessive-free
+ * outside English ("a family member") because the seeded sentences use it both before and after the receiver's
+ * name. Every non-English phrase is a machine translation, unreviewed (docs/handoffs/message-copy-review.md).
+ */
+export const NEUTRAL_SENDER_DISPLAY_NAMES_BY_LANGUAGE: Readonly<
+  Record<string, { receiver: string; backupContact: string }>
+> = {
+  en: { receiver: NEUTRAL_SENDER_DISPLAY_NAME, backupContact: NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS },
+  ar: { receiver: 'أحد أفراد عائلتك', backupContact: 'أحد أفراد العائلة' },
+  es: { receiver: 'un familiar suyo', backupContact: 'un familiar' },
+  hi: { receiver: 'आपके परिवार के एक सदस्य', backupContact: 'परिवार के एक सदस्य' },
+  ur: { receiver: 'آپ کے خاندان کے ایک فرد', backupContact: 'خاندان کے ایک فرد' },
+  ml: { receiver: 'താങ്കളുടെ ഒരു കുടുംബാംഗം', backupContact: 'ഒരു കുടുംബാംഗം' },
+  ta: { receiver: 'உங்கள் குடும்பத்தினர் ஒருவர்', backupContact: 'குடும்பத்தினர் ஒருவர்' },
+  bn: { receiver: 'আপনার পরিবারের একজন সদস্য', backupContact: 'পরিবারের একজন সদস্য' },
+};
+
+/**
+ * `value` as it should read in `language`: one of the two English neutral constants becomes that language's phrase
+ * (`ar-EG` counts as `ar`); a real name, any other value, or a language without phrases passes through untouched.
+ */
+export function localizeNeutralSenderDisplayName(value: string, language: string): string {
+  const base = language.trim().toLowerCase().split(/[-_]/)[0] ?? '';
+  const phrases = NEUTRAL_SENDER_DISPLAY_NAMES_BY_LANGUAGE[base];
+  if (!phrases) {
+    return value;
+  }
+
+  const trimmed = value.trim();
+  if (trimmed === NEUTRAL_SENDER_DISPLAY_NAME) {
+    return phrases.receiver;
+  }
+  if (trimmed === NEUTRAL_SENDER_DISPLAY_NAME_FOR_BACKUP_CONTACTS) {
+    return phrases.backupContact;
+  }
+  return value;
+}
+
 const CHECK_IN_REPLY_FOOTER =
   "Reply YES if you're okay or HELP if you need help. Reply STOP to stop, REPORT to report.";
 const BACKUP_REPLY_FOOTER = 'Reply DONE once you have reached them.';

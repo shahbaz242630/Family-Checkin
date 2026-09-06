@@ -1,46 +1,35 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { Body, Controller, Headers, Inject, Ip, Post, UnauthorizedException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Header,
+  Headers,
+  HttpCode,
+  Inject,
+  Ip,
+  Post,
+  Req,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Channel } from '@prisma/client';
 import { AppConfigService } from '../../shared/config/app-config.service';
+import {
+  renderTwilioVoiceReplyTwiml,
+  TWILIO_VOICE_GATHER_ACTION_PATH,
+  TWILIO_VOICE_LANGUAGE_QUERY_PARAM,
+} from '../channels/twilio-rendering';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import type { HandleInboundReceiverReplyInput } from '../receivers/receiver-reply.service';
 import { ReceiverReplyService } from '../receivers/receiver-reply.service';
 import type { ProviderWebhookEventsRepository } from './provider-webhook-events.repository';
 import { PROVIDER_WEBHOOK_EVENTS_REPOSITORY } from './provider-webhooks.tokens';
+import { twilioVoiceReplyKeyword } from './twilio-voice-input';
 
 interface ProviderWebhookResponse {
   ok: true;
   processed: number;
 }
-
-type WhatsappWebhookBody = {
-  entry?: Array<{
-    changes?: Array<{
-      value?: {
-        messages?: Array<{
-          id?: string;
-          from?: string;
-          timestamp?: string;
-          type?: string;
-          text?: {
-            body?: string;
-          };
-        }>;
-      };
-    }>;
-  }>;
-};
-
-type SmsWebhookBody = {
-  from?: string;
-  body?: string;
-  messageId?: string;
-  receivedAt?: string;
-  From?: string;
-  Body?: string;
-  MessageSid?: string;
-};
 
 type TwilioMessagingWebhookBody = {
   From?: string;
@@ -82,7 +71,23 @@ type TwilioVoiceAmdWebhookBody = {
   To?: string;
 };
 
-// Machine-called by Twilio/WhatsApp in bursts and authenticated by signature/shared secret, so the global rate limit does not apply.
+/**
+ * The part of the incoming request the voice route needs: the URL exactly as Twilio requested it, query string
+ * included, because Twilio's signature covers the full URL and the Gather action carries `?lang=` (CB-022).
+ */
+export interface WebhookRequestUrl {
+  originalUrl?: string;
+  url?: string;
+}
+
+type TwilioSignedPath =
+  | '/provider-webhooks/twilio/messaging'
+  | '/provider-webhooks/twilio/messaging/status'
+  | typeof TWILIO_VOICE_GATHER_ACTION_PATH
+  | '/provider-webhooks/twilio/voice/status'
+  | '/provider-webhooks/twilio/voice/amd';
+
+// Machine-called by Twilio in bursts and authenticated by signature, so the global rate limit does not apply.
 @SkipThrottle()
 @Controller('provider-webhooks')
 export class ProviderWebhooksController {
@@ -90,7 +95,7 @@ export class ProviderWebhooksController {
     @Inject(ReceiverReplyService)
     private readonly receiverReplyService: Pick<ReceiverReplyService, 'handleInboundReply'>,
     @Inject(AppConfigService)
-    private readonly config: Pick<AppConfigService, 'channelWebhookSecret' | 'twilioAuthToken' | 'publicApiBaseUrl'>,
+    private readonly config: Pick<AppConfigService, 'twilioAuthToken' | 'publicApiBaseUrl'>,
     @Inject(PROVIDER_WEBHOOK_EVENTS_REPOSITORY)
     private readonly providerWebhookEventsRepository: ProviderWebhookEventsRepository,
     @Inject(CheckInsService)
@@ -100,42 +105,11 @@ export class ProviderWebhooksController {
     >,
   ) {}
 
-  @Post('whatsapp')
-  async handleWhatsappWebhook(
-    @Headers('x-nearby-webhook-secret') webhookSecret: string | undefined,
-    @Body() body: WhatsappWebhookBody,
-    @Ip() ipAddress?: string,
-    @Headers('user-agent') userAgent?: string,
-  ): Promise<ProviderWebhookResponse> {
-    this.assertWebhookSecret(webhookSecret);
-
-    let processed = 0;
-    for (const reply of this.extractWhatsappReplies(body, ipAddress, userAgent)) {
-      await this.receiverReplyService.handleInboundReply(reply);
-      processed += 1;
-    }
-
-    return { ok: true, processed };
-  }
-
-  @Post('sms')
-  async handleSmsWebhook(
-    @Headers('x-nearby-webhook-secret') webhookSecret: string | undefined,
-    @Body() body: SmsWebhookBody,
-    @Ip() ipAddress?: string,
-    @Headers('user-agent') userAgent?: string,
-  ): Promise<ProviderWebhookResponse> {
-    this.assertWebhookSecret(webhookSecret);
-
-    const reply = this.extractSmsReply(body, ipAddress, userAgent);
-    if (!reply) {
-      return { ok: true, processed: 0 };
-    }
-
-    await this.receiverReplyService.handleInboundReply(reply);
-    return { ok: true, processed: 1 };
-  }
-
+  /**
+   * Inbound SMS and WhatsApp replies. This is the URL Twilio must be given as the messaging webhook of the SMS
+   * number and of the WhatsApp sender: `${PUBLIC_API_BASE_URL}/provider-webhooks/twilio/messaging`
+   * (docs/providers/twilio.md).
+   */
   @Post('twilio/messaging')
   async handleTwilioMessagingWebhook(
     @Headers('x-twilio-signature') twilioSignature: string | undefined,
@@ -212,22 +186,34 @@ export class ProviderWebhooksController {
     return { ok: true, processed: stored.created ? 1 : 0 };
   }
 
+  /**
+   * The `<Gather>` action of every outbound call (CB-022). Twilio expects TwiML back, so this route answers
+   * `200 text/xml` with a short thank-you in the receiver's language and hangs up; a JSON body here is Twilio error
+   * 12100 and a call that ends in an error tone. The language travels in the action URL's `lang` query parameter
+   * (the body only carries numbers, digits and the call SID) and is part of the signed URL. Digits are mapped by
+   * `twilioVoiceReplyKeyword` (1 YES, 2 HELP, 9 STOP); any other digit ends the call with the same thank-you and
+   * is not recorded.
+   */
   @Post('twilio/voice')
+  @HttpCode(200)
+  @Header('Content-Type', 'text/xml; charset=utf-8')
   async handleTwilioVoiceWebhook(
     @Headers('x-twilio-signature') twilioSignature: string | undefined,
     @Body() body: TwilioVoiceWebhookBody,
+    @Req() request: WebhookRequestUrl | undefined,
     @Ip() ipAddress?: string,
     @Headers('user-agent') userAgent?: string,
-  ): Promise<ProviderWebhookResponse> {
-    this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/voice', body);
+  ): Promise<string> {
+    const query = queryStringOf(request);
+    this.assertTwilioSignature(twilioSignature, TWILIO_VOICE_GATHER_ACTION_PATH, body, query);
+    const language = new URLSearchParams(query).get(TWILIO_VOICE_LANGUAGE_QUERY_PARAM) ?? '';
 
     const reply = this.extractTwilioVoiceReply(body, ipAddress, userAgent);
-    if (!reply) {
-      return { ok: true, processed: 0 };
+    if (reply) {
+      await this.receiverReplyService.handleInboundReply(reply);
     }
 
-    await this.receiverReplyService.handleInboundReply(reply);
-    return { ok: true, processed: 1 };
+    return renderTwilioVoiceReplyTwiml(language);
   }
 
   @Post('twilio/voice/status')
@@ -272,74 +258,6 @@ export class ProviderWebhooksController {
     });
 
     return { ok: true, processed: stored.created ? 1 : 0 };
-  }
-
-  private *extractWhatsappReplies(
-    body: WhatsappWebhookBody,
-    ipAddress: string | undefined,
-    userAgent: string | undefined,
-  ): Generator<HandleInboundReceiverReplyInput> {
-    for (const entry of body.entry ?? []) {
-      for (const change of entry.changes ?? []) {
-        for (const message of change.value?.messages ?? []) {
-          if (message.type !== 'text' || !message.from || !message.text?.body) {
-            continue;
-          }
-
-          const reply: HandleInboundReceiverReplyInput = {
-            fromPhone: this.toInternationalPhone(message.from),
-            channel: Channel.WHATSAPP,
-            body: message.text.body,
-            ipAddress,
-            userAgent,
-          };
-
-          if (message.id) {
-            reply.providerMessageId = message.id;
-          }
-
-          const providerReceivedAt = this.parseUnixTimestampSeconds(message.timestamp);
-          if (providerReceivedAt) {
-            reply.providerReceivedAt = providerReceivedAt;
-          }
-
-          yield reply;
-        }
-      }
-    }
-  }
-
-  private extractSmsReply(
-    body: SmsWebhookBody,
-    ipAddress: string | undefined,
-    userAgent: string | undefined,
-  ): HandleInboundReceiverReplyInput | null {
-    const fromPhone = body.from ?? body.From;
-    const replyBody = body.body ?? body.Body;
-
-    if (!fromPhone || !replyBody) {
-      return null;
-    }
-
-    const reply: HandleInboundReceiverReplyInput = {
-      fromPhone: this.toInternationalPhone(fromPhone),
-      channel: Channel.SMS,
-      body: replyBody,
-      ipAddress,
-      userAgent,
-    };
-
-    const providerMessageId = body.messageId ?? body.MessageSid;
-    if (providerMessageId) {
-      reply.providerMessageId = providerMessageId;
-    }
-
-    const providerReceivedAt = this.parseIsoDate(body.receivedAt);
-    if (providerReceivedAt) {
-      reply.providerReceivedAt = providerReceivedAt;
-    }
-
-    return reply;
   }
 
   private extractTwilioMessagingReply(
@@ -404,20 +322,21 @@ export class ProviderWebhooksController {
     };
   }
 
+  /** `To` is the receiver on an outbound call; the keypad digit becomes the keyword the reply service parses. */
   private extractTwilioVoiceReply(
     body: TwilioVoiceWebhookBody,
     ipAddress: string | undefined,
     userAgent: string | undefined,
   ): HandleInboundReceiverReplyInput | null {
-    const replyBody = body.Digits ?? body.SpeechResult;
-    if (!body.To || !replyBody) {
+    const keyword = twilioVoiceReplyKeyword({ digits: body.Digits, speechResult: body.SpeechResult });
+    if (!body.To || !keyword) {
       return null;
     }
 
     const reply: HandleInboundReceiverReplyInput = {
       fromPhone: this.toInternationalPhone(body.To),
       channel: Channel.VOICE,
-      body: replyBody,
+      body: keyword,
       ipAddress,
       userAgent,
     };
@@ -429,22 +348,16 @@ export class ProviderWebhooksController {
     return reply;
   }
 
-  private assertWebhookSecret(webhookSecret: string | undefined): void {
-    const expected = this.config.channelWebhookSecret;
-    if (!webhookSecret || !expected || !this.isMatchingSecret(webhookSecret, expected)) {
-      throw new UnauthorizedException('Provider webhook secret is required');
-    }
-  }
-
+  /**
+   * Twilio signs the full URL it requested (query string included) followed by the sorted POST parameters; the
+   * expected URL is rebuilt from `PUBLIC_API_BASE_URL`, the route path and the query string as received, so a
+   * route or base-URL change breaks every signature by design.
+   */
   private assertTwilioSignature(
     twilioSignature: string | undefined,
-    path:
-      | '/provider-webhooks/twilio/messaging'
-      | '/provider-webhooks/twilio/messaging/status'
-      | '/provider-webhooks/twilio/voice'
-      | '/provider-webhooks/twilio/voice/status'
-      | '/provider-webhooks/twilio/voice/amd',
+    path: TwilioSignedPath,
     params: Record<string, string | undefined>,
+    queryString = '',
   ): void {
     const authToken = this.config.twilioAuthToken;
     const publicApiBaseUrl = this.config.publicApiBaseUrl;
@@ -453,7 +366,8 @@ export class ProviderWebhooksController {
       throw new UnauthorizedException('Twilio signature is required');
     }
 
-    const expectedSignature = this.computeTwilioSignature(`${publicApiBaseUrl}${path}`, params, authToken);
+    const url = `${publicApiBaseUrl}${path}${queryString ? `?${queryString}` : ''}`;
+    const expectedSignature = this.computeTwilioSignature(url, params, authToken);
     if (!this.isMatchingSecret(twilioSignature, expectedSignature)) {
       throw new UnauthorizedException('Twilio signature is invalid');
     }
@@ -484,28 +398,6 @@ export class ProviderWebhooksController {
     return trimmed.startsWith('+') ? trimmed : `+${trimmed}`;
   }
 
-  private parseUnixTimestampSeconds(value: string | undefined): Date | undefined {
-    if (!value) {
-      return undefined;
-    }
-
-    const timestamp = Number(value);
-    if (!Number.isFinite(timestamp)) {
-      return undefined;
-    }
-
-    return new Date(timestamp * 1000);
-  }
-
-  private parseIsoDate(value: string | undefined): Date | undefined {
-    if (!value) {
-      return undefined;
-    }
-
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? undefined : date;
-  }
-
   private twilioProviderEventId(primary: string | undefined, secondary: string | undefined): string | undefined {
     if (!primary) {
       return undefined;
@@ -513,4 +405,11 @@ export class ProviderWebhooksController {
 
     return secondary ? `${primary}:${secondary}` : primary;
   }
+}
+
+/** The raw query string (without `?`) of the request as received, or an empty string. */
+function queryStringOf(request: WebhookRequestUrl | undefined): string {
+  const raw = request?.originalUrl ?? request?.url ?? '';
+  const index = raw.indexOf('?');
+  return index >= 0 ? raw.slice(index + 1) : '';
 }

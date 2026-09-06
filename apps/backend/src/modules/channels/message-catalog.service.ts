@@ -2,7 +2,11 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { Channel } from '@prisma/client';
 import type { ChannelTemplateRepository } from './channel-template.repository';
 import { CHANNEL_TEMPLATE_REPOSITORY } from './channels.tokens';
-import { DEFAULT_MESSAGE_LANGUAGE, IN_CODE_MESSAGE_TEMPLATES } from './message-catalog.templates';
+import {
+  DEFAULT_MESSAGE_LANGUAGE,
+  IN_CODE_MESSAGE_TEMPLATES,
+  localizeNeutralSenderDisplayName,
+} from './message-catalog.templates';
 
 export interface RenderMessageInput {
   templateKey: string;
@@ -52,8 +56,10 @@ export class MalformedMessageTemplateError extends MessageCatalogError {
   }
 }
 
-const SECTION_PATTERN = /\{\{#([A-Za-z][A-Za-z0-9_]*)\}\}([\s\S]*?)\{\{\/\1\}\}/g;
-const PLACEHOLDER_PATTERN = /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g;
+/** `{{#name}}…{{/name}}`: an optional section, kept only when `name` is present. Shared with the WhatsApp mapping. */
+export const SECTION_PATTERN = /\{\{#([A-Za-z][A-Za-z0-9_]*)\}\}([\s\S]*?)\{\{\/\1\}\}/g;
+/** `{{name}}`: a required placeholder. */
+export const PLACEHOLDER_PATTERN = /\{\{\s*([A-Za-z][A-Za-z0-9_]*)\s*\}\}/g;
 
 /**
  * Turns a template key plus variables into the text a receiver, backup contact or sender actually reads.
@@ -82,7 +88,7 @@ export class MessageCatalogService {
     for (const language of requestedLanguages) {
       const body = await this.findBody(input.templateKey, language, input.channel);
       if (body !== null) {
-        return { body: renderTemplate(input.templateKey, language, body, input.variables), language, fallback: false };
+        return { body: renderIn(input, language, body), language, fallback: false };
       }
     }
 
@@ -92,10 +98,20 @@ export class MessageCatalogService {
     }
 
     return {
-      body: renderTemplate(input.templateKey, DEFAULT_MESSAGE_LANGUAGE, fallbackBody, input.variables),
+      body: renderIn(input, DEFAULT_MESSAGE_LANGUAGE, fallbackBody),
       language: DEFAULT_MESSAGE_LANGUAGE,
       fallback: !requestedLanguages.includes(DEFAULT_MESSAGE_LANGUAGE),
     };
+  }
+
+  /**
+   * The template text for exactly this language and channel, with its `{{name}}` placeholders and optional
+   * sections intact: the active `channel_templates` row, else the in-code copy, else `null`. No language fallback
+   * here; the WhatsApp provider walks the candidates itself to number the placeholders of the template that is
+   * actually approved (CB-020).
+   */
+  async templateBody(input: { templateKey: string; language: string; channel?: Channel }): Promise<string | null> {
+    return this.findBody(input.templateKey, input.language.trim().toLowerCase(), input.channel);
   }
 
   private async findBody(templateKey: string, language: string, channel: Channel | undefined): Promise<string | null> {
@@ -126,8 +142,22 @@ function inCodeBody(templateKey: string, language: string): string | null {
   return byLanguage[language] ?? null;
 }
 
+/**
+ * Renders `template` in the language the catalog settled on. The neutral sender wording follows that language
+ * (CB-079): a caller can only pass the English constants, and the copy they land in may be Arabic.
+ */
+function renderIn(input: RenderMessageInput, language: string, template: string): string {
+  const senderDisplayName = input.variables.senderDisplayName;
+  const variables =
+    typeof senderDisplayName === 'string'
+      ? { ...input.variables, senderDisplayName: localizeNeutralSenderDisplayName(senderDisplayName, language) }
+      : input.variables;
+
+  return renderTemplate(input.templateKey, language, template, variables);
+}
+
 /** `en-GB` -> ['en-gb', 'en']; `ar` -> ['ar']; blank -> ['en']. */
-function languageCandidates(language: string): string[] {
+export function languageCandidates(language: string): string[] {
   const normalized = language.trim().toLowerCase();
   if (!normalized) {
     return [DEFAULT_MESSAGE_LANGUAGE];

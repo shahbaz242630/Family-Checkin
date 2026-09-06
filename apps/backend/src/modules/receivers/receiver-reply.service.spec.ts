@@ -12,7 +12,10 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { BackupContactRecord, BackupContactsRepository } from '../backup-contacts/backup-contacts.repository';
 import { ChannelRouterService } from '../channels/channel-router.service';
+import { InMemoryChannelTemplateRepository } from '../channels/channel-template.repository';
 import { FakeChannelProvider } from '../channels/fake-channel.provider';
+import { MessageCatalogService } from '../channels/message-catalog.service';
+import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import type {
   CreateEscalationEventInput,
   EscalationBackupContactRecord,
@@ -1536,12 +1539,21 @@ describe('ReceiverReplyService tells the sender quietly and confirms a STOP to t
     providers?: FakeChannelProvider[];
     checkIns?: InMemoryCheckInsRepository;
     backupContacts?: InMemoryBackupContactsRepository;
+    /** The sender's stored display name; `undefined` behaves like the real UsersService for a sender without one. */
+    senderDisplayName?: string;
   }) {
     const crypto = new CryptoService(masterKey);
     const repository = new InMemoryReceiversRepository();
     const { auditService, audit } = createRealAuditService(now);
     const notifications = options.notifications ?? new InMemoryNotificationsService('sent', now);
     repository.records.push(options.receiver);
+    const usersService =
+      'senderDisplayName' in options
+        ? {
+            senderDisplayNameFor: async (_userId: string, fallback: string = NEUTRAL_SENDER_DISPLAY_NAME) =>
+              options.senderDisplayName ?? fallback,
+          }
+        : undefined;
     const service = new ReceiverReplyService(
       repository,
       options.checkIns ?? new InMemoryCheckInsRepository(),
@@ -1553,6 +1565,7 @@ describe('ReceiverReplyService tells the sender quietly and confirms a STOP to t
       undefined,
       notifications,
       options.providers ? new ChannelRouterService(options.providers) : undefined,
+      usersService,
     );
 
     return { crypto, repository, audit, notifications, service };
@@ -1678,6 +1691,65 @@ describe('ReceiverReplyService tells the sender quietly and confirms a STOP to t
     expect(audit.events[1]).toMatchObject({
       action: 'receiver.opt_out_confirmation_failed',
       metadata: { channel: Channel.SMS, templateKey: 'receiver_checkins_ended', error: expect.any(String) },
+    });
+  });
+
+  it('names the sender in the STOP confirmation when a display name is stored (CB-079)', async () => {
+    const crypto = new CryptoService(masterKey);
+    const sms = new FakeChannelProvider(Channel.SMS, { now });
+    const { audit, service } = harness({
+      receiver: { ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED },
+      providers: [sms],
+      senderDisplayName: 'Ahmed',
+    });
+
+    await service.handleInboundReply({ fromPhone: '+971501234567', channel: Channel.SMS, body: 'STOP' });
+
+    expect(sms.sentMessages[0]?.message.variables).toEqual({
+      receiverName: 'Fatima Parent',
+      senderDisplayName: 'Ahmed',
+    });
+    expect(sms.renderedMessages[0]?.body).toBe(
+      'Hi Fatima Parent, Ahmed has ended your Nearby check-ins. You will not get any more check-in messages. ' +
+        'Reply REPORT to report.',
+    );
+    expect(JSON.stringify(audit.events)).not.toContain('Ahmed');
+  });
+
+  it('confirms a STOP to an Arabic receiver without a named sender in Arabic only, never with the English fallback (CB-079)', async () => {
+    const crypto = new CryptoService(masterKey);
+    // The seeded Arabic row (migration 202609060103), as the fake provider's catalog.
+    const catalog = new MessageCatalogService(
+      new InMemoryChannelTemplateRepository([
+        {
+          templateKey: 'receiver_checkins_ended',
+          language: 'ar',
+          channel: Channel.SMS,
+          bodyText:
+            'مرحباً {{receiverName}}، تم إنهاء رسائل الاطمئنان من Nearby بطلب من {{senderDisplayName}}. ' +
+            'لن تصلك أي رسائل اطمئنان بعد الآن. أرسل REPORT للإبلاغ.',
+        },
+      ]),
+    );
+    const sms = new FakeChannelProvider(Channel.SMS, { now, catalog });
+    const { audit, service } = harness({
+      receiver: { ...receiverFixture(crypto), consentStatus: ConsentStatus.GRANTED, language: 'ar' },
+      providers: [sms],
+      senderDisplayName: undefined,
+    });
+
+    const result = await service.handleInboundReply({ fromPhone: '+971501234567', channel: Channel.SMS, body: 'STOP' });
+
+    expect(result.action).toBe('consent_revoked');
+    const body = sms.renderedMessages[0]?.body ?? '';
+    expect(sms.renderedMessages[0]).toMatchObject({ language: 'ar', fallback: false });
+    expect(body).toContain('بطلب من أحد أفراد عائلتك.');
+    expect(body).not.toMatch(/family member/i);
+    // Only the brand, the reply keyword and the receiver's own name may be Latin in an Arabic body.
+    expect(body.replace(/Nearby|REPORT|Fatima Parent/g, '')).not.toMatch(/[A-Za-z]/);
+    expect(audit.events[1]).toMatchObject({
+      action: 'receiver.opt_out_confirmation_sent',
+      metadata: { templateKey: 'receiver_checkins_ended', renderedLanguage: 'ar', renderFallback: false },
     });
   });
 

@@ -1,4 +1,8 @@
+import { Channel } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
+import { InMemoryChannelTemplateRepository } from './channel-template.repository';
+import { MessageCatalogService, MissingMessageVariableError } from './message-catalog.service';
+import { NEUTRAL_SENDER_DISPLAY_NAME } from './message-catalog.templates';
 import { SmsProvider } from './sms.provider';
 import { VoiceProvider } from './voice.provider';
 import { WhatsappProvider } from './whatsapp.provider';
@@ -225,6 +229,7 @@ describe('configured channel providers', () => {
       templateKey: 'consent_request',
       language: 'en',
       variables: {
+        receiverName: 'Salma',
         senderDisplayName: 'Ahmed',
       },
     });
@@ -233,13 +238,139 @@ describe('configured channel providers', () => {
       providerMessageId: 'SMWA123',
       acceptedAt: new Date('2026-05-01T06:01:00.000Z'),
       providerStatus: 'sent',
+      rendering: { language: 'en', fallback: false },
     });
     const [request] = httpClient.requests;
+    // Numbered by first appearance in the plain English template: "Hi {{1}}, {{2}} asked Nearby…" (CB-020).
     expect(Object.fromEntries(request?.body ?? new URLSearchParams())).toEqual({
       To: 'whatsapp:+971501234568',
       From: 'whatsapp:+15550002222',
       ContentSid: 'HX_CONSENT_EN',
-      ContentVariables: JSON.stringify({ senderDisplayName: 'Ahmed' }),
+      ContentVariables: JSON.stringify({ '1': 'Salma', '2': 'Ahmed' }),
+    });
+  });
+
+  describe('WhatsApp template variants and numbering (CB-020)', () => {
+    const arabicCheckIn =
+      'مرحباً {{receiverName}}، هذه رسالة من {{senderDisplayName}} للاطمئنان عليك اليوم.' +
+      '{{#personalNote}} ملاحظة من {{senderDisplayName}}: "{{personalNote}}"{{/personalNote}} أرسل YES إذا كنت بخير.';
+    const catalog = new MessageCatalogService(
+      new InMemoryChannelTemplateRepository([
+        { templateKey: 'checkin_daily', language: 'ar', channel: Channel.WHATSAPP, bodyText: arabicCheckIn },
+      ]),
+    );
+
+    function whatsapp(contentSidByTemplateKey: Record<string, string>) {
+      const httpClient = new FakeTwilioHttpClient({ sid: 'SMWA200', status: 'queued' });
+      const provider = new WhatsappProvider(
+        { accountSid: 'AC123', authToken: 'twilio-auth-token', fromNumber: '+15550002222', contentSidByTemplateKey },
+        httpClient,
+        () => new Date('2026-05-01T06:05:00.000Z'),
+        catalog,
+      );
+      const sent = () => Object.fromEntries(httpClient.requests[0]?.body ?? new URLSearchParams());
+      return { provider, httpClient, sent };
+    }
+
+    it('uses the +personalNote variant with a third placeholder when the note is present and approved', async () => {
+      const { provider, sent } = whatsapp({
+        'checkin_daily:en': 'HX_DAILY_EN',
+        'checkin_daily+personalNote:en': 'HX_DAILY_NOTE_EN',
+      });
+
+      await provider.sendMessage('+971501234568', {
+        templateKey: 'checkin_daily',
+        language: 'en',
+        variables: { receiverName: 'Salma', senderDisplayName: 'Ahmed', personalNote: 'Take your pills\nat 8' },
+      });
+
+      expect(sent()).toMatchObject({
+        ContentSid: 'HX_DAILY_NOTE_EN',
+        ContentVariables: JSON.stringify({ '1': 'Salma', '2': 'Ahmed', '3': 'Take your pills at 8' }),
+      });
+    });
+
+    it('drops the note and uses the plain template when only that variant is approved', async () => {
+      const { provider, sent } = whatsapp({ 'checkin_daily:en': 'HX_DAILY_EN' });
+
+      await provider.sendMessage('+971501234568', {
+        templateKey: 'checkin_daily',
+        language: 'en',
+        variables: { receiverName: 'Salma', senderDisplayName: 'Ahmed', personalNote: 'Take your pills at 8' },
+      });
+
+      expect(sent()).toMatchObject({
+        ContentSid: 'HX_DAILY_EN',
+        ContentVariables: JSON.stringify({ '1': 'Salma', '2': 'Ahmed' }),
+      });
+    });
+
+    it('numbers the Arabic row by its own placeholder order and localises the neutral sender wording (CB-079)', async () => {
+      const { provider, sent } = whatsapp({
+        'checkin_daily:en': 'HX_DAILY_EN',
+        'checkin_daily+personalNote:ar': 'HX_DAILY_NOTE_AR',
+      });
+
+      const result = await provider.sendMessage('+971501234568', {
+        templateKey: 'checkin_daily',
+        language: 'ar',
+        variables: {
+          receiverName: 'فاطمة',
+          senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME,
+          personalNote: 'خذي الدواء',
+        },
+      });
+
+      expect(result.rendering).toEqual({ language: 'ar', fallback: false });
+      expect(sent()).toMatchObject({
+        ContentSid: 'HX_DAILY_NOTE_AR',
+        ContentVariables: JSON.stringify({ '1': 'فاطمة', '2': 'أحد أفراد عائلتك', '3': 'خذي الدواء' }),
+      });
+    });
+
+    it('falls back to the English template, with English neutral wording, when the language has none', async () => {
+      const { provider, sent } = whatsapp({ checkin_daily: 'HX_DAILY_DEFAULT' });
+
+      const result = await provider.sendMessage('+971501234568', {
+        templateKey: 'checkin_daily',
+        language: 'hi',
+        variables: { receiverName: 'Salma', senderDisplayName: NEUTRAL_SENDER_DISPLAY_NAME },
+      });
+
+      expect(result.rendering).toEqual({ language: 'en', fallback: true });
+      expect(sent()).toMatchObject({
+        ContentSid: 'HX_DAILY_DEFAULT',
+        ContentVariables: JSON.stringify({ '1': 'Salma', '2': 'your family member' }),
+      });
+    });
+
+    it('never calls Twilio when a required variable is blank', async () => {
+      const { provider, httpClient } = whatsapp({ 'checkin_daily:en': 'HX_DAILY_EN' });
+
+      await expect(
+        provider.sendMessage('+971501234568', {
+          templateKey: 'checkin_daily',
+          language: 'en',
+          variables: { receiverName: 'Salma', senderDisplayName: '  ' },
+        }),
+      ).rejects.toThrow(MissingMessageVariableError);
+      expect(httpClient.requests).toEqual([]);
+    });
+
+    it('fails clearly when a SID exists for a language that has no WhatsApp template row to number from', async () => {
+      const { provider, httpClient } = whatsapp({
+        'checkin_daily:ta': 'HX_DAILY_TA',
+        'checkin_daily:en': 'HX_DAILY_EN',
+      });
+
+      await expect(
+        provider.sendMessage('+971501234568', {
+          templateKey: 'checkin_daily',
+          language: 'ta',
+          variables: { receiverName: 'Salma', senderDisplayName: 'Ahmed' },
+        }),
+      ).rejects.toThrow('checkin_daily:ta has a Content SID but no active channel_templates row');
+      expect(httpClient.requests).toEqual([]);
     });
   });
 
@@ -300,8 +431,28 @@ describe('configured channel providers', () => {
       StatusCallbackEvent: 'initiated ringing answered completed',
       StatusCallbackMethod: 'POST',
       Twiml:
-        '<Response><Gather input="dtmf" numDigits="1" timeout="10" action="https://api.nearby.test/provider-webhooks/twilio/voice" method="POST"><Play>https://cdn.nearby.test/voice/en/checkin_daily_voice.wav</Play></Gather><Gather input="dtmf" numDigits="1" timeout="10" action="https://api.nearby.test/provider-webhooks/twilio/voice" method="POST"><Play>https://cdn.nearby.test/voice/en/checkin_daily_voice.wav</Play></Gather><Hangup/></Response>',
+        '<Response><Gather input="dtmf" numDigits="1" timeout="10" action="https://api.nearby.test/provider-webhooks/twilio/voice?lang=en" method="POST"><Play>https://cdn.nearby.test/voice/en/checkin_daily_voice.wav</Play></Gather><Gather input="dtmf" numDigits="1" timeout="10" action="https://api.nearby.test/provider-webhooks/twilio/voice?lang=en" method="POST"><Play>https://cdn.nearby.test/voice/en/checkin_daily_voice.wav</Play></Gather><Hangup/></Response>',
     });
+  });
+
+  it('plays the prompt from the receiver language folder and tells the Gather action that language (CB-022)', async () => {
+    const httpClient = new FakeTwilioHttpClient({ sid: 'CA126', status: 'queued' });
+    const provider = new VoiceProvider(
+      {
+        accountSid: 'AC123',
+        authToken: 'twilio-auth-token',
+        fromNumber: '+15550003333',
+        publicApiBaseUrl: 'https://api.nearby.test',
+        voiceAudioBaseUrl: 'https://cdn.nearby.test/voice',
+      },
+      httpClient,
+    );
+
+    await provider.makeVoiceCall('+971501234569', { scriptKey: 'checkin_daily_voice', language: 'ta', variables: {} });
+
+    const twiml = httpClient.requests[0]?.body.get('Twiml') ?? '';
+    expect(twiml).toContain('<Play>https://cdn.nearby.test/voice/ta/checkin_daily_voice.wav</Play>');
+    expect(twiml).toContain('action="https://api.nearby.test/provider-webhooks/twilio/voice?lang=ta"');
   });
 
   it('falls back to English voice prompts when the script language is not a supported asset language', async () => {
@@ -329,6 +480,7 @@ describe('configured channel providers', () => {
 
     const [request] = httpClient.requests;
     expect(request?.body.get('Twiml')).toContain('https://cdn.nearby.test/voice/en/checkin_daily_voice.wav');
+    expect(request?.body.get('Twiml')).toContain('/provider-webhooks/twilio/voice?lang=en"');
   });
 
   it('uses a per-call voice caller ID override when one is provided', async () => {

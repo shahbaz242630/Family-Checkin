@@ -1,7 +1,13 @@
+import { twilioRequestErrorFromResponse } from './twilio-request-error';
+
 export interface TwilioHttpClient {
   postForm(url: string, body: URLSearchParams, authToken: string): Promise<Record<string, unknown>>;
 }
 
+/**
+ * Minimal Twilio REST client: one form-encoded POST with HTTP basic auth. A non-2xx answer becomes a
+ * `TwilioRequestError` carrying Twilio's error code (CB-019); the parsed body of a success is returned as is.
+ */
 export class FetchTwilioHttpClient implements TwilioHttpClient {
   async postForm(url: string, body: URLSearchParams, authToken: string): Promise<Record<string, unknown>> {
     const accountSid = accountSidFromUrl(url);
@@ -16,7 +22,7 @@ export class FetchTwilioHttpClient implements TwilioHttpClient {
 
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) {
-      throw new Error(`Twilio request failed with status ${response.status}`);
+      throw twilioRequestErrorFromResponse(response.status, payload);
     }
 
     return payload;
@@ -24,6 +30,6 @@ export class FetchTwilioHttpClient implements TwilioHttpClient {
 }
 
 function accountSidFromUrl(url: string): string {
-  const match = /\/Accounts\/([^/]+)\//.exec(url);
+  const match = url.match(/\/Accounts\/([^/]+)\//);
   return match?.[1] ?? '';
 }
