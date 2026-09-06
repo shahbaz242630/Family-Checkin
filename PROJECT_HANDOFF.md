@@ -790,6 +790,19 @@ Start the next session by reading this handoff, then continue with the BRD core 
 
 Four independent audits (backend wiring, backend robustness, mobile wiring, BRD coverage) were run on 2026-09-05. The consolidated, prioritised result is `docs/COMPLETION_BACKLOG.md`; the raw reports are in `docs/audits/2026-09-05/`. Rule agreed with the founder: work the backlog top to bottom (Phase 0 safety-loop blockers, then Phase 1 completing the built journeys) and do not start a new BRD feature until the items for the built ones are done, with their tests. The slice notes below remain the history of how things were built, not the plan.
 
+### 0a. Sprint 1 of the backlog - completed 2026-09-06
+
+Merged to master through the protected-branch flow (one PR per wave, all five CI checks green):
+
+- PR #17: CB-007 REPORT really pauses check-ins and admin "reviewed safe" unpauses; CB-015 inbound replies never 500 (unknown text, unknown sender, short codes) and are idempotent by MessageSid with the event recorded only after successful processing.
+- PR #18: CB-001 the fake reply route exists only in fake mode and requires the cron-secret bearer; CB-002 the audit PII guard no longer rejects `backupContactId` (HELP escalation was a 500 in production wiring); CB-003 `app.module.spec.ts` boots the real DI graph, asserts the route table, and uses the real `AuditService` in the escalation specs. Side finding fixed: the compiled `dist/` build could not boot at all (Nest saw `Function`/`Object` tokens for test-seam constructor params); they are now `@Optional()` with defaults.
+- PR #19: CB-010 English slice; outbound SMS/OTP/backup bodies are rendered from `MessageCatalogService` (DB template row, then in-code copy, English fallback flagged in audit metadata); `renderTwilioMessage` deleted. Remaining CB-010 work: per-language seed migration, sender display name column, `checkin_retry` on later attempts.
+- PR #20: CB-004 invalid timezone/window rows are skipped and audited, a throwing provider no longer aborts the tick; CB-005 cascade exhaustion notifies the sender (push, voice fallback) with a receiver deep link, dead `escalateOverdueCheckIns` removed; CB-006 every status write is guarded (`updateMany ... status in allowedFrom`); CB-008 STOP/REPORT/pause/delete cancel in-flight attempts.
+
+Acceptance pass (fake providers, throwaway Postgres, compiled and tsx boots): see `docs/audits/2026-09-06/sprint1-acceptance.md`.
+
+Next session: run `docs/EMULATOR_RUNBOOK.md` on the Android emulator first (fresh session, screenshot-heavy), record results, then sprint 2 = the rest of Phase 1 (CB-009, CB-011..CB-014, CB-016..CB-018) plus the remaining CB-010 slices.
+
 ### 1. Scheduled check-in engine foundation - completed 2026-04-27
 
 Completed backend slice:
