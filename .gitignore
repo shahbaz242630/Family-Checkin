@@ -130,3 +130,6 @@ sbom*.json
 *.sarif
 zap-report*
 gitleaks-report*
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/
