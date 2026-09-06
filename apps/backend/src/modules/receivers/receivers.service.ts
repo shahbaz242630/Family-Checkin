@@ -3,7 +3,7 @@ import { ActorType, Channel, CheckInStatus, ConsentStatus, TechProfile } from '@
 import type { RelationshipType } from '@prisma/client';
 import type { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
-import type { CheckInsRepository, CreatePendingCheckInInput } from '../check-ins/check-ins.repository';
+import type { CheckInsRepository } from '../check-ins/check-ins.repository';
 import { CheckInsService } from '../check-ins/check-ins.service';
 import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { ChannelRouterService } from '../channels/channel-router.service';
@@ -11,7 +11,11 @@ import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templat
 import { EscalationsService } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
-import { assertSupportedTimeZone, parseScheduleTimeWindow } from '../../shared/schedule/receiver-schedule';
+import {
+  assertSupportedTimeZone,
+  localDateInTimeZone,
+  parseScheduleTimeWindow,
+} from '../../shared/schedule/receiver-schedule';
 import {
   CheckInInProgressError,
   MAX_RESOLUTION_NOTE_LENGTH,
@@ -478,14 +482,15 @@ export class ReceiversService {
 
     const retryAt = new Date(this.now().getTime() + TRY_LATER_RETRY_OFFSET_MINUTES * 60 * 1000);
     if (this.checkInsRepository) {
-      // `retryOf` ties the retry to the check-in it repeats so the scheduler's same-day dedupe can tell a
-      // sender-requested retry from a duplicate; the repository reads it once that dedupe lands.
-      const retryInput: CreatePendingCheckInInput & { retryOf?: string } = {
+      // `retryOf` ties the retry to the check-in it repeats, which keeps it out of the scheduler's
+      // once-per-local-day dedupe and its unique index (CB-013); the local day is the receiver's own, not the
+      // UTC default the repository would otherwise derive.
+      const retryCheckIn = await this.checkInsRepository.createPending({
         receiverId: context.receiverId,
         scheduledAt: retryAt,
         retryOf: context.checkInId,
-      };
-      const retryCheckIn = await this.checkInsRepository.createPending(retryInput);
+        scheduledLocalDate: localDateInTimeZone(retryAt, context.receiver.timezone),
+      });
       await this.checkInsRepository.createAttempts(
         this.buildRetryCascadeAttempts(context.receiver, retryCheckIn.id, retryAt),
       );
