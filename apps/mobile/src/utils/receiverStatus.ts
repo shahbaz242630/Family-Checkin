@@ -48,3 +48,16 @@ export function getReceiverStatusDisplay(
       return { label: 'Active', tone: 'success' };
   }
 }
+
+export const SCHEDULE_NEEDS_ATTENTION_LABEL = 'Schedule needs attention';
+export const SCHEDULE_NEEDS_ATTENTION_MESSAGE =
+  "Nearby could not work out this receiver's check-in time from the saved timezone and window, so no check-ins are being sent. Tap Edit to correct the schedule.";
+
+/**
+ * Warning chip for a receiver the scheduler has stamped `scheduleInvalidAt` (CB-069): the stored timezone or
+ * window could not be evaluated, so check-ins are on hold until the sender edits the schedule. Shown next to the
+ * status chip, never instead of it — consent and pause still describe the receiver.
+ */
+export function getScheduleAttentionDisplay(scheduleInvalidAt?: string | null): ReceiverStatusDisplay | null {
+  return scheduleInvalidAt ? { label: SCHEDULE_NEEDS_ATTENTION_LABEL, tone: 'warning' } : null;
+}

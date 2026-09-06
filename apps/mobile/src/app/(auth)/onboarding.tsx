@@ -3,11 +3,17 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleShee
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, TextInput } from '../../components/auth';
-import { CountrySelect, LanguageSelect, ReceiverPhoneInput, TimeSelect, TimezoneSelect } from '../../components/onboarding';
+import {
+  CountrySelect,
+  LanguageSelect,
+  ReceiverPhoneInput,
+  TimeSelect,
+  TimezoneSelect,
+} from '../../components/onboarding';
 import { COUNTRIES } from '../../data/constants';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { CHANNEL_PROFILE_OPTIONS } from '../../utils/channelProfiles';
-import { isPaidAccessRequiredError } from '../../services/backendErrors';
+import { describeBackendError, isPaidAccessRequiredError } from '../../services/backendErrors';
 import {
   createReceiver,
   type BackendRelationshipType,
@@ -45,7 +51,9 @@ export default function OnboardingScreen() {
 
   const selectedProfile = profileOptions.find((option) => option.value === techProfile) ?? profileOptions[0];
   const selectedPhoneCountry = COUNTRIES.find((country) => country.isoCode === phoneCountry) ?? COUNTRIES[0];
-  const phoneError = phone.trim().startsWith('0') ? 'Remove the leading 0. Use the local number after the country code.' : undefined;
+  const phoneError = phone.trim().startsWith('0')
+    ? 'Remove the leading 0. Use the local number after the country code.'
+    : undefined;
 
   const handlePhoneCountryChange = (isoCode: string) => {
     setPhoneCountry(isoCode);
@@ -96,24 +104,30 @@ export default function OnboardingScreen() {
 
     setIsSubmitting(true);
     try {
-      await createReceiver(payload);
+      const created = await createReceiver(payload);
+      if (created.consentRequestStatus === 'failed') {
+        // The receiver exists but the provider refused the invitation: land on the detail, which explains this
+        // and offers "Resend invitation" (CB-009), rather than on a dashboard card that only says "Pending consent".
+        router.replace({
+          pathname: '/(main)/receivers/[id]',
+          params: { id: created.id, consentRequest: 'failed' },
+        } as never);
+        return;
+      }
       router.replace('/(main)');
     } catch (err) {
       if (isPaidAccessRequiredError(err)) {
-        Alert.alert(
-          'Subscription required',
-          'Choose monthly or annual access to add receivers and start check-ins.',
-          [
-            { text: 'Not now', style: 'cancel' },
-            {
-              text: 'View billing',
-              onPress: () => router.push('/(main)/settings/billing' as never),
-            },
-          ],
-        );
+        Alert.alert('Subscription required', 'Choose monthly or annual access to add receivers and start check-ins.', [
+          { text: 'Not now', style: 'cancel' },
+          {
+            text: 'View billing',
+            onPress: () => router.push('/(main)/settings/billing' as never),
+          },
+        ]);
         return;
       }
-      Alert.alert('Unable to add receiver', err instanceof Error ? err.message : 'Please try again.');
+      // 409 OPT_OUT_COOLDOWN / RECEIVER_ALREADY_MONITORED and friends get their own sentence, with the date.
+      Alert.alert('Unable to add receiver', describeBackendError(err, 'Please try again.'));
     } finally {
       setIsSubmitting(false);
     }
@@ -141,7 +155,12 @@ export default function OnboardingScreen() {
               disabled={isSubmitting}
             />
 
-            <CountrySelect label="Receiver country" value={countryCode} onChange={handleReceiverCountryChange} showDialCode={false} />
+            <CountrySelect
+              label="Receiver country"
+              value={countryCode}
+              onChange={handleReceiverCountryChange}
+              showDialCode={false}
+            />
 
             <View>
               <Text style={styles.fieldLabel}>Relationship</Text>
@@ -197,7 +216,12 @@ export default function OnboardingScreen() {
               onChangeText={setPersonalNote}
             />
 
-            <Button title="Send consent request" onPress={handleSubmit} loading={isSubmitting} disabled={isSubmitting} />
+            <Button
+              title="Send consent request"
+              onPress={handleSubmit}
+              loading={isSubmitting}
+              disabled={isSubmitting}
+            />
           </View>
         </ScrollView>
       </KeyboardAvoidingView>

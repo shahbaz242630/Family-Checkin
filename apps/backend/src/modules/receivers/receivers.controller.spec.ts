@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
+import type { EscalateSenderRequestedBackupResult } from '../escalations/escalations.service';
 import { ReceiverScheduleValidationError } from '../../shared/schedule/receiver-schedule';
 import {
   CheckInInProgressError,
@@ -51,6 +52,10 @@ class FakeReceiversService {
   public nextUpdateError: Error | null = null;
   /** Thrown by the next resolve / alert-backup / try-later call. */
   public nextActionError: Error | null = null;
+  /** What the fan-out reported; the controller must pass it through next to the receiver (CB-074). */
+  public backupAlertResult: EscalateSenderRequestedBackupResult = { outcome: 'alerted', alerted: 1, failed: 0 };
+  /** Simulates a check-in that is not the latest or not actionable: the service answers null. */
+  public alertBackupNotFound = false;
 
   async listForSender(userId: string) {
     this.listedForUserId = userId;
@@ -69,6 +74,7 @@ class FakeReceiversService {
         scheduleFrequency: 'daily',
         scheduleTimeWindow: { start: '09:00', end: '11:00' },
         consentStatus: ConsentStatus.GRANTED,
+        scheduleInvalidAt: null,
         createdAt: '2026-04-26T08:00:00.000Z',
         updatedAt: '2026-04-27T10:02:00.000Z',
       },
@@ -91,6 +97,7 @@ class FakeReceiversService {
       scheduleFrequency: 'daily',
       scheduleTimeWindow: { start: '09:00', end: '11:00' },
       consentStatus: ConsentStatus.GRANTED,
+      scheduleInvalidAt: '2026-09-06T07:10:00.000Z',
       backupContacts: [],
       escalation: {
         configured: false,
@@ -193,12 +200,18 @@ class FakeReceiversService {
   async alertBackupForSender(input: Record<string, unknown>) {
     this.throwNextActionError();
     this.alertBackupInput = input;
+    if (this.alertBackupNotFound) {
+      return null;
+    }
     return {
-      id: input.receiverId,
-      latestCheckIn: {
-        id: input.checkInId,
-        status: 'ESCALATED',
+      receiver: {
+        id: input.receiverId,
+        latestCheckIn: {
+          id: input.checkInId,
+          status: 'ESCALATED',
+        },
       },
+      backupAlert: this.backupAlertResult,
     };
   }
 
@@ -318,11 +331,25 @@ describe('ReceiversController', () => {
           scheduleFrequency: 'daily',
           scheduleTimeWindow: { start: '09:00', end: '11:00' },
           consentStatus: ConsentStatus.GRANTED,
+          scheduleInvalidAt: null,
           createdAt: '2026-04-26T08:00:00.000Z',
           updatedAt: '2026-04-27T10:02:00.000Z',
         },
       ],
     });
+  });
+
+  it('passes scheduleInvalidAt through on the detail so the app can flag the schedule (CB-069)', async () => {
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      new FakeReceiversService() as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    const response = await controller.detail('Bearer access-token', '1aef91f9-64c9-4548-baa5-d70b52386efb');
+
+    expect(response.receiver.scheduleInvalidAt).toBe('2026-09-06T07:10:00.000Z');
   });
 
   it('returns receiver detail for the authenticated sender', async () => {
@@ -590,12 +617,15 @@ describe('ReceiversController', () => {
       ipAddress: '203.0.113.10',
       userAgent: 'Nearby Mobile/1.0',
     });
-    expect(response.receiver).toMatchObject({
-      id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
-      latestCheckIn: {
-        id: 'check-in-1',
-        status: 'ESCALATED',
+    expect(response).toEqual({
+      receiver: {
+        id: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        latestCheckIn: {
+          id: 'check-in-1',
+          status: 'ESCALATED',
+        },
       },
+      backupAlert: { outcome: 'alerted', alerted: 1, failed: 0 },
     });
   });
 
@@ -1033,6 +1063,44 @@ describe('ReceiversController resends a consent request (CB-009)', () => {
         undefined,
         undefined,
         'missing-receiver',
+      ),
+    );
+
+    expect(error).toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('ReceiversController tells the sender what "Alert backup contacts" achieved (CB-074)', () => {
+  it.each([
+    { outcome: 'no_backup_contacts' as const, alerted: 0, failed: 0 },
+    { outcome: 'all_failed' as const, alerted: 0, failed: 2 },
+  ])('answers backupAlert %o next to the receiver', async (backupAlertResult) => {
+    const receiversService = new FakeReceiversService();
+    receiversService.backupAlertResult = backupAlertResult;
+
+    const response = await controllerWith(receiversService).alertBackupForCheckIn(
+      'Bearer access-token',
+      undefined,
+      undefined,
+      '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      'check-in-1',
+    );
+
+    expect(response.backupAlert).toEqual(backupAlertResult);
+    expect(response.receiver).toMatchObject({ id: '1aef91f9-64c9-4548-baa5-d70b52386efb' });
+  });
+
+  it('keeps answering 404 when the check-in is not the actionable latest one', async () => {
+    const receiversService = new FakeReceiversService();
+    receiversService.alertBackupNotFound = true;
+
+    const error = await rejectionOf(
+      controllerWith(receiversService).alertBackupForCheckIn(
+        'Bearer access-token',
+        undefined,
+        undefined,
+        '1aef91f9-64c9-4548-baa5-d70b52386efb',
+        'check-in-1',
       ),
     );
 

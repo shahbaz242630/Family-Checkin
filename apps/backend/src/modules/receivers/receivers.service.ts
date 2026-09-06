@@ -9,6 +9,7 @@ import { CHECK_INS_REPOSITORY } from '../check-ins/check-ins.tokens';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
+import type { EscalateSenderRequestedBackupResult } from '../escalations/escalations.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
 import {
@@ -78,6 +79,11 @@ export interface ReceiverSummary {
   consentGrantedAt?: string;
   pausedUntil?: string;
   pausedReason?: string;
+  /**
+   * When the scheduler last found the stored timezone or window impossible to evaluate, so no check-in is being
+   * sent until the sender edits the schedule; `null` while the schedule is fine (CB-069).
+   */
+  scheduleInvalidAt: string | null;
   latestCheckIn?: {
     id: string;
     status: string;
@@ -101,6 +107,12 @@ export interface ReceiverDetail extends ReceiverSummary {
     configured: boolean;
     nextStep: string;
   };
+}
+
+/** The sender's "Alert backup contacts" answer: the refreshed receiver plus what the fan-out achieved (CB-074). */
+export interface AlertBackupForSenderResult {
+  receiver: ReceiverDetail;
+  backupAlert: EscalateSenderRequestedBackupResult;
 }
 
 export interface ReceiverManagementInput {
@@ -431,7 +443,7 @@ export class ReceiversService {
     return this.toDetail(receiver);
   }
 
-  async alertBackupForSender(input: SenderCheckInActionInput): Promise<ReceiverDetail | null> {
+  async alertBackupForSender(input: SenderCheckInActionInput): Promise<AlertBackupForSenderResult | null> {
     const context = await this.findActionableLatestCheckIn(input, [
       CheckInStatus.RESPONDED_HELP,
       CheckInStatus.NEEDS_ATTENTION,
@@ -456,7 +468,9 @@ export class ReceiversService {
       userAgent: input.userAgent,
     });
 
-    await this.escalationsService.escalateSenderRequestedBackup({
+    // The fan-out's own result travels back to the app: with no backup contacts the sender used to get a
+    // refreshed detail and no explanation (CB-074).
+    const backupAlert = await this.escalationsService.escalateSenderRequestedBackup({
       receiverId: context.receiverId,
       checkInId: context.checkInId,
     });
@@ -466,7 +480,7 @@ export class ReceiversService {
       receiverId: context.receiverId,
     });
 
-    return receiver ? this.toDetail(receiver) : null;
+    return receiver ? { receiver: this.toDetail(receiver), backupAlert } : null;
   }
 
   async tryCheckInLaterForSender(input: SenderCheckInActionInput): Promise<ReceiverDetail | null> {
@@ -945,6 +959,7 @@ export class ReceiversService {
       consentGrantedAt: receiver.consentGrantedAt?.toISOString(),
       pausedUntil: receiver.pausedUntil?.toISOString(),
       pausedReason: receiver.pausedReason,
+      scheduleInvalidAt: receiver.scheduleInvalidAt?.toISOString() ?? null,
       latestCheckIn: receiver.latestCheckIn
         ? {
             id: receiver.latestCheckIn.id,

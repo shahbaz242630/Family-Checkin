@@ -26,6 +26,25 @@ export type BackendBillingInterval = 'MONTHLY' | 'ANNUAL';
 export type BackendBillingStore = 'APP_STORE' | 'PLAY_STORE' | 'STRIPE' | 'PROMOTIONAL' | 'UNKNOWN';
 export type BackendSubscriptionTier = 'TIER_1' | 'TIER_2' | 'TIER_3';
 export type BackendSubscriptionStatus = 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'SUSPENDED';
+/** Whether the consent invitation actually left the provider; `failed` means the row exists and resend applies (CB-009). */
+export type BackendConsentRequestStatus = 'requested' | 'failed';
+/** What the sender's own "Alert backup contacts" achieved (CB-074). */
+export type BackendBackupAlertOutcome = 'alerted' | 'no_backup_contacts' | 'all_failed';
+
+export interface BackendBackupAlertResult {
+  outcome: BackendBackupAlertOutcome;
+  /** Backup contacts reached on at least one channel. */
+  alerted: number;
+  /** Backup contacts no channel could reach. */
+  failed: number;
+}
+
+export interface BackendConsentResendResult {
+  id: string;
+  consentStatus: BackendConsentStatus;
+  consentRequestStatus: BackendConsentRequestStatus;
+  consentRequestedAt?: string;
+}
 
 export interface SyncedBackendUser {
   id: string;
@@ -175,7 +194,7 @@ export interface ReceiverUpdateInput {
 export interface CreatedReceiver {
   id: string;
   consentStatus: BackendConsentStatus;
-  consentRequestStatus: 'requested';
+  consentRequestStatus: BackendConsentRequestStatus;
   countryCode: string;
   relationshipType: BackendRelationshipType;
   language: string;
@@ -210,6 +229,11 @@ export interface BackendReceiverSummary {
   consentGrantedAt?: string;
   pausedUntil?: string;
   pausedReason?: string;
+  /**
+   * Set while the scheduler cannot evaluate the stored timezone or window, so no check-in is being sent until the
+   * schedule is edited; null (or absent from an older backend) when it is fine (CB-069).
+   */
+  scheduleInvalidAt?: string | null;
   latestCheckIn?: {
     id: string;
     status: BackendCheckInStatus;
@@ -219,6 +243,8 @@ export interface BackendReceiverSummary {
     respondedAt?: string;
     responseDetectedAs?: string;
     resolvedAt?: string;
+    /** The sender's note or the backup contact's DONE text, decrypted for the owning sender only (CB-018). */
+    resolutionNote?: string;
     resolutionByUserId?: string;
   };
   createdAt: string;
@@ -354,7 +380,10 @@ export async function requestAccountStepUp(action: BackendSensitiveAction): Prom
   });
 }
 
-export async function verifyAccountStepUp(input: { challengeId: string; code: string }): Promise<BackendStepUpVerifyResult> {
+export async function verifyAccountStepUp(input: {
+  challengeId: string;
+  code: string;
+}): Promise<BackendStepUpVerifyResult> {
   return await backendRequest<BackendStepUpVerifyResult>('/account/step-up/verify', {
     method: 'POST',
     body: JSON.stringify(input),
@@ -426,19 +455,49 @@ export async function markAdminAbuseReportActionTaken(abuseReportId: string): Pr
   return response.abuseReport;
 }
 
-export async function resolveReceiverCheckIn(receiverId: string, checkInId: string): Promise<BackendReceiverDetail> {
-  const response = await backendRequest<{ receiver: BackendReceiverDetail }>(`/receivers/${receiverId}/check-ins/${checkInId}/resolve`, {
-    method: 'PATCH',
-  });
+/** `note` is optional free text of at most 200 characters; the backend stores it encrypted (CB-018). */
+export async function resolveReceiverCheckIn(
+  receiverId: string,
+  checkInId: string,
+  note?: string,
+): Promise<BackendReceiverDetail> {
+  const response = await backendRequest<{ receiver: BackendReceiverDetail }>(
+    `/receivers/${receiverId}/check-ins/${checkInId}/resolve`,
+    {
+      method: 'PATCH',
+      body: note ? JSON.stringify({ note }) : undefined,
+    },
+  );
 
   return response.receiver;
 }
 
-export async function alertBackupForReceiverCheckIn(receiverId: string, checkInId: string): Promise<BackendReceiverDetail> {
-  const response = await backendRequest<{ receiver: BackendReceiverDetail }>(
+export interface AlertBackupForReceiverCheckInResult {
+  receiver: BackendReceiverDetail;
+  backupAlert: BackendBackupAlertResult;
+}
+
+export async function alertBackupForReceiverCheckIn(
+  receiverId: string,
+  checkInId: string,
+): Promise<AlertBackupForReceiverCheckInResult> {
+  return await backendRequest<AlertBackupForReceiverCheckInResult>(
     `/receivers/${receiverId}/check-ins/${checkInId}/alert-backup`,
     {
       method: 'PATCH',
+    },
+  );
+}
+
+/**
+ * Re-sends the consent invitation to a PENDING receiver. Refusals arrive as `BackendRequestError` with a code:
+ * 409 `CONSENT_NOT_PENDING`, 409 `OPT_OUT_COOLDOWN`, 429 `CONSENT_RESEND_LIMIT` (`details.nextAllowedAt`).
+ */
+export async function resendReceiverConsent(receiverId: string): Promise<BackendConsentResendResult> {
+  const response = await backendRequest<{ receiver: BackendConsentResendResult }>(
+    `/receivers/${receiverId}/consent/resend`,
+    {
+      method: 'POST',
     },
   );
 
@@ -457,18 +516,27 @@ export async function tryReceiverCheckInLater(receiverId: string, checkInId: str
 }
 
 export async function listBackupContacts(receiverId: string): Promise<BackendBackupContact[]> {
-  const response = await backendRequest<{ backupContacts: BackendBackupContact[] }>(`/receivers/${receiverId}/backup-contacts`, {
-    method: 'GET',
-  });
+  const response = await backendRequest<{ backupContacts: BackendBackupContact[] }>(
+    `/receivers/${receiverId}/backup-contacts`,
+    {
+      method: 'GET',
+    },
+  );
 
   return response.backupContacts;
 }
 
-export async function createBackupContact(receiverId: string, input: BackupContactSetupInput): Promise<BackendBackupContact> {
-  const response = await backendRequest<{ backupContact: BackendBackupContact }>(`/receivers/${receiverId}/backup-contacts`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  });
+export async function createBackupContact(
+  receiverId: string,
+  input: BackupContactSetupInput,
+): Promise<BackendBackupContact> {
+  const response = await backendRequest<{ backupContact: BackendBackupContact }>(
+    `/receivers/${receiverId}/backup-contacts`,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
 
   return response.backupContact;
 }
@@ -490,9 +558,12 @@ export async function updateBackupContact(
 }
 
 export async function deleteBackupContact(receiverId: string, backupContactId: string): Promise<void> {
-  await backendRequest<{ backupContact: BackendBackupContact }>(`/receivers/${receiverId}/backup-contacts/${backupContactId}`, {
-    method: 'DELETE',
-  });
+  await backendRequest<{ backupContact: BackendBackupContact }>(
+    `/receivers/${receiverId}/backup-contacts/${backupContactId}`,
+    {
+      method: 'DELETE',
+    },
+  );
 }
 
 export async function createReceiver(input: ReceiverSetupInput): Promise<CreatedReceiver> {
@@ -529,7 +600,7 @@ async function backendRequest<T>(path: string, init: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const errorBody = await responseErrorBody(response);
-    throw new BackendRequestError(errorBody.message, response.status, errorBody.code);
+    throw new BackendRequestError(errorBody.message, response.status, errorBody.code, errorBody.details);
   }
 
   return (await response.json()) as T;
@@ -547,22 +618,29 @@ function resolveBackendUrl(): string | undefined {
   return backendUrl;
 }
 
-async function responseErrorBody(response: Response): Promise<{ message: string; code?: string }> {
-  try {
-    const body = (await response.json()) as { message?: unknown; error?: unknown; code?: unknown };
-    const message =
-      typeof body.message === 'string'
-        ? body.message
-        : typeof body.error === 'string'
-          ? body.error
-          : `Backend request failed with status ${response.status}`;
+interface ErrorBody {
+  message: string;
+  code?: string;
+  /** The remaining fields of a `{ code, message, ...details }` body (for example `cooldownUntil`, `nextAllowedAt`). */
+  details: Record<string, unknown>;
+}
 
-    if (typeof body.code === 'string') {
-      return { message, code: body.code };
+async function responseErrorBody(response: Response): Promise<ErrorBody> {
+  const fallback = `Backend request failed with status ${response.status}`;
+  try {
+    const body: unknown = await response.json();
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return { message: fallback, details: {} };
     }
 
-    return { message };
+    const { message, error, code, statusCode, ...details } = body as Record<string, unknown>;
+    void statusCode;
+    const resolvedMessage = typeof message === 'string' ? message : typeof error === 'string' ? error : fallback;
+
+    return typeof code === 'string'
+      ? { message: resolvedMessage, code, details }
+      : { message: resolvedMessage, details };
   } catch {
-    return { message: `Backend request failed with status ${response.status}` };
+    return { message: fallback, details: {} };
   }
 }

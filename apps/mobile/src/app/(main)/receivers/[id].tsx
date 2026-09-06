@@ -20,6 +20,7 @@ import {
   listBackupContacts,
   pauseReceiver,
   requestAccountStepUp,
+  resendReceiverConsent,
   resolveReceiverCheckIn,
   resumeReceiver,
   tryReceiverCheckInLater,
@@ -33,10 +34,29 @@ import {
   type BackendRelationshipType,
   type ReceiverUpdateInput,
 } from '../../../services/backendApi';
-import { isNotFoundError } from '../../../services/backendErrors';
+import {
+  CONSENT_NOT_PENDING_CODE,
+  describeBackendError,
+  isBackendErrorCode,
+  isNotFoundError,
+} from '../../../services/backendErrors';
 import { colors, spacing, fontSize, borderRadius } from '../../../theme';
 import { CHANNEL_PROFILE_OPTIONS } from '../../../utils/channelProfiles';
-import { getReceiverStatusDisplay, type ReceiverStatusTone } from '../../../utils/receiverStatus';
+import {
+  backupAlertNotice,
+  CONSENT_REQUEST_FAILED_NOTICE,
+  consentResendNotice,
+  MAX_RESOLUTION_NOTE_LENGTH,
+  normalizeResolutionNote,
+  resolutionNoteCounter,
+  type ActionNotice,
+} from '../../../utils/receiverActions';
+import {
+  getReceiverStatusDisplay,
+  getScheduleAttentionDisplay,
+  SCHEDULE_NEEDS_ATTENTION_MESSAGE,
+  type ReceiverStatusTone,
+} from '../../../utils/receiverStatus';
 
 const relationshipOptions: Array<{ value: BackendRelationshipType; label: string }> = [
   { value: 'PARENT', label: 'Parent' },
@@ -64,7 +84,8 @@ function notify(title: string, message: string): void {
 
 export default function ReceiverDetailScreen() {
   const router = useRouter();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // `consentRequest=failed` is set by the add-receiver form when the first invitation could not be sent.
+  const { id, consentRequest } = useLocalSearchParams<{ id: string; consentRequest?: string }>();
   const [receiver, setReceiver] = useState<BackendReceiverDetail | null>(null);
   const [backupContacts, setBackupContacts] = useState<BackendBackupContact[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,6 +103,14 @@ export default function ReceiverDetailScreen() {
   });
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Outcome of the last sender action (backup alert, resend, resolve). Seeded when the add-receiver form lands
+  // here after a failed consent send so the sender is already pointed at "Resend invitation" (CB-009).
+  const [notice, setNotice] = useState<ActionNotice | null>(
+    consentRequest === 'failed' ? CONSENT_REQUEST_FAILED_NOTICE : null,
+  );
+  const [isResolving, setIsResolving] = useState(false);
+  const [resolutionNoteDraft, setResolutionNoteDraft] = useState('');
+  const [resolutionNoteError, setResolutionNoteError] = useState<string | null>(null);
   const [stepUpPrompt, setStepUpPrompt] = useState<{ title: string; message: string } | null>(null);
   const [stepUpCode, setStepUpCode] = useState('');
   const stepUpResolver = useRef<((code: string | null) => void) | null>(null);
@@ -135,11 +164,14 @@ export default function ReceiverDetailScreen() {
   /**
    * An action answered 404: either the receiver is gone, or what it acted on changed underneath (for example the
    * latest check-in was superseded). Reload to tell them apart: a missing receiver leaves the screen, anything
-   * else refreshes the detail and shows the message.
+   * else refreshes the detail and shows the message. A 409 CONSENT_NOT_PENDING means the receiver answered while
+   * this screen still showed PENDING, so it reloads too. Every other failure is explained through
+   * `describeBackendError`, which turns the typed 409/429 codes into a sentence with the relevant date.
    */
   const handleActionError = async (err: unknown, fallback: string): Promise<void> => {
-    if (!id || !isNotFoundError(err)) {
-      setActionError(err instanceof Error ? err.message : fallback);
+    const staleDetail = isNotFoundError(err) || isBackendErrorCode(err, CONSENT_NOT_PENDING_CODE);
+    if (!id || !staleDetail) {
+      setActionError(describeBackendError(err, fallback));
       return;
     }
 
@@ -147,13 +179,13 @@ export default function ReceiverDetailScreen() {
       const [receiverDetail, receiverBackupContacts] = await Promise.all([getReceiver(id), listBackupContacts(id)]);
       setReceiver(receiverDetail);
       setBackupContacts(receiverBackupContacts);
-      setActionError(err instanceof Error ? err.message : fallback);
+      setActionError(describeBackendError(err, fallback));
     } catch (reloadErr) {
       if (isNotFoundError(reloadErr)) {
         leaveRemovedReceiver();
         return;
       }
-      setActionError(reloadErr instanceof Error ? reloadErr.message : fallback);
+      setActionError(describeBackendError(reloadErr, fallback));
     }
   };
 
@@ -179,6 +211,7 @@ export default function ReceiverDetailScreen() {
 
   const isPaused = Boolean(receiver.pausedReason || receiver.pausedUntil);
   const currentStatus = getReceiverStatusDisplay(receiver.consentStatus, receiver.latestCheckIn?.status, isPaused);
+  const scheduleAttention = getScheduleAttentionDisplay(receiver.scheduleInvalidAt);
 
   const startEditing = () => {
     setDraft({
@@ -253,6 +286,23 @@ export default function ReceiverDetailScreen() {
     }
   };
 
+  // One invitation per receiver per 7 days; the 429 is explained with the next allowed date (CB-009).
+  const resendInvitation = async () => {
+    if (!id) return;
+
+    try {
+      setIsSaving(true);
+      setActionError(null);
+      setNotice(null);
+      const result = await resendReceiverConsent(id);
+      setNotice(consentResendNotice(result.consentRequestStatus));
+    } catch (err) {
+      await handleActionError(err, 'Unable to resend the invitation');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
   const latestStatus = receiver.latestCheckIn?.status ?? '';
   const needsAttention = latestStatus === 'NEEDS_ATTENTION';
   const canResolveLatestCheckIn = ['RESPONDED_HELP', 'ESCALATED', 'NEEDS_ATTENTION', 'FAILED', 'SKIPPED'].includes(
@@ -268,13 +318,40 @@ export default function ReceiverDetailScreen() {
     ? 'Remove the leading 0. Use the local number after the country code.'
     : undefined;
 
+  const startResolving = () => {
+    setResolutionNoteDraft('');
+    setResolutionNoteError(null);
+    setActionError(null);
+    setNotice(null);
+    setIsResolving(true);
+  };
+
+  const cancelResolving = () => {
+    setIsResolving(false);
+    setResolutionNoteDraft('');
+    setResolutionNoteError(null);
+  };
+
+  // The optional note (≤ 200 characters) is stored encrypted and shown back on the detail (CB-018).
   const resolveLatestCheckIn = async () => {
     if (!id || !receiver.latestCheckIn || !canResolveLatestCheckIn) return;
+
+    const checked = normalizeResolutionNote(resolutionNoteDraft);
+    if (!checked.ok) {
+      setResolutionNoteError(checked.message);
+      return;
+    }
 
     try {
       setIsSaving(true);
       setActionError(null);
-      setReceiver(await resolveReceiverCheckIn(id, receiver.latestCheckIn.id));
+      setReceiver(await resolveReceiverCheckIn(id, receiver.latestCheckIn.id, checked.note));
+      setIsResolving(false);
+      setResolutionNoteDraft('');
+      setNotice({
+        message: checked.note ? 'Check-in marked resolved with your note.' : 'Check-in marked resolved.',
+        tone: 'success',
+      });
     } catch (err) {
       await handleActionError(err, 'Unable to mark check-in resolved');
     } finally {
@@ -282,13 +359,17 @@ export default function ReceiverDetailScreen() {
     }
   };
 
+  // The backend reports what the fan-out achieved; with no backup contacts the screen used to change nothing (CB-074).
   const alertBackupForLatestCheckIn = async () => {
     if (!id || !receiver.latestCheckIn || !canAlertBackupForLatestCheckIn) return;
 
     try {
       setIsSaving(true);
       setActionError(null);
-      setReceiver(await alertBackupForReceiverCheckIn(id, receiver.latestCheckIn.id));
+      setNotice(null);
+      const result = await alertBackupForReceiverCheckIn(id, receiver.latestCheckIn.id);
+      setReceiver(result.receiver);
+      setNotice(backupAlertNotice(result.backupAlert));
     } catch (err) {
       await handleActionError(err, 'Unable to alert backup contacts');
     } finally {
@@ -463,7 +544,7 @@ export default function ReceiverDetailScreen() {
           leaveRemovedReceiver();
           return;
         }
-        setActionError(err instanceof Error ? err.message : 'Unable to remove receiver');
+        setActionError(describeBackendError(err, 'Unable to remove receiver'));
       } finally {
         setIsSaving(false);
       }
@@ -552,9 +633,42 @@ export default function ReceiverDetailScreen() {
           <Text style={[styles.statusValue, { color: receiverStatusColor(currentStatus.tone) }]}>
             {currentStatus.label}
           </Text>
+          {receiver.consentStatus === 'PENDING' ? (
+            <View style={styles.consentRow}>
+              <Text style={styles.consentText}>Waiting for {receiver.displayName} to reply YES.</Text>
+              <Pressable style={styles.inlineActionButton} onPress={resendInvitation} disabled={isSaving}>
+                <Text style={styles.smallButtonText}>{isSaving ? 'Sending...' : 'Resend invitation'}</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
 
+        {scheduleAttention ? (
+          <View style={styles.attentionPanel}>
+            <Text style={styles.attentionTitle}>{scheduleAttention.label}</Text>
+            <Text style={styles.attentionText}>{SCHEDULE_NEEDS_ATTENTION_MESSAGE}</Text>
+            {!isEditing ? (
+              <Pressable style={styles.inlineActionButton} onPress={startEditing} disabled={isSaving}>
+                <Text style={styles.smallButtonText}>Edit schedule</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+
         {actionError && <Text style={styles.inlineError}>{actionError}</Text>}
+        {notice ? (
+          <View
+            style={[
+              styles.noticeBox,
+              {
+                borderColor: receiverStatusColor(notice.tone),
+                backgroundColor: receiverStatusColor(notice.tone) + '12',
+              },
+            ]}
+          >
+            <Text style={styles.noticeText}>{notice.message}</Text>
+          </View>
+        ) : null}
 
         {isEditing && draft ? (
           <View style={styles.section}>
@@ -679,6 +793,9 @@ export default function ReceiverDetailScreen() {
           <InfoRow label="Sent" value={formatDateTime(receiver.latestCheckIn?.sentAt)} />
           <InfoRow label="Responded" value={formatDateTime(receiver.latestCheckIn?.respondedAt)} />
           <InfoRow label="Resolved" value={formatDateTime(receiver.latestCheckIn?.resolvedAt)} />
+          {receiver.latestCheckIn?.resolutionNote ? (
+            <InfoRow label="Note" value={receiver.latestCheckIn.resolutionNote} />
+          ) : null}
           {canAlertBackupForLatestCheckIn || canTryLatestCheckInLater || canResolveLatestCheckIn ? (
             <View style={styles.checkInActionStack}>
               {canAlertBackupForLatestCheckIn ? (
@@ -691,11 +808,38 @@ export default function ReceiverDetailScreen() {
                   <Text style={styles.secondaryButtonText}>{isSaving ? 'Saving...' : 'Try again later'}</Text>
                 </Pressable>
               ) : null}
-              {canResolveLatestCheckIn ? (
-                <Pressable style={styles.secondaryActionButton} onPress={resolveLatestCheckIn} disabled={isSaving}>
-                  <Text style={styles.secondaryButtonText}>{isSaving ? 'Saving...' : 'Mark resolved'}</Text>
+              {canResolveLatestCheckIn && !isResolving ? (
+                <Pressable style={styles.secondaryActionButton} onPress={startResolving} disabled={isSaving}>
+                  <Text style={styles.secondaryButtonText}>Mark resolved</Text>
                 </Pressable>
               ) : null}
+            </View>
+          ) : null}
+          {isResolving ? (
+            <View style={styles.resolveForm}>
+              <TextInput
+                label="Note (optional)"
+                placeholder="e.g. Spoke to her, all fine"
+                value={resolutionNoteDraft}
+                onChangeText={(value) => {
+                  setResolutionNoteDraft(value);
+                  setResolutionNoteError(null);
+                }}
+                error={resolutionNoteError ?? undefined}
+                multiline
+                maxLength={MAX_RESOLUTION_NOTE_LENGTH}
+              />
+              <Text style={styles.fieldHint}>
+                {resolutionNoteCounter(resolutionNoteDraft)} - stored encrypted; only you can read it.
+              </Text>
+              <View style={styles.editActionRow}>
+                <Pressable style={styles.secondaryButton} onPress={cancelResolving} disabled={isSaving}>
+                  <Text style={styles.secondaryButtonText}>Cancel</Text>
+                </Pressable>
+                <Pressable style={styles.primaryActionButton} onPress={resolveLatestCheckIn} disabled={isSaving}>
+                  <Text style={styles.primaryButtonText}>{isSaving ? 'Saving...' : 'Mark resolved'}</Text>
+                </Pressable>
+              </View>
             </View>
           ) : null}
         </View>
@@ -944,6 +1088,39 @@ const styles = StyleSheet.create({
   statusValue: {
     fontSize: fontSize.xl,
     fontWeight: '700',
+  },
+  consentRow: {
+    marginTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  consentText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+  },
+  inlineActionButton: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    backgroundColor: colors.surface,
+    marginTop: spacing.xs,
+  },
+  noticeBox: {
+    borderWidth: 1,
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
+  noticeText: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    lineHeight: 20,
+  },
+  resolveForm: {
+    gap: spacing.sm,
+    marginTop: spacing.md,
   },
   section: {
     borderWidth: 1,
