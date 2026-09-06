@@ -127,7 +127,7 @@ describe('SupabaseAuthService verifies access tokens locally (CB-024)', () => {
       const { service } = serviceWith({ secret: JWT_SECRET });
 
       await expect(
-        service.verifyAccessToken(await sign(senderClaims, { secret: 'not-the-project-secret' })),
+        service.verifyAccessToken(await sign(senderClaims, { secret: 'fixture-wrong-project-secret' })),
       ).rejects.toThrow(new UnauthorizedException('Invalid Supabase access token'));
     });
 
