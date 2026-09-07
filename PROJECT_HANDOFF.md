@@ -40,7 +40,7 @@ Nearby is a cross-border family check-in service. The sender (the paying custome
 
 ## Repository layout
 
-- `apps/mobile` — sender app. `apps/backend` — API. `packages/shared-types` — shared enums and types.
+- `apps/mobile` — sender app. `apps/backend` — API. `packages/shared-types` — a built package: shared enums, types and the zod request-body schemas. The backend imports it as `@nearby/shared-types` (compiled `dist`); mobile imports the source through its `@shared/*` path mapping, so Metro needs no build step.
 - `docs/handoffs/` — one file per feature plus `TEMPLATE.md`. `docs/audits/<date>/` — audit and acceptance reports.
 - `docs/archive/` — frozen history. `docs/superpowers/` — plans and specs from April and May 2026 (historical).
 - `scripts/` — CI helpers (workflow hygiene, secret scan, dependency audit). `.github/workflows/` — CI.
@@ -53,9 +53,11 @@ Nearby is a cross-border family check-in service. The sender (the paying custome
 npm ci; npm run prisma:generate           # any prisma command needs DATABASE_URL set (a dummy value is fine)
 npm run verify                            # everything CI runs; run before every push
 npm.cmd --prefix apps/backend run dev     # tsx watch on PORT (3000)
-npm.cmd --prefix apps/backend run build; node apps/backend/dist/main.js   # compiled, what hosting will run
+npm run build; node apps/backend/dist/main.js   # compiled, what hosting will run — the ROOT build, see below
 npm run android                           # Expo on the Android emulator (AVD Pixel_7 exists)
 ```
+
+The backend imports `@nearby/shared-types`, which resolves to `packages/shared-types/dist`, and only the root `npm run build` produces it (#40). Building `apps/backend` alone leaves the compiled API unable to boot — that applies to whatever ends up hosting it too.
 
 Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.env`. Variable names are in `apps/backend/.env.example`. The emulator reaches the host at `http://10.0.2.2:3000`. Step-by-step: `docs/EMULATOR_RUNBOOK.md`.
 
@@ -84,12 +86,14 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 | Billing (RevenueCat)                                                         | Foundation built; no live products            | `docs/handoffs/billing-revenuecat.md`            |
 | Data, security and privacy (schema, encryption, audit, RLS, partitions)      | Built                                         | `docs/handoffs/data-security-and-privacy.md`     |
 | Mobile app shell and screens                                                 | Built; Phase 3 polish open                    | `docs/handoffs/mobile-app.md`                    |
+| Logging and observability (JSON lines, request id, provider failure reasons) | Built                                         | `docs/handoffs/logging-and-observability.md`     |
+| Request validation (zod body schemas shared with mobile, domain error codes) | Built; mobile does not consume them yet       | `docs/handoffs/receivers-and-consent.md`         |
 | CI, security gates, tests                                                    | Built                                         | `docs/SECURITY.md`                               |
 
-## Current state (2026-09-06, late evening)
+## Current state (2026-09-07)
 
-- Sprint 1 (PRs #17 to #21), sprint 2 (#25 to #31) and sprint 3 wave 1 (#34, #35, #36) are merged. Phase 1 is complete except CB-078 (needs approval to touch a protected auth file). Phase 2 is complete in code (CB-019 to CB-026); CB-022's audio recordings wait on decision 3 and CB-083 (template-creation script) is new. Of the hardening set, CB-045 and CB-048 are done; CB-042 and CB-047 are wave 2. `master` CI is green at `d9e2350`.
-- Backend: 80 spec files, 803 tests across all projects; the compiled build boots in fake and configured mode. Acceptance: `docs/audits/2026-09-06/sprint3-acceptance.md` (11 sprint-3 checks plus the escalation loop on the device and the API, all pass, no new findings).
+- Sprint 1 (PRs #17 to #21), sprint 2 (#25 to #31), sprint 3 wave 1 (#34, #35, #36) and sprint 3 wave 2 (#39, #40) are merged. Phase 1 is complete except CB-078 (needs approval to touch a protected auth file). Phase 2 is complete in code (CB-019 to CB-026); CB-022's audio recordings wait on decision 3 and CB-083 (template-creation script) is open. Of the hardening set CB-042, CB-045, CB-047, CB-048, CB-084 and CB-085 are done; CB-086 (log redaction) came out of #39. `master` CI is green at `f65d17b`.
+- Backend: 87 spec files, 894 tests across all projects; the compiled build boots in fake and configured mode. Acceptance: `docs/audits/2026-09-06/sprint3-acceptance.md` (wave 1) and `docs/audits/2026-09-07/sprint3-wave2-acceptance.md` (wave 2).
 - Mobile: the vitest project passes (14 files / 100 tests). CB-080 is fixed and re-checked on the device. CB-082 (Expo Go push chunk warning) is still visible in Metro and stays a Phase 3 item.
 - Hosted Supabase database: every migration in the repo through `202609060302_expo_push_tickets` is applied (the founder ran the management-API script on 2026-09-07; verified: `receivers.consentResendCount integer NOT NULL DEFAULT 0`, `expo_push_tickets` with RLS on and no policies). Future migrations go the same way until `_prisma_migrations` is baselined (pattern in `docs/handoffs/data-security-and-privacy.md`).
 - Auth: access tokens are verified locally; the hosted project publishes an ES256 JWKS key, so `SUPABASE_JWT_SECRET` is not needed. The service-role key is optional and never read (founder decision 2026-09-06).
@@ -98,10 +102,10 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 
 ## Next session opener
 
-1. On `master`: `git status --short --branch`, `npm ci` (the lockfile gained `jose` in #35), then `npm run verify`.
-2. Sprint 3 wave 2 = CB-042 (zod body validation, one schema per body, shared with mobile; fold in CB-084, the `upsertFromSupabaseIdentity` alias removal) and CB-047 (logging; also write `TwilioRequestError.failureReason` into `attempt.failureReason` at the two `PROVIDER_SEND_FAILED` sites in `check-ins.service.ts`), plus CB-085 (push-receipts cron route). Two worktree agents with disjoint ownership (controllers, pipe and shared-types vs services' catch blocks, logger and middleware), a reviewer agent per PR before merge, then `docs/EMULATOR_RUNBOOK.md` again (ask before starting Docker or the emulator). Next free backlog id: CB-086.
-3. Founder items that do not block wave 2: decision 3 (voice languages); create the WhatsApp templates once Twilio credentials exist (or build CB-083 first).
-4. Then sprint 4 = Phase 3 mobile completion; then Dependabot triage (11 PRs), the one-off Prettier formatting commit and the `format:check` CI gate.
+1. On `master`: `git status --short --branch`, `npm ci` (the lockfile gained `jose` in #35 and `zod` in #40), then `npm run verify`.
+2. Sprint 4 = Phase 3 mobile completion (`docs/handoffs/mobile-app.md`; CB-027 onwards). The first natural piece is having the app consume the zod schemas #40 put in `packages/shared-types/validation` — they are written to run under Hermes and are unused by mobile today — and switching the app's error handling onto the `code` values the backend now returns instead of matching on message text.
+3. Founder items that block nothing: decision 3 (voice languages); create the WhatsApp templates once Twilio credentials exist (or build CB-083 first); add the `OPERATIONS_PUSH_RECEIPTS_RUN_URL` GitHub secret when the backend is hosted (#39).
+4. Then Dependabot triage (11 PRs), the one-off Prettier formatting commit and the `format:check` CI gate. Next free backlog id: CB-087.
 
 ## Gotchas
 
@@ -112,12 +116,12 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 - Emulator. Host is `10.0.2.2`. Expo Go cannot receive remote push. The Pixel_7 AVD is shared with other projects and may resume showing another app. `adb shell input text` works when the right field is focused first (`uiautomator dump` for bounds); earlier "corruption" was taps landing in the wrong field.
 - Environment shadowing. Expo and dotenv never override a variable that already exists in the process environment. A Windows user-level `EXPO_PUBLIC_SUPABASE_URL` from another project silently pointed the app at the wrong Supabase project on 2026-09-06; it was deleted. Keep all `EXPO_PUBLIC_*`, `SUPABASE_*` and `DATABASE_URL` values in the per-project `.env` files only.
 - Local `apps/backend/.env` carries no `DATABASE_URL` or KMS key and a placeholder service-role key (unused, CB-025); supply the run-time values through the shell, as the runbook does. The Supabase anon keys in both env files are valid and identical.
-- Worktrees. Launch worktree agents only with the shell at the repo root (a nested worktree was created once). The local gitleaks hook is skipped inside linked worktrees. Agents stop when a background verify is running: nudge them to finish. GitHub runs no CI on a PR that conflicts with master: rebase first. Remove finished worktrees with `Remove-Item -LiteralPath "\\?\<path>" -Recurse -Force` then `git worktree prune` (each holds ~800 MB of `node_modules`). Agents sharing one scratchpad overwrite each other's files: tell them to use unique file names.
+- Worktrees. Launch worktree agents only with the shell at the repo root (a nested worktree was created once). The local gitleaks hook is skipped inside linked worktrees. Agents stop when a background verify is running: nudge them to finish. GitHub runs no CI on a PR that conflicts with master: rebase first. Remove finished worktrees with `Remove-Item -LiteralPath "\\?\<path>" -Recurse -Force` then `git worktree prune` (each holds ~800 MB of `node_modules`). Agents sharing one scratchpad overwrite each other's files: tell them to use unique file names. `apps/backend/.env` is gitignored, so a fresh worktree has no `DATABASE_URL` and `npm run verify` dies at `prisma generate`: export a dummy value for the run. Squash-merged branches are not "merged" to `git branch -d`; delete them with `-D` once GitHub shows the PR as MERGED.
 - Metro. Start with `--clear` after pulling new code; `CI=1` mode served a stale screen module once. Two "Remove" buttons exist on the receiver detail (backup row and receiver).
 - Hooks. Pre-commit formats staged files with Prettier and scans them for secrets; pre-push runs gitleaks via Docker, lint and type-check.
 - Timestamps read through node `pg` from `timestamp(3)` columns appear shifted by the local UTC offset; the database stores UTC.
 
-- Tooling under auto mode. The classifier blocks `git filter-branch`, history rewrites bundled with a force-push, `gh pr merge --delete-branch` and some `sed -i` edits of `.gitleaks.toml`; plain `gh pr merge --squash` (delete-on-merge is on at GitHub), `git push --force-with-lease` on a feature branch after a rebase, and the Edit tool all work. Never put backticks inside a double-quoted shell string: bash executes them.
+- Tooling under auto mode. The classifier blocks `git filter-branch`, history rewrites bundled with a force-push, `gh pr merge` in every form (2026-09-07: plain `--squash` is now blocked too, so the founder runs `! gh pr merge <n> --squash` from the prompt), multi-file `cat a b`, `for` loops over `git show`, and some `sed -i` edits of `.gitleaks.toml`; single-file reads, `git push --force-with-lease` on a feature branch after a rebase, and the Edit tool all work. Never put backticks inside a double-quoted shell string: bash executes them. Never read a piped command's exit code with `$?` — it reports the last process in the pipe, so `npm run verify | tail` reports success on a failed build (cost a wasted run on 2026-09-07).
 - CI gitleaks scans every commit of a PR, so a renamed fixture still fails on the commit that introduced the old name; the value-exact allowlist in `.gitleaks.toml` is the documented fix. GitGuardian (not a required check) flags a bearer fixture next to a UUID; dismiss it in its dashboard.
 - After a rebase that changes `package-lock.json`, run `npm ci` in that worktree before `npm run verify`.
 - Git Bash rewrites `/sdcard/...` in `adb shell` arguments; prefix with `MSYS_NO_PATHCONV=1`. Expo Go may be missing after an AVD reset (Expo CLI installs it) and can hang on first launch: force-stop and reopen `exp://<host>:8081`. The throwaway database needs a seeded subscription before the receiver form submits (runbook §2).

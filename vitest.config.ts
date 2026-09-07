@@ -33,14 +33,16 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text-summary', 'lcov', 'html'],
       reportsDirectory: 'coverage',
-      // Ratchet: set from the measured baseline on 2026-09-05 (lines 44.1%,
-      // statements 43.4%, functions 45.7%, branches 36.7%). Raise as tests
-      // land; lowering needs a reason in the PR.
+      // Ratchet (CB-055, "+5 per sprint"). Raised on 2026-09-07 after sprint 3
+      // wave 2 measured lines 59.65%, statements 58.96%, functions 60.7%,
+      // branches 53.0% — the floor sits a few points under the measurement so
+      // an unrelated PR does not trip it. Raise as tests land; lowering needs a
+      // reason in the PR.
       thresholds: {
-        lines: 43,
-        statements: 42,
-        functions: 44,
-        branches: 35,
+        lines: 55,
+        statements: 54,
+        functions: 56,
+        branches: 48,
       },
       include: ['apps/backend/src/**', 'apps/mobile/src/**', 'packages/shared-types/**', 'scripts/**'],
       exclude: [
