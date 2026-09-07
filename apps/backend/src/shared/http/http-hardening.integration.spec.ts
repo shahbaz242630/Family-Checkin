@@ -64,6 +64,10 @@ describe('applyHttpHardening (integration)', () => {
   let app: INestApplication;
   let baseUrl: string;
 
+  // Booting a real Nest app and binding a port is the one hook in the suite that does I/O, and vitest's
+  // default 10 s is not enough for it on a loaded machine — it timed out during sprint 4 wave 1 while a
+  // coverage run was using the CPU, and passed immediately on a quiet one. A flaky gate teaches people to
+  // re-run instead of read, so the hook gets a budget that reflects what it actually does.
   beforeAll(async () => {
     app = await NestFactory.create(HardeningTestModule, { logger: false });
     applyHttpHardening(app, config);
@@ -71,11 +75,11 @@ describe('applyHttpHardening (integration)', () => {
 
     const address = app.getHttpServer().address() as AddressInfo;
     baseUrl = `http://127.0.0.1:${address.port}`;
-  });
+  }, 60_000);
 
   afterAll(async () => {
     await app?.close();
-  });
+  }, 60_000);
 
   it('returns 429 once the default throttler limit is exceeded', async () => {
     const statuses: number[] = [];
