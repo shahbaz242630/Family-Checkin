@@ -1,56 +1,40 @@
-// Auth callback screen - handles deep links from Supabase email confirmations
-import { useEffect, useState } from 'react';
+// Auth callback screen - shows the outcome of the deep link the root layout already processed (CB-029)
+import { useEffect } from 'react';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import * as Linking from 'expo-linking';
-import { handleAuthDeepLink } from '../../services/supabase';
+import { DEEP_LINK_SETTLE_MS } from '../../hooks/useDeepLinks';
 import { colors, spacing } from '../../theme';
 
 export default function AuthCallbackScreen() {
   const router = useRouter();
-  const params = useLocalSearchParams();
-  const [status, setStatus] = useState<'processing' | 'success' | 'error'>('processing');
-  const [errorMessage, setErrorMessage] = useState<string>('');
+  // `useDeepLinks` in the root layout is the only thing that reads the URL and calls `handleAuthDeepLink`.
+  // This screen only renders what it is told, so a confirmation that succeeded can never be processed a
+  // second time here and flash "Verification Failed".
+  const params = useLocalSearchParams<{ status?: string; message?: string }>();
+  const status: 'processing' | 'success' | 'error' =
+    params.status === 'success' ? 'success' : params.status === 'error' ? 'error' : 'processing';
+  const errorMessage = params.message || 'Authentication failed';
 
   useEffect(() => {
-    const processAuthCallback = async () => {
-      try {
-        // Get the full URL that opened the app
-        const url = await Linking.getInitialURL();
+    if (status === 'success') {
+      // Navigate to main app after successful auth
+      const timer = setTimeout(() => {
+        router.replace('/(main)');
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
 
-        if (url) {
-          const result = await handleAuthDeepLink(url);
-
-          if (result.success) {
-            setStatus('success');
-            // Navigate to main app after successful auth
-            setTimeout(() => {
-              router.replace('/(main)');
-            }, 1500);
-          } else {
-            setStatus('error');
-            setErrorMessage(result.error || 'Authentication failed');
-            // Navigate back to login after showing error
-            setTimeout(() => {
-              router.replace('/(auth)/login');
-            }, 3000);
-          }
-        } else {
-          // No URL, might be direct navigation - redirect to login
-          router.replace('/(auth)/login');
-        }
-      } catch (error) {
-        console.error('Auth callback error:', error);
-        setStatus('error');
-        setErrorMessage('An unexpected error occurred');
-        setTimeout(() => {
-          router.replace('/(auth)/login');
-        }, 3000);
-      }
-    };
-
-    processAuthCallback();
-  }, []);
+    // On an error, back to login after showing it. While still processing, the handler has the link in
+    // flight and will re-render this screen with a status; if nothing arrives (direct navigation), fall
+    // back to login the way this screen used to when there was no URL.
+    const timer = setTimeout(
+      () => {
+        router.replace('/(auth)/login');
+      },
+      status === 'error' ? 3000 : DEEP_LINK_SETTLE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [status, router]);
 
   return (
     <View style={styles.container}>

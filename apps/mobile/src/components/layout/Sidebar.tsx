@@ -1,25 +1,23 @@
 // Sidebar component - left drawer menu with check-in features
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { usePathname, useRouter } from 'expo-router';
 import { Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { MenuItem } from '../common';
+import { useAuthContext } from '../../contexts/AuthContext';
 import { useDrawer } from '../../contexts/DrawerContext';
+import { visibleSidebarMenuItems } from '../../utils/sidebarMenu';
 import { colors, fontSize, spacing } from '../../theme';
-
-const MENU_ITEMS = [
-  { icon: 'H', label: 'Dashboard', path: '/(main)' },
-  { icon: '+', label: 'Add receiver', path: '/(main)/receiver-setup' },
-  { icon: 'O', label: 'Admin Operations', path: '/(main)/admin-operations' },
-  { icon: '!', label: 'Abuse Reports', path: '/(main)/admin-abuse-reports' },
-];
 
 export function Sidebar() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const pathname = usePathname();
+  const { isAdmin } = useAuthContext();
   const { isSidebarOpen, closeSidebar } = useDrawer();
   const slideAnim = useRef(new Animated.Value(-300)).current;
+  // Admin entries only for an admin: a sender who tapped one used to land on a 403 screen (CB-039).
+  const menuItems = useMemo(() => visibleSidebarMenuItems(isAdmin), [isAdmin]);
 
   useEffect(() => {
     Animated.timing(slideAnim, {
@@ -54,7 +52,7 @@ export function Sidebar() {
         </View>
 
         <View style={styles.menu}>
-          {MENU_ITEMS.map((item) => (
+          {menuItems.map((item) => (
             <MenuItem
               key={item.path}
               icon={item.icon}

@@ -9,15 +9,19 @@ import {
   ScrollView,
   ActivityIndicator,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import * as Linking from 'expo-linking';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { TextInput, Button } from '../../components/auth';
-import { supabase, handleAuthDeepLink } from '../../services/supabase';
+import { supabase } from '../../services/supabase';
+import { DEEP_LINK_SETTLE_MS } from '../../hooks/useDeepLinks';
 
 export default function ResetPasswordScreen() {
   const router = useRouter();
+  // `useDeepLinks` in the root layout processes the recovery link once and reports the outcome here
+  // (CB-029). This screen no longer calls `getInitialURL`, which on a warm start returned the URL the app
+  // was launched with — not the link that had just arrived — and failed every time.
+  const params = useLocalSearchParams<{ status?: string; message?: string }>();
 
   const [isValidating, setIsValidating] = useState(true);
   const [isValidSession, setIsValidSession] = useState(false);
@@ -30,37 +34,57 @@ export default function ResetPasswordScreen() {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    // Process the deep link to establish session
-    const processResetLink = async () => {
+    // The deep-link handler exchanged the recovery code and this screen is ready for the new password.
+    if (params.status === 'ready') {
+      setError(null);
+      setIsValidSession(true);
+      setIsValidating(false);
+      return;
+    }
+
+    if (params.status === 'error') {
+      setIsValidSession(false);
+      setError(params.message || 'Invalid or expired reset link');
+      setIsValidating(false);
+      return;
+    }
+
+    let cancelled = false;
+    let settleTimer: ReturnType<typeof setTimeout> | undefined;
+
+    // No outcome yet: check if we already have a valid session (user might have navigated here).
+    const checkExistingSession = async () => {
       try {
-        const url = await Linking.getInitialURL();
+        const { data: { session } } = await supabase.auth.getSession();
+        if (cancelled) return;
 
-        if (url) {
-          const result = await handleAuthDeepLink(url);
-
-          if (result.success) {
-            setIsValidSession(true);
-          } else {
-            setError(result.error || 'Invalid or expired reset link');
-          }
-        } else {
-          // Check if we already have a valid session (user might have navigated here)
-          const { data: { session } } = await supabase.auth.getSession();
-          if (session) {
-            setIsValidSession(true);
-          } else {
-            setError('No valid session found. Please request a new password reset link.');
-          }
+        if (session) {
+          setIsValidSession(true);
+          setIsValidating(false);
+          return;
         }
+
+        // The handler may still have the recovery link in flight; it re-renders this screen with a status
+        // when it finishes. Only give up once that window has passed, so a valid link never flashes an error.
+        settleTimer = setTimeout(() => {
+          if (cancelled) return;
+          setError('No valid session found. Please request a new password reset link.');
+          setIsValidating(false);
+        }, DEEP_LINK_SETTLE_MS);
       } catch (err) {
+        if (cancelled) return;
         setError('Failed to process reset link');
-      } finally {
         setIsValidating(false);
       }
     };
 
-    processResetLink();
-  }, []);
+    void checkExistingSession();
+
+    return () => {
+      cancelled = true;
+      if (settleTimer) clearTimeout(settleTimer);
+    };
+  }, [params.status, params.message]);
 
   const validateForm = (): boolean => {
     let valid = true;

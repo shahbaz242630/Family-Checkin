@@ -8,6 +8,7 @@ import { SocialButton, TextInput, Button, Divider } from '../../components/auth'
 import { ReceiverPhoneInput } from '../../components/onboarding';
 import { COUNTRIES } from '../../data/constants';
 import { useAuth } from '../../hooks/useAuth';
+import { getCurrentSession } from '../../services/auth';
 import { syncAuthenticatedUser } from '../../services/backendApi';
 
 export default function SignupScreen() {
@@ -23,6 +24,9 @@ export default function SignupScreen() {
   const [emailError, setEmailError] = useState('');
   const [phoneError, setPhoneError] = useState('');
   const [passwordError, setPasswordError] = useState('');
+  // Set when Supabase creates the account but returns no session: the project requires email confirmation
+  // and there is nothing to sign in with yet (CB-029).
+  const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
   const selectedPhoneCountry = COUNTRIES.find((country) => country.isoCode === phoneCountry) ?? COUNTRIES[0];
 
   const validateForm = (): boolean => {
@@ -91,14 +95,23 @@ export default function SignupScreen() {
     if (!validateForm()) return;
 
     const success = await signUp(email, password, fullName, senderSignupMetadata());
-    if (success) {
-      try {
-        await syncAuthenticatedUser();
-      } catch {
-        // Email confirmation flows may not return a session immediately.
-      }
-      router.replace('/onboarding');
+    if (!success) return;
+
+    // With email confirmation on, `signUp` creates the account but returns no session. Sending the sender
+    // to onboarding then left them on a screen no backend call could load; tell them to open the link
+    // instead — the root deep-link handler signs them in when they do (CB-029).
+    const session = await getCurrentSession();
+    if (!session) {
+      setConfirmationEmail(email.trim());
+      return;
     }
+
+    try {
+      await syncAuthenticatedUser();
+    } catch {
+      // The profile sync runs again on the next sign-in.
+    }
+    router.replace('/onboarding');
   };
 
   const handleGoogleSignUp = async () => {
@@ -126,6 +139,25 @@ export default function SignupScreen() {
   const openTermsOfService = () => {
     Linking.openURL('https://familycheckin.app/terms');
   };
+
+  // Confirm-email state: the account exists, nothing is signed in, and the next step is in the inbox.
+  if (confirmationEmail) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.confirmContent}>
+          <Text style={styles.title}>Check your email</Text>
+          <Text style={styles.confirmMessage}>
+            We sent a confirmation link to {confirmationEmail}. Open it on this device to finish setting up your
+            account.
+          </Text>
+          <Text style={styles.confirmHint}>
+            The link opens Nearby and signs you in. If it has not arrived in a few minutes, check your spam folder.
+          </Text>
+          <Button title="Back to sign in" onPress={() => router.replace('/(auth)/login')} />
+        </View>
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -294,6 +326,22 @@ const styles = StyleSheet.create({
   },
   socialButtons: {
     gap: spacing.md,
+  },
+  confirmContent: {
+    flex: 1,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+    gap: spacing.md,
+  },
+  confirmMessage: {
+    fontSize: fontSize.md,
+    color: colors.text,
+    lineHeight: 22,
+  },
+  confirmHint: {
+    fontSize: fontSize.sm,
+    color: colors.textSecondary,
+    lineHeight: 20,
   },
   form: {
     gap: spacing.md,
