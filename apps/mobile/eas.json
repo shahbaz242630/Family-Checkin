@@ -42,7 +42,7 @@
   "submit": {
     "production": {
       "android": {
-        "serviceAccountKeyPath": "./google-services.json",
+        "serviceAccountKeyPath": "../../../nearby-play-service-account.json",
         "track": "internal"
       }
     }

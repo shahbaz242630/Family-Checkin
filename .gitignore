@@ -81,6 +81,17 @@ Credentials.*
 *Credentials*
 ~$*
 
+# Store and push credentials. The Google Play service-account key can publish to the
+# Play listing and the Firebase file identifies the FCM sender, so neither may reach
+# this repository — it is public. The Play key should live OUTSIDE the repo entirely
+# (see apps/mobile/eas.json); these patterns are defence in depth, not the plan.
+*service-account*.json
+*service_account*.json
+play-store-key.json
+api-*-*.json
+google-services.json
+GoogleService-Info.plist
+
 # TypeScript
 *.tsbuildinfo
 
