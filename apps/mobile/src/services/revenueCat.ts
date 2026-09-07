@@ -24,6 +24,8 @@ type PurchasesCustomerInfo = {
 type PurchasesModule = {
   default?: PurchasesModule;
   configure(input: { apiKey: string; appUserID?: string }): void;
+  logIn?(appUserID: string): Promise<unknown>;
+  logOut?(): Promise<unknown>;
   getOfferings(): Promise<{ current?: PurchasesOffering | null }>;
   purchasePackage(pkg: PurchasesPackage): Promise<{ customerInfo: PurchasesCustomerInfo }>;
   restorePurchases(): Promise<PurchasesCustomerInfo>;
@@ -36,7 +38,14 @@ export interface RevenueCatBillingAvailability {
   reason?: string;
 }
 
-let configuredForUserId: string | null = null;
+const NATIVE_MODULE_REASON = 'RevenueCat native module is unavailable. Use a development or store build.';
+const NO_IDENTITY_SWITCH_REASON =
+  'This build of react-native-purchases cannot switch RevenueCat users. Reopen the app after signing in again.';
+
+// `Purchases.configure` is a once-per-process call. Switching senders is
+// `logIn`/`logOut`; calling `configure` a second time is the CB-041 bug.
+let configuredApiKey: string | null = null;
+let currentAppUserId: string | null = null;
 
 export function revenueCatAvailability(): RevenueCatBillingAvailability {
   if (Platform.OS === 'web') {
@@ -58,18 +67,51 @@ export async function configureRevenueCat(userId: string): Promise<RevenueCatBil
 
   const purchases = await loadPurchases();
   if (!purchases) {
-    return { configured: false, reason: 'RevenueCat native module is unavailable. Use a development or store build.' };
+    return { configured: false, reason: NATIVE_MODULE_REASON };
   }
 
-  if (configuredForUserId !== userId) {
-    purchases.configure({ apiKey: currentApiKey() ?? '', appUserID: userId });
-    configuredForUserId = userId;
+  const apiKey = currentApiKey() ?? '';
+
+  if (configuredApiKey !== apiKey) {
+    purchases.configure({ apiKey, appUserID: userId });
+    configuredApiKey = apiKey;
+    currentAppUserId = userId;
+    return { configured: true };
+  }
+
+  if (currentAppUserId !== userId) {
+    if (typeof purchases.logIn !== 'function') {
+      return { configured: false, reason: NO_IDENTITY_SWITCH_REASON };
+    }
+    await purchases.logIn(userId);
+    currentAppUserId = userId;
   }
 
   return { configured: true };
 }
 
-export async function purchaseRevenueCatPackage(userId: string, interval: RevenueCatPurchaseInterval): Promise<{ entitled: boolean }> {
+/**
+ * Detaches the RevenueCat SDK from the signed-out sender so the next sender on
+ * this device does not inherit the previous identity. Safe to call when
+ * RevenueCat was never configured.
+ */
+export async function logOutRevenueCat(): Promise<void> {
+  if (currentAppUserId === null) {
+    return;
+  }
+
+  currentAppUserId = null;
+
+  const purchases = await loadPurchases();
+  if (typeof purchases?.logOut === 'function') {
+    await purchases.logOut();
+  }
+}
+
+export async function purchaseRevenueCatPackage(
+  userId: string,
+  interval: RevenueCatPurchaseInterval,
+): Promise<{ entitled: boolean }> {
   const availability = await configureRevenueCat(userId);
   if (!availability.configured) {
     throw new Error(availability.reason ?? 'RevenueCat is not configured');
@@ -111,7 +153,7 @@ export async function restoreRevenueCatPurchases(userId: string): Promise<{ enti
 async function requirePurchases(): Promise<PurchasesModule> {
   const purchases = await loadPurchases();
   if (!purchases) {
-    throw new Error('RevenueCat native module is unavailable. Use a development or store build.');
+    throw new Error(NATIVE_MODULE_REASON);
   }
   return purchases;
 }

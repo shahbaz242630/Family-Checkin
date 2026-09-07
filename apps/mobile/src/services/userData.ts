@@ -4,17 +4,22 @@ import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { deleteAccount, exportAccountData } from './backendApi';
 
+/**
+ * Mirrors `AccountExportResponse` from the backend account module. The keys must
+ * match it exactly — `checkins`/`escalationEvents` never existed in the payload
+ * and silently typed those sections as missing (CB-041).
+ */
 export interface UserDataExport {
   exportedAt: string;
   exportVersion: string;
   user: any;
-  receivers?: any[];
-  backupContacts?: any[];
-  checkins: any[];
-  attempts?: any[];
-  escalationEvents: any[];
+  receivers: any[];
+  backupContacts: any[];
+  checkIns: any[];
+  attempts: any[];
+  escalations: any[];
   subscriptions: any[];
-  auditLogs?: any[];
+  auditLogs: any[];
 }
 
 /**
@@ -62,7 +67,9 @@ export async function downloadUserData(stepUpToken: string): Promise<boolean> {
 /**
  * Delete entire account and all data via backend account privacy endpoint.
  */
-export async function deleteUserAccount(stepUpToken: string): Promise<{ success: boolean; message?: string; error?: string }> {
+export async function deleteUserAccount(
+  stepUpToken: string,
+): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
     const data = await deleteAccount(stepUpToken);
     // Sign out locally after successful deletion
