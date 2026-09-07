@@ -13,7 +13,7 @@ eight CI checks on both PRs.
 | Spec files | 80 | 87 |
 | Tests | 803 | 894 |
 | Coverage (lines/statements/functions/branches) | 44.1 / 43.4 / 45.7 / 36.7 | 59.65 / 58.96 / 60.7 / 53.0 |
-| Coverage thresholds | 43 / 42 / 44 / 35 | 55 / 54 / 56 / 48 (#41) |
+| Coverage thresholds | 43 / 42 / 44 / 35 | 55 / 54 / 56 / 48 (#42) |
 
 `npm run verify` was run on `cb-042-body-validation` rebased onto `#39` — that
 is the same content as the merged `master` — and passed with 87 files / 894
