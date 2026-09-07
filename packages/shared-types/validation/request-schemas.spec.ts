@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { createBackupContactBodySchema, updateBackupContactBodySchema } from './backup-contacts';
 import {
   createReceiverBodySchema,
+  DEFAULT_CHECK_IN_HISTORY_DAYS,
   fakeInboundReceiverReplyBodySchema,
+  MAX_CHECK_IN_HISTORY_DAYS,
   pauseReceiverBodySchema,
+  receiverCheckInHistoryQuerySchema,
   resolveCheckInBodySchema,
   updateReceiverBodySchema,
 } from './receivers';
@@ -258,5 +261,22 @@ describe('primitives (CB-042)', () => {
     expect(dialablePhoneSchema.safeParse('+0501234567').success).toBe(false);
     expect(dialablePhoneSchema.safeParse('+971').success).toBe(false);
     expect(dialablePhoneSchema.safeParse('DROP TABLE receivers').success).toBe(false);
+  });
+});
+
+describe('receiverCheckInHistoryQuerySchema (CB-036)', () => {
+  it('defaults to 30 days when the caller asks for no window', () => {
+    expect(receiverCheckInHistoryQuerySchema.parse({})).toEqual({ days: DEFAULT_CHECK_IN_HISTORY_DAYS });
+  });
+
+  it('coerces the query string, which always arrives as text', () => {
+    expect(receiverCheckInHistoryQuerySchema.parse({ days: '7' })).toEqual({ days: 7 });
+    expect(receiverCheckInHistoryQuerySchema.parse({ days: 90 })).toEqual({ days: MAX_CHECK_IN_HISTORY_DAYS });
+  });
+
+  it('bounds the window: an unbounded days would be a full-table read for any signed-in caller', () => {
+    for (const days of ['0', '-1', '91', '999999', '1.5', 'lots', '', ['1', '2'], null]) {
+      expect(receiverCheckInHistoryQuerySchema.safeParse({ days }).success).toBe(false);
+    }
   });
 });

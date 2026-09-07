@@ -1,7 +1,7 @@
 # Receivers and consent — feature handoff
 
 Status: Built · Last verified: 2026-09-06 (emulator acceptance: add receiver, consent, STOP, REPORT, remove with OTP; acceptance run for the reply paths; specs for the cooldown, resend, quiet pushes, shared-phone and resolution-note paths; the app half — resend, resolution note, backup-alert outcome, typed error copy, schedule-invalid state — is covered by type-check, lint and the vitest project, emulator pass pending)
-BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open backlog: CB-036, CB-069
+BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open backlog: CB-069
 
 ## What it does
 
@@ -12,7 +12,7 @@ BRD: BRD-4, BRD-4.5, BRD-6.8, FR-SAF-04, FR-SAF-05, FR-SAF-07, FR-REC-07 · Open
 - `STOP` revokes consent, writes a 7-day opt-out cooldown row, cancels any attempt still queued for today and sends the receiver one `receiver_checkins_ended` confirmation on the channel the STOP arrived on, naming the sender (`UsersService.senderDisplayNameFor`) or using the neutral wording in the receiver's own language (CB-079).
 - Consent answers, STOP and a backup contact's DONE each send the sender a quiet push (default sound, no siren channel) deep-linking to the receiver.
 - `REPORT` files an abuse report and pauses the receiver until an admin reviews it; the open check-in and its pending attempts are cancelled.
-- The sender can pause (optionally until a date), resume, edit and remove a receiver. Remove is a soft delete behind an SMS step-up code; pause and remove send the receiver a best-effort lifecycle message.
+- The sender can pause (choosing an end date in the app: 1 day, 3 days, 1 week, 2 weeks, 1 month, or until they resume it themselves), resume, edit and remove a receiver. Remove is a soft delete behind an SMS step-up code; pause and remove send the receiver a best-effort lifecycle message.
 - Resolving a check-in accepts an optional ≤200-character note, stored encrypted on the check-in and returned decrypted in receiver detail; the backup contact's DONE wording is appended to the same note.
 - Mobile shows receivers on the dashboard with a consent/check-in status chip, and a detail screen with pause/resume, edit, backup contacts and remove. Both refetch on focus; a detail whose receiver was removed elsewhere says "This receiver was removed" and returns to the dashboard.
 - The detail offers "Resend invitation" while consent is `PENDING` (disabled with "Resend available <local date time>" until `consentResendAllowedAt`, CB-081), takes an optional ≤200-character note on "Mark resolved" and shows the stored note, reports what "Alert backup contacts" achieved ("No backup contacts to alert — add one below", "Alerted N backup contact(s)", "Could not reach any backup contact"), and explains the typed 409/429 refusals in plain words with the relevant date (`describeBackendError` in `services/backendErrors.ts`). A create whose consent send failed lands on the detail with a notice pointing at Resend.
@@ -33,8 +33,30 @@ All `/receivers` routes require a Supabase bearer token (`Authorization: Bearer 
 
 Every body is validated before the handler runs by `@Body(new ZodBodyPipe(schema))` with the schema from `@nearby/shared-types` (CB-042). A body that does not match answers `400 { code: "VALIDATION_FAILED", message, issues: [{ path, code, message }] }` — `primaryChannel: "EMAIL"`, `fallbackChannels: "SMS"`, a `timezone` the scheduler cannot evaluate, a window that is not `HH:mm`, a three-letter `countryCode` or a personal note over 50 characters are all 400s now instead of 500s or database errors. Fields no schema declares are dropped rather than passed on.
 
-- `GET /receivers` — sender; returns `{ receivers: ReceiverSummary[] }` for the sender's non-deleted receivers. Every summary carries `scheduleInvalidAt`: the ISO time the scheduler stamped the schedule unevaluable, or `null` (CB-069), and `consentResendAllowedAt`: the ISO time "Resend invitation" reopens, or `null` when nothing restricts it (consent not `PENDING`, or no invitation ever left) (CB-081).
+- `GET /receivers` — sender; returns `{ receivers: ReceiverSummary[] }` for the sender's non-deleted receivers. Every summary (and the detail) carries `lastHeardFrom`: the ISO time of the most recent check-in the receiver actually answered, or `null` (CB-036). Every summary also carries `scheduleInvalidAt`: the ISO time the scheduler stamped the schedule unevaluable, or `null` (CB-069), and `consentResendAllowedAt`: the ISO time "Resend invitation" reopens, or `null` when nothing restricts it (consent not `PENDING`, or no invitation ever left) (CB-081).
 - `GET /receivers/:receiverId` — sender; detail plus `backupContacts` and an `escalation` summary. `latestCheckIn.resolutionNote` is the decrypted note when one exists; `scheduleInvalidAt` and `consentResendAllowedAt` as above. 404 when missing, deleted or not owned.
+- `GET /receivers/:receiverId/check-ins?days=30` — sender; the receiver's check-in history for the detail screen (CB-036). The query is validated by `receiverCheckInHistoryQuerySchema` through `ZodQueryPipe`: `days` is coerced from the query string and bounded to 1-90 (30 by default), and anything else is `400 { code: "VALIDATION_FAILED", issues }`. Answers
+
+  ```json
+  {
+    "receiverId": "…", "days": 30,
+    "from": "2026-08-08T12:00:00.000Z", "to": "2026-09-07T12:00:00.000Z",
+    "checkIns": [
+      {
+        "id": "…", "status": "ESCALATED",
+        "scheduledAt": "2026-09-06T05:00:00.000Z", "scheduledLocalDate": "2026-09-06",
+        "channelUsed": "SMS", "sentAt": "…", "respondedAt": "…", "responseDetectedAs": "ok",
+        "resolvedAt": "…", "resolutionNote": "…", "resolutionByUserId": "…",
+        "escalations": [
+          { "id": "…", "attemptNumber": 1, "channel": "SMS", "startedAt": "…", "completedAt": "…",
+            "result": "SUCCESS", "senderNotifiedAt": "…", "backupAlertedAt": "…" }
+        ]
+      }
+    ]
+  }
+  ```
+
+  `checkIns` is newest first and capped at `MAX_CHECK_IN_HISTORY_ROWS` (200) rows on top of the day window; `resolutionNote` is decrypted for the owning sender only. 404 when the receiver is missing, deleted or not owned.
 - `POST /receivers` — sender **and** an entitled subscription; otherwise `403 { code: "PAID_ACCESS_REQUIRED" }`. Before anything is stored: `409 { code: "OPT_OUT_COOLDOWN", cooldownUntil }` while the phone's STOP cooldown runs, `409 { code: "RECEIVER_ALREADY_MONITORED" }` when another sender has an active (non-deleted) receiver with the same phone; both are audited as `receiver.create_rejected`. Creates the receiver `PENDING`, then calls `ReceiverConsentService.requestConsent`. Returns only non-sensitive fields plus `consentRequestStatus: "requested" | "failed"` — never name, phone, hashes or provider ids. `failed` means the provider refused the send; the row exists and the resend route applies.
 - `POST /receivers/:receiverId/consent/resend` — sender; re-sends the consent request. `404` when not owned; `409 CONSENT_NOT_PENDING` unless `consentStatus = PENDING`; `409 OPT_OUT_COOLDOWN` during a cooldown; `429 { code: "CONSENT_RESEND_LIMIT", nextAllowedAt }` while the window is closed: 24 h after the first invitation, 7 days after a resend (CB-081). Returns `{ receiver: { id, consentStatus, consentRequestStatus, consentRequestedAt, consentResendAllowedAt } }`; a provider failure is `consentRequestStatus: "failed"` with `consentRequestedAt` and the window unchanged. Audits `receiver.consent_resent` / `receiver.consent_resend_failed`.
 - `PATCH /receivers/:receiverId` — sender; updates name, country, relationship, language, timezone, tech profile, channels and schedule. Phone is not editable. Schedule errors return `400 { code, message }`.
@@ -94,6 +116,8 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 - Quiet pushes and the STOP confirmation are best effort and run after the state change: a push gateway or provider failure is audited (`sender_push.failed`, `receiver.opt_out_confirmation_failed`) and never fails the inbound reply (CB-015). Push copy never contains the receiver's name or phone.
 - `try-later` and `alert-backup` must not start a second cascade while the latest check-in is `PENDING` or `SENT`; that is the 409, not a 404.
 - `alert-backup` returns the fan-out's own `{ outcome, alerted, failed }` next to the refreshed receiver; the app shows that and never infers "no backup contacts" from an unchanged status (CB-074).
+- `lastHeardFrom` is the maximum `check_ins.respondedAt` for the receiver, read as one grouped query per dashboard load (`PrismaReceiversRepository.lastHeardFromByReceiver`). It is never derived from `latestCheckIn`: today's check-in is normally still open while yesterday's carries the last answer, so that shortcut would report "no reply yet" for a receiver who answered this morning (CB-036).
+- The history route is bounded twice: `days` by the query schema (1-90) and the row count by `MAX_CHECK_IN_HISTORY_ROWS`, because retries can put several check-ins on one day. An unbounded `days` would let any signed-in caller ask the database for every check-in ever written. The repository query is scoped by `receiver: { userId, deletedAt: null }` as well as by the ownership check the service does first (CB-036).
 - `scheduleInvalidAt` is surfaced verbatim from the row on every summary and detail (`null` when clear). The app renders it as a separate "Schedule needs attention" chip/warning and never in place of the consent or check-in status; the scheduler owns setting and clearing it (check-in engine handoff).
 - Typed refusals (`OPT_OUT_COOLDOWN`, `RECEIVER_ALREADY_MONITORED`, `CHECK_IN_IN_PROGRESS`, `CONSENT_NOT_PENDING`, `CONSENT_RESEND_LIMIT`) keep their `code` and details (`cooldownUntil`, `nextAllowedAt`) in the body; the app's `describeBackendError` depends on those names. They are `DomainError`s now (`shared/validation/domain-error.ts`), so the status and body come from the error itself wherever it is thrown.
 - Missing or over-long receiver fields raise `ReceiverFieldError` (400 `RECEIVER_FIELD_INVALID` with `field`), not a plain `Error`; the messages are unchanged. The body schemas reject the same values one layer earlier, so the service checks are the second line, not the only one (CB-042).
@@ -106,7 +130,6 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 
 ## Known gaps
 
-- CB-036 — receiver detail lacks 30-day history, escalation list and time-since-last-contact; pause has no end-date picker in the app.
 - CB-069 — the audit-once stamp and the app's "Schedule needs attention" state are done; the sender quiet push for an invalid schedule (via CB-012) is still pending.
 - The wave-B mobile changes (resend, resolution note, backup-alert outcome, typed error copy, schedule chip) have not been driven through the emulator yet; they are on the post-sprint-2 runbook pass.
 - `REPORT` is applied to the resolved row only; with several rows sharing a phone, the other rows are not paused for review.
@@ -122,5 +145,6 @@ With the backend on fake providers per `docs/EMULATOR_RUNBOOK.md` (`$h` = the op
 - Acceptance evidence: `docs/audits/2026-09-06/sprint1-acceptance.md` S4 (unrecognised/unknown/invalid replies), S6 (STOP), S7 (REPORT and admin unpause).
 - PRs: #17 (REPORT pause and unpause, replies never 500), #18 (fake reply route gated to fake mode plus the cron secret), #19 (consent request rendered from the message catalog), #20 (STOP/REPORT/pause/delete cancel in-flight attempts), #24 (CB-070: `DELETE /receivers/:id` could never consume a step-up token in the real graph), #25 (CB-071 dashboard and detail refetch on focus, removed-receiver feedback; CB-072 phone labels; CB-073 quarter-hour pickers and live offsets; CB-077 skipped-status labels), #27 (CB-009 cooldown enforced on create/resend/YES plus `POST /receivers/:id/consent/resend`; CB-012 quiet sender pushes and STOP confirmation; CB-014 one phone per sender, reply resolution and consent fan-out over shared hashes; CB-017 try-later at +120 min and `CHECK_IN_IN_PROGRESS`; CB-018 encrypted resolution note), #30 (sprint-2 wave B receivers API/app follow-ups — CB-074 app half: `alert-backup` answers `backupAlert` and the detail shows it; CB-069 `scheduleInvalidAt` on summaries and detail with the dashboard chip and detail warning; mobile resend, resolution note, `describeBackendError` copy for the typed codes, failed-consent hand-off from the add form), #36 (CB-079: the STOP confirmation names the sender through `UsersService` and the catalog localises the neutral fallback; voice digits are mapped to keywords in the provider-webhooks layer, CB-022).
 - Emulator acceptance 2026-09-06: `docs/audits/2026-09-06/emulator-acceptance.md` (scenarios 2–5, 8–12; findings CB-071, CB-072, CB-073, CB-074, CB-075).
+- #PR (sprint 4 wave 1): CB-036 `GET /receivers/:id/check-ins?days=30` with escalation events and a zod-bounded window (`ZodQueryPipe`), `lastHeardFrom` on summaries and detail, the app's day-per-row history and the pause end-date choice.
 - #34 (sprint 3): CB-081 resend window (24 h after the first invitation, 7 days after a resend; `consentResendCount`, `consentResendAllowedAt`, app button state), CB-080 client transport hardening in `backendApi.ts`.
 - #40 (sprint 3 wave 2): CB-042 zod body schemas for create, update, pause, resolve and the fake reply route, applied through `ZodBodyPipe`; receiver field failures carry `RECEIVER_FIELD_INVALID`. CB-084 the `upsertFromSupabaseIdentity` alias is gone; the controller calls `findOrCreateFromSupabaseIdentity`.

@@ -14,10 +14,12 @@ import { COUNTRIES } from '../../../data/constants';
 import {
   alertBackupForReceiverCheckIn,
   createBackupContact,
+  DEFAULT_RECEIVER_HISTORY_DAYS,
   deleteBackupContact,
   deleteReceiver,
   getReceiver,
   listBackupContacts,
+  listReceiverCheckIns,
   pauseReceiver,
   requestAccountStepUp,
   resendReceiverConsent,
@@ -30,6 +32,7 @@ import {
   type BackupContactSetupInput,
   type BackupContactUpdateInput,
   type BackendBackupContact,
+  type BackendReceiverCheckIn,
   type BackendReceiverDetail,
   type BackendRelationshipType,
   type ReceiverUpdateInput,
@@ -60,6 +63,8 @@ import {
   SCHEDULE_NEEDS_ATTENTION_MESSAGE,
   type ReceiverStatusTone,
 } from '../../../utils/receiverStatus';
+import { buildReceiverHistoryDays, formatLastHeardFrom } from '../../../utils/receiverHistory';
+import { describePauseUntil, pauseUntilOptions, type PauseUntilOption } from '../../../utils/receiverPause';
 
 const relationshipOptions: Array<{ value: BackendRelationshipType; label: string }> = [
   { value: 'PARENT', label: 'Parent' },
@@ -91,6 +96,11 @@ export default function ReceiverDetailScreen() {
   const { id, consentRequest } = useLocalSearchParams<{ id: string; consentRequest?: string }>();
   const [receiver, setReceiver] = useState<BackendReceiverDetail | null>(null);
   const [backupContacts, setBackupContacts] = useState<BackendBackupContact[]>([]);
+  // The last 30 days of check-ins with their escalation events (CB-036). Loaded next to the detail but kept
+  // apart from it: a history that will not load must not blank a screen whose receiver did.
+  const [checkInHistory, setCheckInHistory] = useState<BackendReceiverCheckIn[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [isChoosingPauseUntil, setIsChoosingPauseUntil] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -128,6 +138,16 @@ export default function ReceiverDetailScreen() {
     router.replace('/(main)');
   }, [router]);
 
+  const loadCheckInHistory = useCallback(async (receiverId: string) => {
+    try {
+      setHistoryError(null);
+      const history = await listReceiverCheckIns(receiverId, DEFAULT_RECEIVER_HISTORY_DAYS);
+      setCheckInHistory(history.checkIns);
+    } catch (err) {
+      setHistoryError(describeBackendError(err, 'Check-in history could not be loaded.'));
+    }
+  }, []);
+
   const loadReceiver = useCallback(async () => {
     if (!id) {
       setError('Receiver not found');
@@ -146,6 +166,7 @@ export default function ReceiverDetailScreen() {
       setReceiver(receiverDetail);
       setBackupContacts(receiverBackupContacts);
       hasLoadedRef.current = true;
+      void loadCheckInHistory(id);
     } catch (err) {
       if (isNotFoundError(err)) {
         leaveRemovedReceiver();
@@ -155,7 +176,7 @@ export default function ReceiverDetailScreen() {
     } finally {
       setLoading(false);
     }
-  }, [id, leaveRemovedReceiver]);
+  }, [id, leaveRemovedReceiver, loadCheckInHistory]);
 
   // Refetch whenever the screen gains focus so a reply, a removal or an edit made elsewhere is reflected (CB-071).
   useFocusEffect(
@@ -215,6 +236,13 @@ export default function ReceiverDetailScreen() {
   const isPaused = Boolean(receiver.pausedReason || receiver.pausedUntil);
   const currentStatus = getReceiverStatusDisplay(receiver.consentStatus, receiver.latestCheckIn?.status, isPaused);
   const scheduleAttention = getScheduleAttentionDisplay(receiver.scheduleInvalidAt);
+  const historyDays = buildReceiverHistoryDays({
+    checkIns: checkInHistory,
+    timeZone: receiver.timezone,
+    days: DEFAULT_RECEIVER_HISTORY_DAYS,
+    endAt: new Date(),
+  });
+  const pauseChoices = pauseUntilOptions(new Date());
   // "Resend invitation" waits for the window the backend announced; the unlock time is shown next to it (CB-081).
   const resendAvailability =
     receiver.consentStatus === 'PENDING'
@@ -280,15 +308,39 @@ export default function ReceiverDetailScreen() {
     }
   };
 
+  // Pausing now asks until when (CB-036): an indefinite pause was the only option, so a sender who paused for a
+  // holiday had to remember to resume. Resuming needs no question.
   const togglePause = async () => {
+    if (!id) return;
+
+    if (!isPaused) {
+      setActionError(null);
+      setIsChoosingPauseUntil(true);
+      return;
+    }
+
+    try {
+      setIsSaving(true);
+      setActionError(null);
+      setReceiver(await resumeReceiver(id));
+      setIsChoosingPauseUntil(false);
+    } catch (err) {
+      await handleActionError(err, 'Unable to update receiver');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const pauseUntil = async (option: PauseUntilOption) => {
     if (!id) return;
 
     try {
       setIsSaving(true);
       setActionError(null);
-      setReceiver(isPaused ? await resumeReceiver(id) : await pauseReceiver(id));
+      setReceiver(await pauseReceiver(id, option.pausedUntil));
+      setIsChoosingPauseUntil(false);
     } catch (err) {
-      await handleActionError(err, 'Unable to update receiver');
+      await handleActionError(err, 'Unable to pause check-ins');
     } finally {
       setIsSaving(false);
     }
@@ -653,6 +705,10 @@ export default function ReceiverDetailScreen() {
           <Text style={[styles.statusValue, { color: receiverStatusColor(currentStatus.tone) }]}>
             {currentStatus.label}
           </Text>
+          <Text style={styles.statusMeta}>
+            Last heard from: {formatLastHeardFrom(receiver.lastHeardFrom, new Date())}
+          </Text>
+          {isPaused ? <Text style={styles.statusMeta}>{describePauseUntil(receiver.pausedUntil)}</Text> : null}
           {receiver.consentStatus === 'PENDING' ? (
             <View style={styles.consentRow}>
               <Text style={styles.consentText}>Waiting for {receiver.displayName} to reply YES.</Text>
@@ -872,6 +928,66 @@ export default function ReceiverDetailScreen() {
               </View>
             </View>
           ) : null}
+        </View>
+
+        {isChoosingPauseUntil ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Pause check-ins</Text>
+            <Text style={styles.fieldHint}>No check-ins go out while paused. Choose when they should start again.</Text>
+            <View style={styles.optionStack}>
+              {pauseChoices.map((option) => (
+                <Pressable
+                  key={option.key}
+                  style={styles.pauseOption}
+                  onPress={() => pauseUntil(option)}
+                  disabled={isSaving}
+                >
+                  <Text style={styles.pauseOptionLabel}>{option.label}</Text>
+                  <Text style={styles.pauseOptionDetail}>{option.detail}</Text>
+                </Pressable>
+              ))}
+            </View>
+            <Pressable
+              style={styles.secondaryButton}
+              onPress={() => setIsChoosingPauseUntil(false)}
+              disabled={isSaving}
+            >
+              <Text style={styles.secondaryButtonText}>Cancel</Text>
+            </Pressable>
+          </View>
+        ) : null}
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Last {DEFAULT_RECEIVER_HISTORY_DAYS} days</Text>
+          {historyError ? <Text style={styles.inlineError}>{historyError}</Text> : null}
+          <View style={styles.historyList}>
+            {historyDays.map((day) => (
+              <View key={day.date} style={styles.historyRow}>
+                <View style={styles.historyDate}>
+                  <Text style={styles.historyDateText}>{day.label}</Text>
+                </View>
+                <View style={styles.historyBody}>
+                  <View style={styles.historyStatusRow}>
+                    <View style={[styles.statusDot, { backgroundColor: receiverStatusColor(day.status.tone) }]} />
+                    <Text style={styles.historyStatusText}>{day.status.label}</Text>
+                  </View>
+                  <Text style={styles.historyDetailText}>{day.detail}</Text>
+                  {day.escalationCount > 0 ? (
+                    <View>
+                      <Text style={styles.historyEscalationText}>
+                        {day.escalationCount} escalation{day.escalationCount === 1 ? '' : 's'}
+                      </Text>
+                      {day.escalations.map((escalation) => (
+                        <Text key={escalation.id} style={styles.historyDetailText}>
+                          {escalation.label}
+                        </Text>
+                      ))}
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            ))}
+          </View>
         </View>
 
         <View style={styles.section}>
@@ -1118,6 +1234,73 @@ const styles = StyleSheet.create({
   statusValue: {
     fontSize: fontSize.xl,
     fontWeight: '700',
+  },
+  statusMeta: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+    marginTop: spacing.xs,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  pauseOption: {
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  pauseOptionLabel: {
+    color: colors.text,
+    fontSize: fontSize.md,
+    fontWeight: '600',
+  },
+  pauseOptionDetail: {
+    color: colors.textSecondary,
+    fontSize: fontSize.sm,
+  },
+  historyList: {
+    gap: spacing.sm,
+  },
+  historyRow: {
+    flexDirection: 'row',
+    gap: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    paddingBottom: spacing.sm,
+  },
+  historyDate: {
+    width: 96,
+  },
+  historyDateText: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+  },
+  historyBody: {
+    flex: 1,
+    gap: 2,
+  },
+  historyStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  historyStatusText: {
+    color: colors.text,
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+  },
+  historyDetailText: {
+    color: colors.textSecondary,
+    fontSize: fontSize.xs,
+  },
+  historyEscalationText: {
+    color: colors.warning,
+    fontSize: fontSize.xs,
+    fontWeight: '600',
   },
   consentRow: {
     marginTop: spacing.sm,

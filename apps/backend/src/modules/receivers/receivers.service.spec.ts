@@ -24,12 +24,13 @@ import {
 import type {
   CreateReceiverRecordInput,
   OptOutCooldownRecord,
+  ReceiverCheckInHistoryRecord,
   ReceiverRecord,
   ReceiversRepository,
   ReceiverWithLatestCheckInRecord,
   UpdateReceiverRecordInput,
 } from './receivers.repository';
-import { ReceiversService } from './receivers.service';
+import { MAX_CHECK_IN_HISTORY_ROWS, ReceiversService } from './receivers.service';
 
 const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
 
@@ -41,6 +42,9 @@ class InMemoryReceiversRepository implements ReceiversRepository {
   public optOutCooldown: OptOutCooldownRecord | null = null;
   public lastResolveInput: { checkInId: string; resolutionNote?: string } | null = null;
   public resolutionNotes: Array<{ checkInId: string; resolutionNote: string }> = [];
+  /** Check-in history rows the repository hands back, and the query the service asked for (CB-036). */
+  public checkInHistory: ReceiverCheckInHistoryRecord[] = [];
+  public checkInHistoryInput: { userId: string; receiverId: string; since: Date; limit: number } | null = null;
 
   async create(input: CreateReceiverRecordInput): Promise<ReceiverRecord> {
     this.lastInput = input;
@@ -78,6 +82,16 @@ class InMemoryReceiversRepository implements ReceiversRepository {
 
   async findForUserById(input: { receiverId: string }): Promise<ReceiverWithLatestCheckInRecord | null> {
     return this.receiversForUser.find((receiver) => receiver.id === input.receiverId) ?? null;
+  }
+
+  async findCheckInHistoryForUser(input: {
+    userId: string;
+    receiverId: string;
+    since: Date;
+    limit: number;
+  }): Promise<ReceiverCheckInHistoryRecord[]> {
+    this.checkInHistoryInput = input;
+    return this.checkInHistory;
   }
 
   async updateForUserById(input: UpdateReceiverRecordInput): Promise<ReceiverWithLatestCheckInRecord | null> {
@@ -567,6 +581,7 @@ describe('ReceiversService', () => {
         pausedUntil: undefined,
         pausedReason: undefined,
         scheduleInvalidAt: null,
+        lastHeardFrom: null,
         latestCheckIn: {
           id: '49a43e47-4e21-46f1-9fcc-2cf81ca3b41d',
           status: 'RESPONDED_OK',
@@ -2116,5 +2131,196 @@ describe('ReceiversService stores the resolution note encrypted and returns it t
 
     expect(withNote?.latestCheckIn?.resolutionNote).toBe('Backup contact reply: DONE, I am with her now');
     expect(withoutNote?.latestCheckIn).not.toHaveProperty('resolutionNote', expect.anything());
+  });
+});
+
+describe('ReceiversService serves the receiver check-in history (CB-036)', () => {
+  const userId = '61a5639c-c902-4950-9924-1a4d6db1e02d';
+  const receiverId = '1aef91f9-64c9-4548-baa5-d70b52386efb';
+  const now = () => new Date('2026-09-07T12:00:00.000Z');
+
+  function receiverRow(crypto: CryptoService, overrides: Partial<ReceiverWithLatestCheckInRecord> = {}) {
+    return {
+      id: receiverId,
+      userId,
+      nameEncrypted: crypto.encrypt('Fatima Parent'),
+      phoneEncrypted: crypto.encrypt('+971501234567'),
+      phoneHash: crypto.hashForLookup('+971501234567'),
+      countryCode: 'AE',
+      relationshipType: RelationshipType.PARENT,
+      language: 'en',
+      timezone: 'Asia/Dubai',
+      techProfile: TechProfile.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      fallbackChannels: [Channel.SMS],
+      scheduleFrequency: 'daily',
+      scheduleTimeWindow: { start: '09:00', end: '11:00' },
+      consentStatus: ConsentStatus.GRANTED,
+      createdAt: new Date('2026-04-26T08:00:00.000Z'),
+      updatedAt: new Date('2026-09-07T06:00:00.000Z'),
+      ...overrides,
+    } as ReceiverWithLatestCheckInRecord;
+  }
+
+  it('asks the repository for the bounded window and returns the check-ins with their escalations', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    repository.receiversForUser = [receiverRow(crypto)];
+    repository.checkInHistory = [
+      {
+        id: 'check-in-2',
+        status: 'ESCALATED',
+        scheduledAt: new Date('2026-09-06T05:00:00.000Z'),
+        scheduledLocalDate: '2026-09-06',
+        channelUsed: Channel.SMS,
+        sentAt: new Date('2026-09-06T05:01:00.000Z'),
+        escalations: [
+          {
+            id: 'escalation-1',
+            attemptNumber: 1,
+            channel: Channel.SMS,
+            startedAt: new Date('2026-09-06T06:00:00.000Z'),
+            completedAt: new Date('2026-09-06T06:00:30.000Z'),
+            result: 'SUCCESS',
+            senderNotifiedAt: new Date('2026-09-06T06:00:30.000Z'),
+          },
+        ],
+      },
+      {
+        id: 'check-in-1',
+        status: 'RESOLVED',
+        scheduledAt: new Date('2026-09-05T05:00:00.000Z'),
+        scheduledLocalDate: '2026-09-05',
+        resolvedAt: new Date('2026-09-05T07:00:00.000Z'),
+        resolutionNote: crypto.encrypt('Spoke to her, all fine'),
+        escalations: [],
+      },
+    ];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+
+    const history = await service.listCheckInHistoryForSender({ userId, receiverId, days: 30 });
+
+    expect(repository.checkInHistoryInput).toEqual({
+      userId,
+      receiverId,
+      since: new Date('2026-08-08T12:00:00.000Z'),
+      limit: MAX_CHECK_IN_HISTORY_ROWS,
+    });
+    expect(history).toMatchObject({
+      receiverId,
+      days: 30,
+      from: '2026-08-08T12:00:00.000Z',
+      to: '2026-09-07T12:00:00.000Z',
+    });
+    expect(history?.checkIns).toHaveLength(2);
+    expect(history?.checkIns[0]).toEqual({
+      id: 'check-in-2',
+      status: 'ESCALATED',
+      scheduledAt: '2026-09-06T05:00:00.000Z',
+      scheduledLocalDate: '2026-09-06',
+      channelUsed: Channel.SMS,
+      sentAt: '2026-09-06T05:01:00.000Z',
+      respondedAt: undefined,
+      responseDetectedAs: undefined,
+      resolvedAt: undefined,
+      resolutionNote: undefined,
+      resolutionByUserId: undefined,
+      escalations: [
+        {
+          id: 'escalation-1',
+          attemptNumber: 1,
+          channel: Channel.SMS,
+          startedAt: '2026-09-06T06:00:00.000Z',
+          completedAt: '2026-09-06T06:00:30.000Z',
+          result: 'SUCCESS',
+          senderNotifiedAt: '2026-09-06T06:00:30.000Z',
+          backupAlertedAt: undefined,
+        },
+      ],
+    });
+    // The note is stored encrypted; the history decrypts it for the owning sender only (CB-018).
+    expect(history?.checkIns[1]?.resolutionNote).toBe('Spoke to her, all fine');
+    expect(JSON.stringify(history)).not.toContain('resolutionNoteEncrypted');
+  });
+
+  it('narrows the window when a smaller day count is asked for', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    repository.receiversForUser = [receiverRow(crypto)];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+
+    const history = await service.listCheckInHistoryForSender({ userId, receiverId, days: 7 });
+
+    expect(repository.checkInHistoryInput?.since).toEqual(new Date('2026-08-31T12:00:00.000Z'));
+    expect(history?.days).toBe(7);
+    expect(history?.checkIns).toEqual([]);
+  });
+
+  it('answers null for a receiver the sender does not own, so the controller can 404', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+
+    expect(await service.listCheckInHistoryForSender({ userId, receiverId, days: 30 })).toBeNull();
+    expect(repository.checkInHistoryInput).toBeNull();
+  });
+
+  it('reports lastHeardFrom from the receiver row, not from the latest (still open) check-in', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    repository.receiversForUser = [
+      receiverRow(crypto, {
+        lastHeardFrom: new Date('2026-09-06T05:03:00.000Z'),
+        latestCheckIn: {
+          id: 'check-in-3',
+          status: 'SENT',
+          scheduledAt: new Date('2026-09-07T05:00:00.000Z'),
+        },
+      }),
+    ];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+
+    const [summary] = await service.listForSender(userId);
+    const detail = await service.getForSender({ userId, receiverId });
+
+    expect(summary?.lastHeardFrom).toBe('2026-09-06T05:03:00.000Z');
+    expect(summary?.latestCheckIn?.status).toBe('SENT');
+    expect(detail?.lastHeardFrom).toBe('2026-09-06T05:03:00.000Z');
+  });
+
+  it('reports lastHeardFrom as null for a receiver who has never answered', async () => {
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryReceiversRepository();
+    repository.receiversForUser = [receiverRow(crypto)];
+    const service = new ReceiversService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+      now,
+    );
+
+    const [summary] = await service.listForSender(userId);
+
+    expect(summary?.lastHeardFrom).toBeNull();
   });
 });

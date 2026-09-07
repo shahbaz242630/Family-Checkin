@@ -3,17 +3,19 @@ import { View, Text, StyleSheet, ScrollView, Pressable, ActivityIndicator, Refre
 import { useRouter } from 'expo-router';
 import { useState, useCallback } from 'react';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
-import { useProfile, useReceivers, type ReceiverDashboardItem } from '../../hooks';
+import { useAuth, useProfile, useReceivers, type ReceiverDashboardItem } from '../../hooks';
 import {
   getReceiverStatusDisplay,
   getScheduleAttentionDisplay,
   type ReceiverStatusTone,
 } from '../../utils/receiverStatus';
+import { formatLastHeardFrom } from '../../utils/receiverHistory';
 
 export default function DashboardScreen() {
   const router = useRouter();
   const { profile } = useProfile();
-  const { receivers, loading, refreshReceivers } = useReceivers();
+  const { signOut } = useAuth();
+  const { receivers, loading, failure, refreshReceivers } = useReceivers();
   const [refreshing, setRefreshing] = useState(false);
 
   const greeting = getGreeting();
@@ -26,6 +28,9 @@ export default function DashboardScreen() {
   }, [refreshReceivers]);
 
   const hasReceivers = receivers.length > 0;
+  // A failed load must never be drawn as "No receivers yet": that told a signed-out or offline sender their
+  // receivers were gone (CB-032). With receivers already on screen the failure is a banner over the list.
+  const showFailureInsteadOfList = Boolean(failure) && !hasReceivers;
 
   return (
     <ScrollView
@@ -49,12 +54,6 @@ export default function DashboardScreen() {
             subtitle="Set up check-ins"
             onPress={() => router.push('/(main)/receiver-setup')}
           />
-          <QuickActionCard
-            icon="✓"
-            title="Review receivers"
-            subtitle="Latest check-in status"
-            onPress={() => router.push('/(main)')}
-          />
         </View>
       </View>
 
@@ -66,8 +65,35 @@ export default function DashboardScreen() {
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color={colors.primary} />
           </View>
+        ) : showFailureInsteadOfList ? (
+          <View style={styles.statusCard}>
+            <Text style={styles.statusIcon}>⚠️</Text>
+            <Text style={styles.statusTitle}>We could not load your receivers</Text>
+            <Text style={styles.statusSubtitle}>{failure?.message}</Text>
+            <Pressable style={styles.statusButton} onPress={() => void refreshReceivers()}>
+              <Text style={styles.statusButtonText}>Try again</Text>
+            </Pressable>
+            {failure?.action === 'add-phone' ? (
+              <Pressable style={styles.statusSecondaryButton} onPress={() => router.push('/(main)/settings/profile')}>
+                <Text style={styles.statusSecondaryButtonText}>Add your phone number</Text>
+              </Pressable>
+            ) : null}
+            {failure?.action === 'sign-out' ? (
+              <Pressable style={styles.statusSecondaryButton} onPress={() => void signOut()}>
+                <Text style={styles.statusSecondaryButtonText}>Sign in again</Text>
+              </Pressable>
+            ) : null}
+          </View>
         ) : hasReceivers ? (
           <View style={styles.lovedOnesList}>
+            {failure ? (
+              <View style={styles.staleBanner}>
+                <Text style={styles.staleBannerText}>{failure.message}</Text>
+                <Pressable onPress={() => void refreshReceivers()}>
+                  <Text style={styles.staleBannerAction}>Try again</Text>
+                </Pressable>
+              </View>
+            ) : null}
             {receivers.map((receiver) => (
               <ReceiverCard key={receiver.id} receiver={receiver} />
             ))}
@@ -142,6 +168,10 @@ function ReceiverCard({ receiver }: ReceiverCardProps) {
         <View style={styles.detailItem}>
           <Text style={styles.detailLabel}>Via</Text>
           <Text style={styles.detailValue}>{preferredChannel}</Text>
+        </View>
+        <View style={styles.detailItem}>
+          <Text style={styles.detailLabel}>Last heard from</Text>
+          <Text style={styles.detailValue}>{formatLastHeardFrom(receiver.last_heard_from, new Date())}</Text>
         </View>
       </View>
     </Pressable>
@@ -396,6 +426,38 @@ const styles = StyleSheet.create({
     color: colors.textOnPrimary,
     fontSize: fontSize.md,
     fontWeight: '600',
+  },
+  statusSecondaryButton: {
+    marginTop: spacing.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+  },
+  statusSecondaryButtonText: {
+    color: colors.primary,
+    fontSize: fontSize.md,
+    fontWeight: '600',
+  },
+  staleBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.warning,
+    backgroundColor: colors.warningLight,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  staleBannerText: {
+    flex: 1,
+    fontSize: fontSize.sm,
+    color: colors.text,
+  },
+  staleBannerAction: {
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+    color: colors.primary,
   },
   emergencyDisclaimer: {
     color: colors.textSecondary,

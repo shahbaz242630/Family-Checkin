@@ -2,6 +2,7 @@ import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/co
 import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { normalizePhone } from '../../shared/phone/phone-normalizer';
+import { DomainError } from '../../shared/validation/domain-error';
 import { SenderUniqueConflictError } from './users.repository';
 import type { SenderRecord, UpsertSenderRecordInput, UsersRepository } from './users.repository';
 
@@ -9,6 +10,22 @@ import type { SenderRecord, UpsertSenderRecordInput, UsersRepository } from './u
 const DEFAULT_PREFERRED_LANGUAGE = 'en';
 /** Longest sender display name stored; receiver-facing copy has to stay inside one SMS segment (CB-010). */
 export const MAX_SENDER_DISPLAY_NAME_LENGTH = 80;
+
+/**
+ * The 401 that means "we know who you are, your account just has no usable phone number yet" (CB-037). Without a
+ * code the app could not tell it from an expired or forged token and signed the sender out; with it, the app
+ * sends them to the profile screen to add a phone. Both the missing and the unparseable case carry it, because
+ * the remedy is the same. Renamed only together with the app.
+ */
+export const PHONE_REQUIRED_CODE = 'PHONE_REQUIRED';
+export const PHONE_MISSING_MESSAGE = 'Supabase user is missing a phone number';
+export const PHONE_INVALID_MESSAGE = 'Supabase user phone number is invalid';
+
+export class SenderPhoneRequiredError extends DomainError {
+  constructor(message: string) {
+    super(PHONE_REQUIRED_CODE, message, 401);
+  }
+}
 
 export interface UpsertSupabaseSenderInput {
   authProviderId: string;
@@ -145,17 +162,18 @@ export class UsersService {
   /**
    * A `users` row needs a phone (the step-up OTP and the siren call go to it), so writing one without is refused
    * the way `POST /auth/sync-user` always has been: 401. A phone that libphonenumber cannot parse is a 401 too,
-   * not the 500 a bad metadata value used to cause (CB-024).
+   * not the 500 a bad metadata value used to cause (CB-024). Both carry `code: "PHONE_REQUIRED"` so the app
+   * routes the sender to the profile screen instead of treating it as a dead session (CB-037).
    */
   private normalizeSenderPhone(phone: string | undefined, phoneCountry: string): string {
     if (!phone?.trim()) {
-      throw new UnauthorizedException('Supabase user is missing a phone number');
+      throw new SenderPhoneRequiredError(PHONE_MISSING_MESSAGE);
     }
 
     try {
       return normalizePhone(phone, phoneCountry);
     } catch {
-      throw new UnauthorizedException('Supabase user phone number is invalid');
+      throw new SenderPhoneRequiredError(PHONE_INVALID_MESSAGE);
     }
   }
 }

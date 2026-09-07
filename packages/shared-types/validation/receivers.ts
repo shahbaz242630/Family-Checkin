@@ -85,3 +85,24 @@ export type UpdateReceiverBody = z.infer<typeof updateReceiverBodySchema>;
 export type PauseReceiverBody = z.infer<typeof pauseReceiverBodySchema>;
 export type ResolveCheckInBody = z.infer<typeof resolveCheckInBodySchema>;
 export type FakeInboundReceiverReplyBody = z.infer<typeof fakeInboundReceiverReplyBodySchema>;
+
+/**
+ * `GET /receivers/:receiverId/check-ins?days=30` — how far back the sender's history view reaches (CB-036).
+ * The bound matters: `days` reaches a `scheduledAt >= now - days` filter, so an unbounded value would let any
+ * signed-in caller ask the database for every check-in ever written.
+ */
+export const MIN_CHECK_IN_HISTORY_DAYS = 1;
+export const MAX_CHECK_IN_HISTORY_DAYS = 90;
+export const DEFAULT_CHECK_IN_HISTORY_DAYS = 30;
+
+export const receiverCheckInHistoryQuerySchema = z.object({
+  /** Query strings arrive as text, so the value is coerced before the whole-number bounds are applied. */
+  days: z.coerce
+    .number()
+    .int('days must be a whole number')
+    .min(MIN_CHECK_IN_HISTORY_DAYS, `days must be at least ${MIN_CHECK_IN_HISTORY_DAYS}`)
+    .max(MAX_CHECK_IN_HISTORY_DAYS, `days must be ${MAX_CHECK_IN_HISTORY_DAYS} or fewer`)
+    .default(DEFAULT_CHECK_IN_HISTORY_DAYS),
+});
+
+export type ReceiverCheckInHistoryQuery = z.infer<typeof receiverCheckInHistoryQuerySchema>;

@@ -30,6 +30,7 @@ import {
 } from './receiver-policy';
 import type {
   CreateReceiverRecordInput,
+  ReceiverCheckInHistoryRecord,
   ReceiverRecord,
   ReceiversRepository,
   ReceiverWithLatestCheckInRecord,
@@ -39,6 +40,12 @@ import { RECEIVERS_REPOSITORY } from './receivers.tokens';
 
 const USER_PAUSED_UNTIL = new Date('9999-12-31T23:59:59.999Z');
 const USER_PAUSED_REASON = 'USER_PAUSED';
+const MILLISECONDS_PER_DAY = 24 * 60 * 60 * 1000;
+/**
+ * Ceiling on the rows one history request may return, on top of the bounded `days` window (CB-036). Retries and
+ * a busy cascade can put several check-ins on one day, so the day count alone is not a row count.
+ */
+export const MAX_CHECK_IN_HISTORY_ROWS = 200;
 /** A check-in in one of these is still being delivered or awaiting the receiver; sender actions wait (CB-017). */
 const IN_PROGRESS_CHECK_IN_STATUSES: CheckInStatus[] = [CheckInStatus.PENDING, CheckInStatus.SENT];
 /** FR-REC-05: the personal note rides inside every check-in message, so it is capped at 50 characters. */
@@ -92,6 +99,12 @@ export interface ReceiverSummary {
    * sent until the sender edits the schedule; `null` while the schedule is fine (CB-069).
    */
   scheduleInvalidAt: string | null;
+  /**
+   * The last time the receiver actually answered a check-in, over their whole history; `null` when they never
+   * have. The app puts it on the dashboard card as "last heard from" (CB-036). It is deliberately not derived
+   * from `latestCheckIn`: today's check-in is normally still open while yesterday's carries the last answer.
+   */
+  lastHeardFrom: string | null;
   latestCheckIn?: {
     id: string;
     status: string;
@@ -115,6 +128,46 @@ export interface ReceiverDetail extends ReceiverSummary {
     configured: boolean;
     nextStep: string;
   };
+}
+
+/** One escalation attempt as the sender's history view shows it (CB-036). */
+export interface ReceiverCheckInHistoryEscalation {
+  id: string;
+  attemptNumber: number;
+  channel: Channel;
+  startedAt: string;
+  completedAt?: string;
+  result?: string;
+  senderNotifiedAt?: string;
+  backupAlertedAt?: string;
+}
+
+export interface ReceiverCheckInHistoryEntry {
+  id: string;
+  status: string;
+  scheduledAt: string;
+  /** The receiver's own calendar day (`YYYY-MM-DD`); the app groups the history by it. */
+  scheduledLocalDate?: string;
+  channelUsed?: Channel;
+  sentAt?: string;
+  respondedAt?: string;
+  responseDetectedAs?: string;
+  resolvedAt?: string;
+  /** Decrypted for the owning sender only (CB-018). */
+  resolutionNote?: string;
+  resolutionByUserId?: string;
+  escalations: ReceiverCheckInHistoryEscalation[];
+}
+
+/** `GET /receivers/:receiverId/check-ins?days=30` (CB-036, FR-DSB-01/02, BRD-4.6). */
+export interface ReceiverCheckInHistory {
+  receiverId: string;
+  /** The window actually applied, after the schema bounded whatever the caller asked for. */
+  days: number;
+  from: string;
+  to: string;
+  /** Newest first. */
+  checkIns: ReceiverCheckInHistoryEntry[];
 }
 
 /** The sender's "Alert backup contacts" answer: the refreshed receiver plus what the fan-out achieved (CB-074). */
@@ -244,6 +297,43 @@ export class ReceiversService {
     const receivers = await this.receiversRepository.findManyForUser(userId.trim());
 
     return receivers.map((receiver) => this.toSummary(receiver));
+  }
+
+  /**
+   * The receiver's check-ins over the last `days` days with their escalation events, newest first (CB-036).
+   * `null` when the receiver is missing, deleted or owned by somebody else — the controller answers 404, the
+   * same way every other receiver route does. `days` arrives already bounded by the query schema; the row cap
+   * is the second bound, because retries can put several check-ins on one day.
+   */
+  async listCheckInHistoryForSender(input: {
+    userId: string;
+    receiverId: string;
+    days: number;
+  }): Promise<ReceiverCheckInHistory | null> {
+    const userId = input.userId.trim();
+    const receiverId = input.receiverId.trim();
+    const receiver = await this.receiversRepository.findForUserById({ userId, receiverId });
+    if (!receiver) {
+      return null;
+    }
+
+    const to = this.now();
+    const from = new Date(to.getTime() - input.days * MILLISECONDS_PER_DAY);
+    const records =
+      (await this.receiversRepository.findCheckInHistoryForUser?.({
+        userId,
+        receiverId,
+        since: from,
+        limit: MAX_CHECK_IN_HISTORY_ROWS,
+      })) ?? [];
+
+    return {
+      receiverId,
+      days: input.days,
+      from: from.toISOString(),
+      to: to.toISOString(),
+      checkIns: records.map((record) => this.toCheckInHistoryEntry(record)),
+    };
   }
 
   async getForSender(input: { userId: string; receiverId: string }): Promise<ReceiverDetail | null> {
@@ -948,11 +1038,33 @@ export class ReceiversService {
     return `*******${phone.slice(-4)}`;
   }
 
-  private toSummary(
-    receiver: ReceiverRecord & {
-      latestCheckIn?: NonNullable<Awaited<ReturnType<ReceiversRepository['findManyForUser']>>[number]['latestCheckIn']>;
-    },
-  ): ReceiverSummary {
+  private toCheckInHistoryEntry(record: ReceiverCheckInHistoryRecord): ReceiverCheckInHistoryEntry {
+    return {
+      id: record.id,
+      status: record.status,
+      scheduledAt: record.scheduledAt.toISOString(),
+      scheduledLocalDate: record.scheduledLocalDate,
+      channelUsed: record.channelUsed,
+      sentAt: record.sentAt?.toISOString(),
+      respondedAt: record.respondedAt?.toISOString(),
+      responseDetectedAs: record.responseDetectedAs,
+      resolvedAt: record.resolvedAt?.toISOString(),
+      resolutionNote: record.resolutionNote ? this.cryptoService.decrypt(record.resolutionNote) : undefined,
+      resolutionByUserId: record.resolutionByUserId,
+      escalations: record.escalations.map((escalation) => ({
+        id: escalation.id,
+        attemptNumber: escalation.attemptNumber,
+        channel: escalation.channel,
+        startedAt: escalation.startedAt.toISOString(),
+        completedAt: escalation.completedAt?.toISOString(),
+        result: escalation.result,
+        senderNotifiedAt: escalation.senderNotifiedAt?.toISOString(),
+        backupAlertedAt: escalation.backupAlertedAt?.toISOString(),
+      })),
+    };
+  }
+
+  private toSummary(receiver: ReceiverWithLatestCheckInRecord): ReceiverSummary {
     const phone = this.cryptoService.decrypt(receiver.phoneEncrypted);
 
     return {
@@ -974,6 +1086,7 @@ export class ReceiversService {
       pausedUntil: receiver.pausedUntil?.toISOString(),
       pausedReason: receiver.pausedReason,
       scheduleInvalidAt: receiver.scheduleInvalidAt?.toISOString() ?? null,
+      lastHeardFrom: receiver.lastHeardFrom?.toISOString() ?? null,
       latestCheckIn: receiver.latestCheckIn
         ? {
             id: receiver.latestCheckIn.id,
@@ -995,11 +1108,7 @@ export class ReceiversService {
     };
   }
 
-  private toDetail(
-    receiver: ReceiverRecord & {
-      latestCheckIn?: NonNullable<Awaited<ReturnType<ReceiversRepository['findManyForUser']>>[number]['latestCheckIn']>;
-    },
-  ): ReceiverDetail {
+  private toDetail(receiver: ReceiverWithLatestCheckInRecord): ReceiverDetail {
     return {
       ...this.toSummary(receiver),
       backupContacts: [],

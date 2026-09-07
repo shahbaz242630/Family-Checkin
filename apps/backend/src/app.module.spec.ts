@@ -38,6 +38,7 @@ const configuredModeRoutes = [
   'GET /receivers',
   'GET /receivers/:receiverId',
   'GET /receivers/:receiverId/backup-contacts',
+  'GET /receivers/:receiverId/check-ins',
   'PATCH /admin/abuse-reports/:abuseReportId/review-action-taken',
   'PATCH /admin/abuse-reports/:abuseReportId/review-safe',
   'PATCH /receivers/:receiverId',

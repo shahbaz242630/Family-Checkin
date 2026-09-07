@@ -1,11 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { AbuseReportStatus, CheckInStatus } from '@prisma/client';
-import type { Channel, CheckIn, Receiver } from '@prisma/client';
+import type { Channel, CheckIn, EscalationEvent, Receiver } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
 import { ABUSE_REVIEW_PAUSE_UNTIL } from './abuse-review-pause';
 import type {
   CreateReceiverRecordInput,
   OptOutCooldownRecord,
+  ReceiverCheckInHistoryRecord,
   ReceiverRecord,
   ReceiversRepository,
   ReceiverWithLatestCheckInRecord,
@@ -13,6 +14,7 @@ import type {
 } from './receivers.repository';
 
 type ReceiverWithCheckIns = Receiver & { checkIns: CheckIn[] };
+type CheckInWithEscalations = CheckIn & { escalations: EscalationEvent[] };
 
 /**
  * Statuses in which a check-in still accepts the receiver's YES/HELP; mirrors
@@ -106,6 +108,32 @@ interface ReceiversPrismaClient {
           }
         | { where: { id: string }; data: { resolutionNote: string } },
     ): Promise<{ count: number }>;
+    /**
+     * The latest `respondedAt` per receiver, for "last heard from" on the dashboard cards and the detail
+     * (CB-036). A GROUP BY in the database rather than one query per receiver, and never the latest check-in:
+     * today's is still PENDING when yesterday's was answered.
+     */
+    groupBy?(args: {
+      by: ['receiverId'];
+      where: {
+        respondedAt: { not: null };
+        receiverId?: string;
+        receiver: { userId: string; deletedAt: null };
+      };
+      orderBy: { receiverId: 'asc' };
+      _max: { respondedAt: true };
+    }): Promise<{ receiverId: string; _max?: { respondedAt: Date | null } }[]>;
+    /** The receiver's check-ins inside the history window with their escalation events (CB-036). */
+    findMany?(args: {
+      where: {
+        receiverId: string;
+        scheduledAt: { gte: Date };
+        receiver: { userId: string; deletedAt: null };
+      };
+      include: { escalations: { orderBy: { attemptNumber: 'asc' } } };
+      orderBy: { scheduledAt: 'desc' };
+      take: number;
+    }): Promise<CheckInWithEscalations[]>;
   };
   abuseReport: {
     create(args: {
@@ -186,10 +214,12 @@ export class PrismaReceiversRepository implements ReceiversRepository {
       },
       orderBy: { createdAt: 'desc' },
     })) as ReceiverWithCheckIns[];
+    const lastHeardFrom = await this.lastHeardFromByReceiver({ userId });
 
     return receivers.map((receiver) => ({
       ...this.toReceiverRecord(receiver),
       latestCheckIn: receiver.checkIns[0] ? this.toLatestCheckInRecord(receiver.checkIns[0]) : undefined,
+      lastHeardFrom: lastHeardFrom.get(receiver.id),
     }));
   }
 
@@ -211,12 +241,41 @@ export class PrismaReceiversRepository implements ReceiversRepository {
       },
     })) as ReceiverWithCheckIns | null;
 
-    return receiver
-      ? {
-          ...this.toReceiverRecord(receiver),
-          latestCheckIn: receiver.checkIns[0] ? this.toLatestCheckInRecord(receiver.checkIns[0]) : undefined,
-        }
-      : null;
+    if (!receiver) {
+      return null;
+    }
+
+    const lastHeardFrom = await this.lastHeardFromByReceiver({
+      userId: input.userId,
+      receiverId: input.receiverId,
+    });
+
+    return {
+      ...this.toReceiverRecord(receiver),
+      latestCheckIn: receiver.checkIns[0] ? this.toLatestCheckInRecord(receiver.checkIns[0]) : undefined,
+      lastHeardFrom: lastHeardFrom.get(receiver.id),
+    };
+  }
+
+  async findCheckInHistoryForUser(input: {
+    userId: string;
+    receiverId: string;
+    since: Date;
+    limit: number;
+  }): Promise<ReceiverCheckInHistoryRecord[]> {
+    const checkIns = (await this.prisma.checkIn?.findMany?.({
+      where: {
+        receiverId: input.receiverId,
+        scheduledAt: { gte: input.since },
+        // Scoped by owner in the query itself, not only by the caller having loaded the receiver first.
+        receiver: { userId: input.userId, deletedAt: null },
+      },
+      include: { escalations: { orderBy: { attemptNumber: 'asc' } } },
+      orderBy: { scheduledAt: 'desc' },
+      take: input.limit,
+    })) as CheckInWithEscalations[] | undefined;
+
+    return (checkIns ?? []).map((checkIn) => this.toCheckInHistoryRecord(checkIn));
   }
 
   async updateForUserById(input: UpdateReceiverRecordInput): Promise<ReceiverWithLatestCheckInRecord | null> {
@@ -521,6 +580,53 @@ export class PrismaReceiversRepository implements ReceiversRepository {
       deletedAt: receiver.deletedAt ?? undefined,
       createdAt: receiver.createdAt,
       updatedAt: receiver.updatedAt,
+    };
+  }
+
+  /**
+   * `receiverId -> the latest respondedAt`. One grouped query for the whole dashboard, or for a single receiver
+   * when `receiverId` is given. Receivers who never answered are simply absent from the map (CB-036).
+   */
+  private async lastHeardFromByReceiver(input: { userId: string; receiverId?: string }): Promise<Map<string, Date>> {
+    const groups = await this.prisma.checkIn?.groupBy?.({
+      by: ['receiverId'],
+      where: {
+        respondedAt: { not: null },
+        ...(input.receiverId ? { receiverId: input.receiverId } : {}),
+        receiver: { userId: input.userId, deletedAt: null },
+      },
+      // Prisma requires an `orderBy` on a grouped query; the map makes the row order irrelevant.
+      orderBy: { receiverId: 'asc' },
+      _max: { respondedAt: true },
+    });
+
+    const lastHeardFrom = new Map<string, Date>();
+    for (const group of groups ?? []) {
+      const respondedAt = group._max?.respondedAt;
+      if (respondedAt) {
+        lastHeardFrom.set(group.receiverId, respondedAt);
+      }
+    }
+
+    return lastHeardFrom;
+  }
+
+  private toCheckInHistoryRecord(checkIn: CheckInWithEscalations): ReceiverCheckInHistoryRecord {
+    return {
+      ...this.toLatestCheckInRecord(checkIn),
+      // `scheduledLocalDate` is a date column: Prisma hands it back at UTC midnight, so the ISO date is the
+      // receiver's own calendar day, which is what a per-day history row is keyed on.
+      scheduledLocalDate: checkIn.scheduledLocalDate?.toISOString().slice(0, 10),
+      escalations: checkIn.escalations.map((escalation) => ({
+        id: escalation.id,
+        attemptNumber: escalation.attemptNumber,
+        channel: escalation.channel,
+        startedAt: escalation.startedAt,
+        completedAt: escalation.completedAt ?? undefined,
+        result: escalation.result ?? undefined,
+        senderNotifiedAt: escalation.senderNotifiedAt ?? undefined,
+        backupAlertedAt: escalation.backupAlertedAt ?? undefined,
+      })),
     };
   }
 

@@ -3,6 +3,8 @@ import {
   BackendRequestError,
   BackendTransportError,
   EMPTY_RESPONSE_MESSAGE,
+  REQUEST_TIMEOUT_MESSAGE,
+  TOO_MANY_REQUESTS_MESSAGE,
   UNREADABLE_RESPONSE_MESSAGE,
 } from './backendErrors';
 import { getSession } from './supabase';
@@ -246,6 +248,11 @@ export interface BackendReceiverSummary {
    * schedule is edited; null (or absent from an older backend) when it is fine (CB-069).
    */
   scheduleInvalidAt?: string | null;
+  /**
+   * The last time the receiver actually answered a check-in, over their whole history; null (or absent from an
+   * older backend) when they never have. Shown as "last heard from" on the dashboard card (CB-036).
+   */
+  lastHeardFrom?: string | null;
   latestCheckIn?: {
     id: string;
     status: BackendCheckInStatus;
@@ -261,6 +268,43 @@ export interface BackendReceiverSummary {
   };
   createdAt: string;
   updatedAt: string;
+}
+
+/** One escalation attempt attached to a check-in in the receiver history (CB-036). */
+export interface BackendReceiverCheckInEscalation {
+  id: string;
+  attemptNumber: number;
+  channel: BackendChannel;
+  startedAt: string;
+  completedAt?: string;
+  result?: BackendEscalationResult;
+  senderNotifiedAt?: string;
+  backupAlertedAt?: string;
+}
+
+export interface BackendReceiverCheckIn {
+  id: string;
+  status: BackendCheckInStatus;
+  scheduledAt: string;
+  /** The receiver's own calendar day (`YYYY-MM-DD`); the history list groups by it. */
+  scheduledLocalDate?: string;
+  channelUsed?: BackendChannel;
+  sentAt?: string;
+  respondedAt?: string;
+  responseDetectedAs?: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
+  resolutionByUserId?: string;
+  escalations: BackendReceiverCheckInEscalation[];
+}
+
+/** `GET /receivers/:id/check-ins?days=30` (CB-036). `checkIns` is newest first. */
+export interface BackendReceiverCheckInHistory {
+  receiverId: string;
+  days: number;
+  from: string;
+  to: string;
+  checkIns: BackendReceiverCheckIn[];
 }
 
 export interface BackendReceiverDetail extends BackendReceiverSummary {
@@ -297,6 +341,9 @@ export interface BackupContactUpdateInput {
   locationInstructions?: string;
 }
 
+/** The window the detail screen asks for; the backend applies the same default and refuses anything wider than 90. */
+export const DEFAULT_RECEIVER_HISTORY_DAYS = 30;
+
 export async function syncAuthenticatedUser(): Promise<SyncedBackendUser> {
   const response = await backendRequest<{ user: SyncedBackendUser }>('/auth/sync-user', {
     method: 'POST',
@@ -319,6 +366,20 @@ export async function getReceiver(receiverId: string): Promise<BackendReceiverDe
   });
 
   return response.receiver;
+}
+
+/**
+ * The receiver's check-in history for the detail screen (CB-036). `days` is bounded by the backend schema
+ * (1-90, 30 by default); the app never sends anything else.
+ */
+export async function listReceiverCheckIns(
+  receiverId: string,
+  days: number = DEFAULT_RECEIVER_HISTORY_DAYS,
+): Promise<BackendReceiverCheckInHistory> {
+  return await backendRequest<BackendReceiverCheckInHistory>(
+    `/receivers/${receiverId}/check-ins?days=${encodeURIComponent(String(days))}`,
+    { method: 'GET' },
+  );
 }
 
 export async function pauseReceiver(receiverId: string, pausedUntil?: string): Promise<BackendReceiverDetail> {
@@ -608,6 +669,13 @@ interface BackendRequestOptions {
 /** Methods a transport failure may safely re-send: the server treats a repeat exactly like the first request. */
 const RETRIED_METHODS = new Set(['GET', 'HEAD']);
 
+/**
+ * How long a single request may take before the client gives up (CB-037). Without it a request on a stalled
+ * mobile connection never settles and the screen spins for ever. It covers reading the body too, and a timed-out
+ * request is deliberately not retried: the sender would be waiting twice as long for the same silence.
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
+
 async function backendRequest<T>(path: string, init: RequestInit, options: BackendRequestOptions = {}): Promise<T> {
   const resolvedBackendUrl = resolveBackendUrl();
   if (!resolvedBackendUrl) {
@@ -649,32 +717,53 @@ async function backendRequest<T>(path: string, init: RequestInit, options: Backe
 }
 
 function isRetryableTransportFailure(error: unknown): boolean {
+  // A timeout is the one transport failure that is not retried: the deadline is the promise to the sender.
+  if (error instanceof BackendTransportError) {
+    return error.reason !== 'timeout';
+  }
+
   // fetch rejects with a TypeError ("Network request failed") when the connection drops before any status arrives.
-  return error instanceof BackendTransportError || error instanceof TypeError;
+  return error instanceof TypeError;
 }
 
 async function performRequest<T>(url: string, request: RequestInit, options: BackendRequestOptions): Promise<T> {
-  const response = await fetch(url, request);
-  // Read as text first: a truncated body must be told apart from a JSON syntax error, and an empty error body
-  // must still map to a readable status message.
-  const text = await response.text().catch(() => null);
-
-  if (!response.ok) {
-    const errorBody = parseErrorBody(text ?? '', response.status);
-    throw new BackendRequestError(errorBody.message, response.status, errorBody.code, errorBody.details);
-  }
-
-  if (text === null || text.trim() === '') {
-    if (options.acceptEmptyBody) {
-      return undefined as T;
-    }
-    throw new BackendTransportError(EMPTY_RESPONSE_MESSAGE, response.status, 'empty_body');
-  }
+  // One deadline for the whole exchange, the connection and the body alike; `finally` always clears it so a
+  // finished request never leaves a timer behind.
+  const controller = new AbortController();
+  const deadline = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    return JSON.parse(text) as T;
-  } catch {
-    throw new BackendTransportError(UNREADABLE_RESPONSE_MESSAGE, response.status, 'unreadable_body');
+    const response = await fetch(url, { ...request, signal: controller.signal });
+    // Read as text first: a truncated body must be told apart from a JSON syntax error, and an empty error body
+    // must still map to a readable status message.
+    const text = await response.text().catch(() => null);
+
+    if (!response.ok) {
+      const errorBody = parseErrorBody(text ?? '', response.status);
+      throw new BackendRequestError(errorBody.message, response.status, errorBody.code, errorBody.details);
+    }
+
+    if (text === null || text.trim() === '') {
+      if (options.acceptEmptyBody) {
+        return undefined as T;
+      }
+      throw new BackendTransportError(EMPTY_RESPONSE_MESSAGE, response.status, 'empty_body');
+    }
+
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new BackendTransportError(UNREADABLE_RESPONSE_MESSAGE, response.status, 'unreadable_body');
+    }
+  } catch (error) {
+    // `signal.aborted` rather than the error's own name: React Native, the web and a test double all report an
+    // aborted fetch differently, but only this client aborts this signal.
+    if (controller.signal.aborted) {
+      throw new BackendTransportError(REQUEST_TIMEOUT_MESSAGE, 0, 'timeout');
+    }
+    throw error;
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
@@ -709,9 +798,14 @@ function parseErrorBody(text: string, status: number): ErrorBody {
     void statusCode;
     const resolvedMessage = typeof message === 'string' ? message : typeof error === 'string' ? error : fallback;
 
-    return typeof code === 'string'
-      ? { message: resolvedMessage, code, details }
-      : { message: resolvedMessage, details };
+    if (typeof code === 'string') {
+      return { message: resolvedMessage, code, details };
+    }
+
+    // A throttled request carries no code and Nest's own wording ("ThrottlerException: Too many requests") is
+    // not something to show a sender, so the plain-language sentence replaces it here (CB-037). A 429 that does
+    // carry a code (CONSENT_RESEND_LIMIT) keeps its own message and details.
+    return { message: status === 429 ? TOO_MANY_REQUESTS_MESSAGE : resolvedMessage, details };
   } catch {
     return { message: fallback, details: {} };
   }
