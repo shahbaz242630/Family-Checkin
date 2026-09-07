@@ -91,7 +91,7 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 - Sprint 1 (PRs #17 to #21), sprint 2 (#25 to #31) and sprint 3 wave 1 (#34, #35, #36) are merged. Phase 1 is complete except CB-078 (needs approval to touch a protected auth file). Phase 2 is complete in code (CB-019 to CB-026); CB-022's audio recordings wait on decision 3 and CB-083 (template-creation script) is new. Of the hardening set, CB-045 and CB-048 are done; CB-042 and CB-047 are wave 2. `master` CI is green at `d9e2350`.
 - Backend: 80 spec files, 803 tests across all projects; the compiled build boots in fake and configured mode. Acceptance: `docs/audits/2026-09-06/sprint3-acceptance.md` (11 sprint-3 checks plus the escalation loop on the device and the API, all pass, no new findings).
 - Mobile: the vitest project passes (14 files / 100 tests). CB-080 is fixed and re-checked on the device. CB-082 (Expo Go push chunk warning) is still visible in Metro and stays a Phase 3 item.
-- Hosted Supabase database: migrations through 202609060202 are applied; `202609060301_receiver_consent_resend_count` and `202609060302_expo_push_tickets` (PR #34) are PENDING there. The founder applies them with the management-API script (pattern in `docs/handoffs/data-security-and-privacy.md`).
+- Hosted Supabase database: every migration in the repo through `202609060302_expo_push_tickets` is applied (the founder ran the management-API script on 2026-09-07; verified: `receivers.consentResendCount integer NOT NULL DEFAULT 0`, `expo_push_tickets` with RLS on and no policies). Future migrations go the same way until `_prisma_migrations` is baselined (pattern in `docs/handoffs/data-security-and-privacy.md`).
 - Auth: access tokens are verified locally; the hosted project publishes an ES256 JWKS key, so `SUPABASE_JWT_SECRET` is not needed. The service-role key is optional and never read (founder decision 2026-09-06).
 - Nothing is hosted. The scheduler workflow is disabled. No Twilio, RevenueCat, FCM or EAS credentials exist; `docs/providers/twilio.md` and `docs/providers/whatsapp.md` say exactly what to configure when they do.
 - 11 Dependabot PRs are open, deferred.
@@ -100,7 +100,7 @@ Env files exist locally and are gitignored: `apps/backend/.env`, `apps/mobile/.e
 
 1. On `master`: `git status --short --branch`, `npm ci` (the lockfile gained `jose` in #35), then `npm run verify`.
 2. Sprint 3 wave 2 = CB-042 (zod body validation, one schema per body, shared with mobile; fold in CB-084, the `upsertFromSupabaseIdentity` alias removal) and CB-047 (logging; also write `TwilioRequestError.failureReason` into `attempt.failureReason` at the two `PROVIDER_SEND_FAILED` sites in `check-ins.service.ts`), plus CB-085 (push-receipts cron route). Two worktree agents with disjoint ownership (controllers, pipe and shared-types vs services' catch blocks, logger and middleware), a reviewer agent per PR before merge, then `docs/EMULATOR_RUNBOOK.md` again (ask before starting Docker or the emulator). Next free backlog id: CB-086.
-3. Founder items that do not block wave 2: apply the two pending migrations to the hosted database; decision 3 (voice languages); create the WhatsApp templates once Twilio credentials exist (or build CB-083 first).
+3. Founder items that do not block wave 2: decision 3 (voice languages); create the WhatsApp templates once Twilio credentials exist (or build CB-083 first).
 4. Then sprint 4 = Phase 3 mobile completion; then Dependabot triage (11 PRs), the one-off Prettier formatting commit and the `format:check` CI gate.
 
 ## Gotchas
