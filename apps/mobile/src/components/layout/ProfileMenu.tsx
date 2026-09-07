@@ -12,9 +12,7 @@ import { useAuth } from '../../hooks/useAuth';
 const PROFILE_MENU_ITEMS = [
   { icon: '👤', label: 'Profile', path: '/(main)/settings/profile' },
   { icon: '💳', label: 'Billing', path: '/(main)/settings/billing' },
-  { icon: '🎨', label: 'Appearance', path: '/(main)/settings/appearance' },
-  { icon: '🌐', label: 'Language', path: '/(main)/settings/language' },
-  { icon: '🛡️', label: 'Security', path: '/(main)/settings/security' },
+  { icon: '🛡️', label: 'Alerts & security', path: '/(main)/settings/security' },
   { icon: '🔒', label: 'Data & Privacy', path: '/(main)/settings/data-privacy' },
 ];
 
@@ -46,21 +44,13 @@ export function ProfileMenu() {
   };
 
   return (
-    <Modal
-      visible={isProfileMenuOpen}
-      transparent
-      animationType="none"
-      onRequestClose={closeProfileMenu}
-    >
+    <Modal visible={isProfileMenuOpen} transparent animationType="none" onRequestClose={closeProfileMenu}>
       {/* Backdrop */}
       <Pressable style={styles.backdrop} onPress={closeProfileMenu} />
 
       {/* Menu Content */}
       <Animated.View
-        style={[
-          styles.menu,
-          { paddingTop: insets.top + spacing.md, transform: [{ translateX: slideAnim }] },
-        ]}
+        style={[styles.menu, { paddingTop: insets.top + spacing.md, transform: [{ translateX: slideAnim }] }]}
       >
         {/* Profile Header */}
         <View style={styles.header}>

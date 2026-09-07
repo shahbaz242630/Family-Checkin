@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuthContext } from '../../../contexts/AuthContext';
@@ -12,6 +12,11 @@ import {
   type RevenueCatPlanOption,
   type RevenueCatPurchaseInterval,
 } from '../../../services/revenueCat';
+import {
+  pollBillingStatusUntilEntitled,
+  BILLING_POLL_TIMEOUT_MS,
+  type BillingPollResult,
+} from '../../../services/billingPolling';
 
 const PLANS: Array<{
   interval: RevenueCatPurchaseInterval;
@@ -42,7 +47,16 @@ export default function BillingScreen() {
   const [message, setMessage] = useState<string | null>(null);
   const [planOptions, setPlanOptions] = useState<RevenueCatPlanOption[]>([]);
   const [revenueCatAppUserId, setRevenueCatAppUserId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
   const availability = revenueCatAvailability();
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const loadStatus = useCallback(async () => {
     try {
@@ -67,6 +81,50 @@ export default function BillingScreen() {
     loadStatus();
   }, [loadStatus]);
 
+  /**
+   * The store tells RevenueCat, RevenueCat webhooks the backend, and only then
+   * does `/billing/status` turn entitled — so a single read right after the
+   * purchase sheet closes almost always still says "no subscription" (CB-041).
+   */
+  const confirmEntitlement = useCallback(async (): Promise<BillingPollResult<BackendBillingStatus>> => {
+    setConfirming(true);
+    try {
+      return await pollBillingStatusUntilEntitled<BackendBillingStatus>({
+        fetchStatus: getBillingStatus,
+        isEntitled: (billingStatus) => billingStatus.entitled,
+        now: () => Date.now(),
+        wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        isCancelled: () => !mountedRef.current,
+        onStatus: (billingStatus) => {
+          if (!mountedRef.current) {
+            return;
+          }
+          setStatus(billingStatus);
+          setRevenueCatAppUserId(billingStatus.revenueCatAppUserId);
+        },
+      });
+    } finally {
+      if (mountedRef.current) {
+        setConfirming(false);
+      }
+    }
+  }, []);
+
+  function describeConfirmation(result: BillingPollResult<BackendBillingStatus>, notFoundMessage: string): string {
+    if (result.entitled) {
+      return 'Subscription active.';
+    }
+    if (result.cancelled) {
+      return notFoundMessage;
+    }
+    if (result.lastError) {
+      return 'Your purchase went through, but Nearby could not reach the server to confirm it. Tap Refresh status.';
+    }
+    return `Your purchase went through. The store has not confirmed it within ${Math.round(
+      BILLING_POLL_TIMEOUT_MS / 1000,
+    )} seconds — tap Refresh status in a moment.`;
+  }
+
   async function purchase(interval: RevenueCatPurchaseInterval) {
     const appUserId = await ensureRevenueCatAppUserId();
     if (!appUserId) {
@@ -77,9 +135,10 @@ export default function BillingScreen() {
     try {
       setBusyAction(interval);
       setMessage(null);
-      const result = await purchaseRevenueCatPackage(appUserId, interval);
-      setMessage(result.entitled ? 'Subscription active. Syncing status...' : 'Purchase completed. Waiting for entitlement sync.');
-      await loadStatus();
+      await purchaseRevenueCatPackage(appUserId, interval);
+      setMessage('Purchase complete. Confirming your subscription...');
+      const result = await confirmEntitlement();
+      setMessage(describeConfirmation(result, 'Purchase completed. Waiting for entitlement sync.'));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to start purchase');
     } finally {
@@ -98,8 +157,15 @@ export default function BillingScreen() {
       setBusyAction('RESTORE');
       setMessage(null);
       const result = await restoreRevenueCatPurchases(appUserId);
-      setMessage(result.entitled ? 'Purchases restored. Syncing status...' : 'No active Nearby subscription was found.');
-      await loadStatus();
+      if (!result.entitled) {
+        await loadStatus();
+        setMessage('No active Nearby subscription was found.');
+        return;
+      }
+
+      setMessage('Purchases restored. Confirming your subscription...');
+      const confirmation = await confirmEntitlement();
+      setMessage(describeConfirmation(confirmation, 'Purchases restored. Waiting for entitlement sync.'));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Unable to restore purchases');
     } finally {
@@ -142,6 +208,12 @@ export default function BillingScreen() {
           ) : (
             <Text style={styles.statusText}>Choose monthly or annual access to enable paid Nearby features.</Text>
           )}
+          {confirming && <Text style={styles.statusText}>Checking with the store...</Text>}
+          <Pressable onPress={loadStatus} disabled={confirming || busyAction !== null}>
+            <Text style={[styles.refreshText, (confirming || busyAction !== null) && styles.buttonDisabled]}>
+              Refresh status
+            </Text>
+          </Pressable>
         </View>
       )}
 
@@ -159,7 +231,7 @@ export default function BillingScreen() {
             onPress={() => purchase(plan.interval)}
           >
             <Text style={styles.selectButtonText}>
-              {busyAction === plan.interval ? 'Opening...' : `Continue ${plan.name}`}
+              {busyAction === plan.interval ? (confirming ? 'Confirming...' : 'Opening...') : `Continue ${plan.name}`}
             </Text>
           </Pressable>
         </View>
@@ -170,10 +242,14 @@ export default function BillingScreen() {
         disabled={!availability.configured || busyAction !== null}
         onPress={restore}
       >
-        <Text style={styles.restoreButtonText}>{busyAction === 'RESTORE' ? 'Restoring...' : 'Restore purchases'}</Text>
+        <Text style={styles.restoreButtonText}>
+          {busyAction === 'RESTORE' ? (confirming ? 'Confirming...' : 'Restoring...') : 'Restore purchases'}
+        </Text>
       </Pressable>
 
-      <Text style={styles.footer}>Cancel or manage renewal from your App Store or Google Play subscription settings.</Text>
+      <Text style={styles.footer}>
+        Cancel or manage renewal from your App Store or Google Play subscription settings.
+      </Text>
     </ScrollView>
   );
 }
@@ -219,6 +295,12 @@ const styles = StyleSheet.create({
   statusText: {
     fontSize: fontSize.sm,
     color: colors.textSecondary,
+  },
+  refreshText: {
+    fontSize: fontSize.sm,
+    fontWeight: '600',
+    color: colors.primary,
+    paddingTop: spacing.xs,
   },
   notice: {
     fontSize: fontSize.sm,

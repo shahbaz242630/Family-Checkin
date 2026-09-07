@@ -60,28 +60,19 @@ export {
   type ReceiverUpdateInput,
   type SyncedBackendUser,
 } from './backendApi';
-export {
-  exportUserData,
-  downloadUserData,
-  deleteUserAccount,
-} from './userData';
-export {
-  isBiometricAvailable,
-  isBiometricEnrolled,
-  getBiometricType,
-  getBiometricName,
-  isBiometricEnabled,
-  enableBiometric,
-  disableBiometric,
-  getBiometricUserId,
-  authenticateWithBiometric,
-  getBiometricStatus,
-} from './biometric';
-export type { BiometricType, BiometricStatus } from './biometric';
+export { exportUserData, downloadUserData, deleteUserAccount } from './userData';
 export {
   configureRevenueCat,
+  logOutRevenueCat,
   purchaseRevenueCatPackage,
   restoreRevenueCatPurchases,
   revenueCatAvailability,
   type RevenueCatPurchaseInterval,
 } from './revenueCat';
+export {
+  pollBillingStatusUntilEntitled,
+  BILLING_POLL_INTERVAL_MS,
+  BILLING_POLL_TIMEOUT_MS,
+  type BillingPollOptions,
+  type BillingPollResult,
+} from './billingPolling';

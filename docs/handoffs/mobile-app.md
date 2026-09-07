@@ -1,9 +1,9 @@
 # Mobile app shell (Nearby sender app) — feature handoff
 
 Status: Partially built · Last verified: 2026-09-06 (emulator Pixel_7 via Expo Go, full runbook: login, add receiver, receiver detail, backup contact, sender actions, admin screens, Data & Privacy export and remove-receiver step-ups; `docs/audits/2026-09-06/emulator-acceptance.md`). The sprint-2 wave-B detail/dashboard changes (resend invitation, resolution note, backup-alert outcome, schedule-attention chip, typed error copy) the sprint-3 changes (resend-window button state, `backendRequest` transport hardening) and the sprint-4 wave-1 changes (single deep-link handler, param-driven auth screens, signup confirm-email state, admin-gated drawer) are verified by type-check, lint and the vitest project only; emulator pass pending.
-BRD: FR-DSB-01/02/04, FR-AUTH-02, FR-CHN-03c, FR-LNG-01 · Open backlog: CB-027, CB-028, CB-030, CB-031, CB-034, CB-035, CB-038, CB-040, CB-041, CB-066, CB-078, CB-082 (CB-029, CB-032, CB-033, CB-036, CB-037 and CB-039 closed 2026-09-07)
+BRD: FR-DSB-01/02/04, FR-AUTH-02, FR-CHN-03c, FR-LNG-01 · Open backlog: CB-027, CB-028, CB-030, CB-031, CB-038, CB-040, CB-066, CB-078, CB-082 (CB-029, CB-032, CB-033, CB-035, CB-036, CB-037, CB-039 and CB-041 closed 2026-09-07; CB-034 is part done)
 
-Sprint 4 wave 1 (CB-032, CB-033, CB-036, CB-037) is verified by type-check, lint and the vitest project only; the emulator pass is pending.
+Sprint 4 wave 1 (CB-029, CB-032, CB-033, CB-034, CB-035, CB-036, CB-037, CB-039, CB-041) is verified by type-check, lint and the vitest project only; the emulator pass is pending.
 
 ## What it does
 
@@ -22,7 +22,7 @@ Sprint 4 wave 1 (CB-032, CB-033, CB-036, CB-037) is verified by type-check, lint
 | Shell       | `apps/mobile/src/components/layout/` (`Header`, `Sidebar`, `ProfileMenu`), `contexts/DrawerContext.tsx` |
 | Auth state  | `apps/mobile/src/contexts/AuthContext.tsx` (session + the cached `isAdmin` flag), `components/auth/ProtectedRoute.tsx` |
 | API client  | `apps/mobile/src/services/backendApi.ts`, `services/backendErrors.ts`                     |
-| Services    | `services/userData.ts`, `biometric.ts`, `pushNotifications.ts`, `revenueCat.ts`, `supabase.ts`, `sessionAutoRefresh.ts` (AppState ↔ Supabase refresh timer) |
+| Services    | `services/userData.ts`, `pushNotifications.ts`, `revenueCat.ts`, `revenueCatPlans.ts`, `billingPolling.ts`, `supabase.ts`, `sessionAutoRefresh.ts` (AppState ↔ Supabase refresh timer) |
 | Utils       | `apps/mobile/src/utils/` — pure, vitest-covered: `receiverStatus.ts` (status chip, schedule-attention chip), `receiverActions.ts` (action notices, resolution-note check), `receiverHistory.ts` (day rows, per-day status, "last heard from"), `receiverPause.ts` (pause end dates), `adminOperations.ts`, `checkInSkipReason.ts`, `channelProfiles.ts`, `timeOptions.ts`, `timezoneOffset.ts` |
 | Hooks       | `apps/mobile/src/hooks/` — `useAuth.ts`, `useProfile.ts`, `useLovedOnes.ts`, `useDeepLinks.ts` (the app's one deep-link handler, CB-029) |
 | Theme       | `apps/mobile/src/theme/` (`colors.ts`, `spacing.ts`) — static tokens, light only          |
@@ -51,9 +51,7 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 | `/(main)/admin-operations/[checkInId]` | Per-check-in attempts and escalations                       | from admin-operations rows                          |
 | `/(main)/admin-abuse-reports`      | Abuse-report review queue                                       | drawer, admins only (CB-039)                        |
 | `/(main)/settings/billing`         | RevenueCat plans, purchase, restore                             | profile menu, and an onboarding alert               |
-| `/(main)/settings/appearance`      | Theme picker — local `useState` only, nothing applied           | profile menu (decoy — CB-034)                       |
-| `/(main)/settings/language`        | Language picker — local `useState` only, nothing applied        | profile menu (decoy — CB-034)                       |
-| `/(main)/settings/security`        | Biometric enable/disable toggle                                 | profile menu                                        |
+| `/(main)/settings/security`        | "Alerts & security": the siren test plus notification-permission, Do-Not-Disturb, Android-channel and iOS critical-alert status (CB-035) | profile menu                                        |
 | `/(main)/settings/data-privacy`    | Step-up export and account deletion                             | profile menu                                        |
 | `/(main)/check-ins`, `/escalations`, `/loved-ones`, `/pairing` | `<Redirect href="/(main)" />` stubs         | not linked (legacy) — CB-066                        |
 | `app/(app)/`                       | Empty directory, no route files                                 | not linked (legacy)                                 |
@@ -96,8 +94,11 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - `ReceiverPhoneInput` takes a `label` (default "Receiver phone"); the sign-up form passes "Your phone number" and the backup-contact form "Backup contact phone". The sign-up error banner clears when any field changes.
 - Screens import from specific modules (`services/backendApi`, `services/userData`, `data/countries`, …), never the `services`/`data` barrels — the barrels pull native-facing code into route bundles.
 - `metro.config.js` sets `watchFolders` to the workspace root, adds both `node_modules` paths, and sets `disableHierarchicalLookup = true`; this is what lets Metro resolve `expo-router/entry-classic` in the npm-workspaces monorepo.
-- `biometric.ts` guards every call with `isWebRuntime` and stores only `biometric_enabled` / `biometric_user_id` in SecureStore; it does not gate any login path.
-- `userData.ts` requires a step-up token for both `GET /account/export` and `DELETE /account`, and signs out locally after a successful delete.
+- No settings control is a decoy. `appearance.tsx`, `language.tsx` and `services/biometric.ts` were deleted in sprint 4 (CB-034) because each one only wrote local state nothing read; adding a settings row means wiring what it claims to do. The two `familycheckin.app` Terms/Privacy links in `signup.tsx` are the one knowingly-broken exception and stay until founder Decision 9 names a host.
+- The siren test (`scheduleSirenTest`) refuses on web and in Expo Go rather than firing a default-sound notification: `escalation-siren.wav` is bundled by the `expo-notifications` plugin, so only a development or store build can prove the real siren. It schedules on the `emergency-alerts` channel with the same sound name as the backend push, `interruptionLevel: timeSensitive` and a 5-second delay so the sender can lock the phone first. `readSirenReadiness()` reports only what the OS actually tells us: permission status, the Android `interruptionFilter` (the live Do Not Disturb mode), the real `emergency-alerts` channel importance/sound/`bypassDnd`, and `ios.allowsCriticalAlerts`. Everything else reads `unknown` — never "OK".
+- `userData.ts` requires a step-up token for both `GET /account/export` and `DELETE /account`, and signs out locally after a successful delete. `UserDataExport` mirrors the backend `AccountExportResponse` key for key (`checkIns`, `escalations`, and no optional sections) — CB-041 fixed two keys that never existed in the payload.
+- The billing screen never reads `/billing/status` once after a purchase. `pollBillingStatusUntilEntitled` (`services/billingPolling.ts`) re-reads it every 3 s for up to 60 s, because the store → RevenueCat → webhook → backend hop takes seconds; a failed read does not end the poll, and the screen cancels it on unmount. All timing is injected so it is tested with plain vitest.
+- `configureRevenueCat` calls `Purchases.configure` at most once per API key per app process. A different sender goes through `Purchases.logIn`; `logOutRevenueCat()` detaches the identity. Calling `configure` twice is the CB-041 bug and must not come back.
 - `eas.json` is not build-ready: `env` blocks use `${VAR}` interpolation EAS does not expand, no profile carries `EXPO_PUBLIC_BACKEND_URL` or RevenueCat keys, `app.json` `extra.eas.projectId` is empty, `submit.production.android.serviceAccountKeyPath` points at `./google-services.json`, and there is no `versionCode`/`buildNumber`.
 
 ## Known gaps
@@ -107,12 +108,12 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - CB-029 — done 2026-09-07 (#44): one handler in `hooks/useDeepLinks.ts`, screens driven by route params, signup shows "Check your email". Device re-check pending: the next emulator pass should confirm an email confirmation on a cold start and a recovery link on a warm start.
 - CB-030 — Push: no foreground handler, no tap → deep link, tokens never unregistered on sign-out, no Time-Sensitive entitlement.
 - CB-031 — Android push impossible: no FCM `googleServicesFile`, no DND detection or guidance.
-- CB-034 — Appearance, Language and the biometric toggle are placeholders; Terms/Privacy point at an unowned domain.
-- CB-035 — No "Test my siren" control and no DND/critical-alert status.
+- CB-034 — settings part done (#43): Appearance, Language and the biometric toggle are gone. Terms/Privacy in `signup.tsx` still point at `familycheckin.app`, which the founder does not own; open on Decision 9.
 - CB-038 — Siren asset is a 0.35 s, 8 kHz mono blip.
 - CB-039 — done 2026-09-07 (#44): the drawer gates its two admin entries on the cached `isAdmin` from `AuthContext`. The admin routes themselves are still reachable by direct navigation (the backend refuses them); locking the routes belongs with decision 4 (keep admin in the sender app or build the BRD panel).
 - CB-040 — expo-doctor 15/18: hoisted duplicate `react`/`react-native`, patch mismatches, metro overrides.
-- CB-041 — Billing: no post-purchase polling, `configure()` on user switch, wrong `userData.ts` export type keys.
+- CB-041 — done (#43). Leftover: `logOutRevenueCat()` is implemented and tested but nothing calls it; one line in `AuthContext.signOut` would wire it (that file was owned by another agent in the sprint-4 wave).
+- `expo-local-authentication` stays in `apps/mobile/package.json` although nothing imports it after CB-034 removed `biometric.ts`. Dropping it belongs with the CB-066 stale-artefact sweep, not in a wave where two other agents share the lockfile.
 - CB-066 — Stale artefacts including the four mobile legacy redirect stubs, the "Family Check-In" splash/app name and the export filename.
 - CB-078 — PKCE downgrades to `plain` in Expo Go (no WebCrypto); a dev build needs a crypto polyfill.
 - CB-080 — code done (#34); device re-check pending: the next emulator pass must repeat the ten consecutive detail loads and the two remove flows from the sprint-2 run and see no parse error.
@@ -127,3 +128,4 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - Sprint 3 (CB-081 resend-window button state from `consentResendAllowedAt`; CB-080 `backendRequest` reads text, `BackendTransportError`, one GET retry, empty-body-tolerant deletes): PR #34.
 - Sprint 4 wave 1 (CB-032 dashboard error state and the dead quick action; CB-033 profile form seeding, `user_metadata.phone`, disabled Save, no "Change photo"; CB-036 30-day history, "last heard from", pause end dates; CB-037 request deadline, `PHONE_REQUIRED` routing, 429 copy, `AppState` refresh wiring): PR (#46). No screen-test framework was added: the logic lives in `hooks/useProfile.ts`, `hooks/useLovedOnes.ts`, `utils/receiverHistory.ts`, `utils/receiverPause.ts` and `services/sessionAutoRefresh.ts`, each with a plain vitest spec, which is how the other 14 mobile specs are written.
 - Sprint 4 wave 1 (CB-029 the single deep-link handler in `hooks/useDeepLinks.ts`, callback and reset-password driven by route params, the signup confirm-email state; CB-039 the cached `isAdmin` in `AuthContext` and `utils/sidebarMenu.ts`): PR #44. Touched four of the protected auth files under a narrow founder approval given on 2026-09-07 — see the per-file account in that PR description.
+- Sprint 4 wave 1 (CB-034 Appearance/Language/biometric removed; CB-035 siren test and delivery status on the rebuilt `settings/security.tsx`; CB-041 post-purchase polling, `Purchases.logIn`/`logOut`, export type keys): PR (#43).

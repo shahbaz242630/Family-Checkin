@@ -1,12 +1,12 @@
 # Billing — RevenueCat (Apple IAP / Google Play Billing) — feature handoff
 
-Status: Partially built (code complete, no live store products) · Last verified: backend 2026-09-06 (specs); mobile billing screen 2026-05-18 (emulator: opened, purchase controls disabled without SDK keys)
+Status: Partially built (code complete, no live store products) · Last verified: backend 2026-09-06 (specs); mobile billing screen 2026-05-18 (emulator: opened, purchase controls disabled without SDK keys); the sprint-4 CB-041 changes are verified by `revenueCat.spec.ts` only — no sandbox purchase has ever been run
 BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and do not match what is built) · Open backlog: CB-027, CB-041, CB-061, CB-066
 
 ## What it does
 
 - A sender buys monthly or annual access through Apple In-App Purchase on iOS or Google Play Billing on Android. RevenueCat is the entitlement layer on top of those stores; Stripe, Telr, RevenueCat Web Billing and any external checkout link are rejected because Apple guideline 3.1.1 and the Google Play Payments policy require store billing for app-unlocking digital functionality.
-- The mobile billing screen shows current entitlement, monthly/annual plans (store `priceString` when a RevenueCat offering loads, static copy otherwise), and a restore-purchases action.
+- The mobile billing screen shows current entitlement, monthly/annual plans (store `priceString` when a RevenueCat offering loads, static copy otherwise), a restore-purchases action and a manual "Refresh status". After a purchase or a successful restore it polls `GET /billing/status` for up to 60 s so the entitlement appears without leaving the screen (CB-041).
 - RevenueCat webhooks project store subscription state into the local `subscriptions` table. Every backend decision reads that local projection, never RevenueCat at request time.
 - A sender without entitlement cannot create a receiver (`403` with `code: "PAID_ACCESS_REQUIRED"`), and the check-in scheduler skips that sender's receivers.
 - A billing failure does not cut access immediately: `PAST_DUE` stays entitled until the store paid-through date (`currentPeriodEnd`), then stops.
@@ -16,7 +16,7 @@ BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and d
 | Layer   | Paths                                                                                                                                                                                                                                                                                    |
 | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | Backend | `apps/backend/src/modules/billing/` (`billing.controller.ts`, `billing.service.ts`, `billing.repository.ts`, `prisma-billing.repository.ts`, `billing.module.ts`, `billing.tokens.ts`); gates in `apps/backend/src/modules/receivers/receivers.controller.ts:343-350` and `apps/backend/src/modules/check-ins/check-ins.service.ts:110,274-276`; env getters in `apps/backend/src/shared/config/app-config.service.ts:171-178` |
-| Mobile  | `apps/mobile/src/app/(main)/settings/billing.tsx`; `apps/mobile/src/services/revenueCat.ts`, `revenueCatPlans.ts`, `backendErrors.ts`, `backendApi.ts:345`                                                                                                                                |
+| Mobile  | `apps/mobile/src/app/(main)/settings/billing.tsx`; `apps/mobile/src/services/revenueCat.ts`, `revenueCatPlans.ts`, `billingPolling.ts`, `backendErrors.ts`, `backendApi.ts:345`                                                                                                                                |
 | Data    | `subscriptions` (`externalProductId`, `revenueCatAppUserId`, `billingInterval`, `store`, `willRenew`; enums `BillingInterval`, `BillingStore`), `idempotency_keys`; migration `apps/backend/prisma/migrations/202605090001_revenuecat_billing_foundation/migration.sql`                    |
 | Tests   | `apps/backend/src/modules/billing/{billing.controller,billing.service,prisma-billing.repository}.spec.ts`; gate coverage in `receivers.controller.spec.ts` and `check-ins.service.spec.ts`; `apps/mobile/src/services/{revenueCat,backendErrors,backendApi}.spec.ts`                       |
 
@@ -38,6 +38,8 @@ BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and d
 
 ## Invariants — do not break
 
+- `Purchases.configure` runs at most once per API key per app process. A sender switch goes through `Purchases.logIn(userId)` and a sign-out through `logOutRevenueCat()`; a second `configure` is the CB-041 bug and RevenueCat does not support it.
+- The billing screen must not decide entitlement from the purchase result alone. The store confirms through a RevenueCat webhook, so `/billing/status` is polled (`pollBillingStatusUntilEntitled`, 3 s apart, 60 s ceiling, cancelled on unmount, and a failed read does not abort the poll). On timeout the copy says the purchase went through but is not confirmed — it never claims access the backend has not granted.
 - RevenueCat `appUserID` is the backend `users.id`, not the Supabase auth user id. The mobile screen takes it from `GET /billing/status.revenueCatAppUserId` and falls back to `syncAuthenticatedUser()`; using `AuthContext.user.id` puts subscriptions on the wrong identity.
 - `syncRevenueCatEvent` rejects an `app_user_id` with no matching non-deleted user (`findUserBillingProfile`) before recording idempotency or writing anything. Keep that ordering: idempotency is recorded first, then the subscription upsert, then the audit row.
 - Entitlement matching is exact: an event whose `entitlement_ids` omits `REVENUECAT_ENTITLEMENT_ID` is ignored with `{ processed: false }`. The id is trimmed and falls back to `nearby_access` when blank, and the mobile side reads `EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID` with the same default — the two must agree with the RevenueCat dashboard.
@@ -50,7 +52,8 @@ BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and d
 ## Known gaps
 
 - CB-027 — the app is not store-buildable: `apps/mobile/eas.json` uses `${VAR}` interpolation, declares no `EXPO_PUBLIC_REVENUECAT_*` or `EXPO_PUBLIC_BACKEND_URL` in any profile, has no `versionCode`/`buildNumber`, and points `submit.production.android.serviceAccountKeyPath` at `./google-services.json`; `apps/mobile/app.json` has an empty `extra.eas.projectId` and no billing-related entry in `plugins`.
-- CB-041 — the billing screen does not poll `/billing/status` after a purchase, and `revenueCat.ts` re-`configure()`s on user switch instead of using `Purchases.logIn` / `logOut`.
+- CB-041 — done (#43). One loose end: `logOutRevenueCat()` is implemented and tested but has no caller; it needs one line in `AuthContext.signOut`, a file owned by another agent in the sprint-4 wave.
+- Nothing above has been exercised against a real store. The 60 s polling ceiling is an estimate of how long the RevenueCat webhook takes; the first sandbox purchase should confirm or correct it.
 - CB-061 — tier comes from a regex over the product id (`tier_2|plus` → `TIER_2`, `tier_3|premium|family` → `TIER_3`, else `TIER_1`); there are no per-tier receiver/backup limits, and the BRD's three-retries-over-7-days / suspend-after-14-days-unpaid state is not modelled. The store paid-through period is the only grace window and `SUSPENDED` is never written.
 - CB-066 — stale billing artefacts remain: `users.stripeCustomerId` / `telrCustomerId` and unused tier constants in `packages/shared-types`.
 - Not set up at all: no RevenueCat project or iOS/Android apps, no App Store Connect or Google Play subscription products, no offering mapped to `nearby_access`, no SDK keys, no webhook URL registered against `POST /billing/revenuecat/webhook`, and no real purchase, restore or cancel has ever been executed on a device build.
@@ -60,4 +63,4 @@ BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and d
 ## History
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §29i (lines 2583–2666, foundation and provider decision), §29j (lines 2667–3036, compliance research, both paid-access gates, `PAST_DUE` grace, webhook idempotency, `appUserID` alignment, entitlement-config normalisation), and the 2026-05-18 emulator QA note (lines 3440–3472).
-- PRs: the archive records no PR numbers for the billing slices; they predate the numbered-PR flow that starts at #17. #34 (CB-026 constant-time webhook token comparison, 400 on payload errors). #40 (CB-042 webhook body schema; CB-084 alias removal).
+- PRs: the archive records no PR numbers for the billing slices; they predate the numbered-PR flow that starts at #17. #34 (CB-026 constant-time webhook token comparison, 400 on payload errors). #40 (CB-042 webhook body schema; CB-084 alias removal). (#43) (CB-041 post-purchase polling, `Purchases.logIn`/`logOut`, `UserDataExport` key fix).
