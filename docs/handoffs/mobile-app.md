@@ -1,7 +1,7 @@
 # Mobile app shell (Nearby sender app) — feature handoff
 
-Status: Partially built · Last verified: 2026-09-06 (emulator Pixel_7 via Expo Go, full runbook: login, add receiver, receiver detail, backup contact, sender actions, admin screens, Data & Privacy export and remove-receiver step-ups; `docs/audits/2026-09-06/emulator-acceptance.md`). The sprint-2 wave-B detail/dashboard changes (resend invitation, resolution note, backup-alert outcome, schedule-attention chip, typed error copy) and the sprint-3 changes (resend-window button state, `backendRequest` transport hardening) are verified by type-check, lint and the vitest project only; emulator pass pending.
-BRD: FR-DSB-01/02/04, FR-AUTH-02, FR-CHN-03c, FR-LNG-01 · Open backlog: CB-027 … CB-031, CB-034, CB-035, CB-038 … CB-041, CB-066, CB-078
+Status: Partially built · Last verified: 2026-09-06 (emulator Pixel_7 via Expo Go, full runbook: login, add receiver, receiver detail, backup contact, sender actions, admin screens, Data & Privacy export and remove-receiver step-ups; `docs/audits/2026-09-06/emulator-acceptance.md`). The sprint-2 wave-B detail/dashboard changes (resend invitation, resolution note, backup-alert outcome, schedule-attention chip, typed error copy) the sprint-3 changes (resend-window button state, `backendRequest` transport hardening) and the sprint-4 wave-1 changes (single deep-link handler, param-driven auth screens, signup confirm-email state, admin-gated drawer) are verified by type-check, lint and the vitest project only; emulator pass pending.
+BRD: FR-DSB-01/02/04, FR-AUTH-02, FR-CHN-03c, FR-LNG-01 · Open backlog: CB-027, CB-028, CB-030, CB-031, CB-034, CB-035, CB-038, CB-040, CB-041, CB-066, CB-078, CB-082 (CB-029, CB-032, CB-033, CB-036, CB-037 and CB-039 closed 2026-09-07)
 
 Sprint 4 wave 1 (CB-032, CB-033, CB-036, CB-037) is verified by type-check, lint and the vitest project only; the emulator pass is pending.
 
@@ -9,9 +9,9 @@ Sprint 4 wave 1 (CB-032, CB-033, CB-036, CB-037) is verified by type-check, lint
 
 - Expo SDK 54 / React Native 0.81 / Expo Router 6 app for the **sender**. Receivers never install it; they answer over WhatsApp/SMS/voice.
 - Boots to a splash route that redirects to `/(auth)/welcome` or `/(main)` from the Supabase session.
-- Authenticated shell is a fixed `Header` + left `Sidebar` drawer (Dashboard, Add receiver, Admin Operations, Abuse Reports) + right `ProfileMenu` (Profile, Billing, Appearance, Language, Security, Data & Privacy, Log out).
+- Authenticated shell is a fixed `Header` + left `Sidebar` drawer (Dashboard, Add receiver, plus Admin Operations and Abuse Reports for admins only — CB-039) + right `ProfileMenu` (Profile, Billing, Appearance, Language, Security, Data & Privacy, Log out).
 - Talks to the NestJS backend through one client (`services/backendApi.ts`) with a Supabase bearer token; no direct Supabase table reads remain on the receiver/check-in path.
-- Handles password-reset and OAuth/email-confirmation deep links on the `familycheckin://` scheme.
+- Handles password-reset and OAuth/email-confirmation deep links on the `familycheckin://` scheme, through one handler in the root layout (`hooks/useDeepLinks.ts`) that reports the outcome to the auth screens as route params (CB-029).
 - Registers an Expo push token after sign-in, except on web and Android/Expo Go.
 
 ## Where it lives
@@ -20,10 +20,11 @@ Sprint 4 wave 1 (CB-032, CB-033, CB-036, CB-037) is verified by type-check, lint
 | ----------- | --------------------------------------------------------------------------------------- |
 | Routes      | `apps/mobile/src/app/` (Expo Router root, set in `app.json` → `plugins.expo-router.root`) |
 | Shell       | `apps/mobile/src/components/layout/` (`Header`, `Sidebar`, `ProfileMenu`), `contexts/DrawerContext.tsx` |
-| Auth state  | `apps/mobile/src/contexts/AuthContext.tsx`, `components/auth/ProtectedRoute.tsx`          |
+| Auth state  | `apps/mobile/src/contexts/AuthContext.tsx` (session + the cached `isAdmin` flag), `components/auth/ProtectedRoute.tsx` |
 | API client  | `apps/mobile/src/services/backendApi.ts`, `services/backendErrors.ts`                     |
 | Services    | `services/userData.ts`, `biometric.ts`, `pushNotifications.ts`, `revenueCat.ts`, `supabase.ts`, `sessionAutoRefresh.ts` (AppState ↔ Supabase refresh timer) |
 | Utils       | `apps/mobile/src/utils/` — pure, vitest-covered: `receiverStatus.ts` (status chip, schedule-attention chip), `receiverActions.ts` (action notices, resolution-note check), `receiverHistory.ts` (day rows, per-day status, "last heard from"), `receiverPause.ts` (pause end dates), `adminOperations.ts`, `checkInSkipReason.ts`, `channelProfiles.ts`, `timeOptions.ts`, `timezoneOffset.ts` |
+| Hooks       | `apps/mobile/src/hooks/` — `useAuth.ts`, `useProfile.ts`, `useLovedOnes.ts`, `useDeepLinks.ts` (the app's one deep-link handler, CB-029) |
 | Theme       | `apps/mobile/src/theme/` (`colors.ts`, `spacing.ts`) — static tokens, light only          |
 | Config      | `apps/mobile/app.json`, `metro.config.js`, `eas.json`, `.env.example`, `package.json`     |
 | Tests       | `apps/mobile/src/**/*.spec.ts` (vitest project `mobile`, node environment)                |
@@ -37,18 +38,18 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 | `/` (`app/index.tsx`)              | Splash; redirects on auth state after ~800 ms                   | app entry                                           |
 | `/(auth)/welcome`                  | Unauthenticated landing, Log in / Sign up                       | from splash and after sign-out                      |
 | `/(auth)/login`                    | Email/password + social sign-in                                 | from welcome                                        |
-| `/(auth)/signup`                   | Account creation                                                | from welcome, from login                            |
+| `/(auth)/signup`                   | Account creation; when Supabase returns no session (email confirmation required) it switches to a "Check your email" state instead of pushing on to onboarding (CB-029) | from welcome, from login                            |
 | `/(auth)/forgot-password`          | Password reset request                                          | from login                                          |
 | `/(auth)/onboarding`               | Sender onboarding wizard                                        | `router.replace('/onboarding')` from login/signup, but `ProtectedRoute` bounces authenticated users out of `(auth)` → effectively not reachable |
-| `/auth/callback`                   | OAuth / email-confirmation landing                              | from the root deep-link handler                     |
-| `/auth/reset-password`             | Sets a new password from a recovery link                        | from the root deep-link handler                     |
+| `/auth/callback`                   | OAuth / email-confirmation landing. Renders `?status=success` (→ `/(main)` after 1.5 s) or `?status=error&message=…` (→ login after 3 s); no params means the link is still in flight, and after `DEEP_LINK_SETTLE_MS` it falls back to login | from the root deep-link handler, which supplies the params |
+| `/auth/reset-password`             | Sets a new password from a recovery link. `?status=ready` shows the form, `?status=error&message=…` the "Link Invalid" state; no params falls back to an existing session and only then, after `DEEP_LINK_SETTLE_MS`, to "No valid session found" | from the root deep-link handler, which supplies the params |
 | `/(main)`                          | Dashboard: receiver cards, statuses, one "Add receiver" quick action; refetches on focus, pull-to-refresh kept; a "Schedule needs attention" chip on cards whose `scheduleInvalidAt` is set (CB-069); "Last heard from" on each card (CB-036); a failed load renders an error card with **Try again** — and "Add your phone number" or "Sign in again" when the 401 says which — instead of the old "No receivers yet" (CB-032) | drawer                                              |
 | `/(main)/receiver-setup`           | Add-receiver form (name, phone, channel, schedule, consent send); quarter-hour window pickers, live UTC offsets; typed 409 refusals explained (`describeBackendError`); a create whose consent send failed opens the detail with `consentRequest=failed` | drawer, and from dashboard empty state / quick action|
 | `/(main)/receivers/[id]`           | Receiver detail: status, schedule, channels, backup contacts, pause/resume/edit/remove; refetches on focus; a 404 shows "This receiver was removed" and returns to the dashboard; "Resend invitation" while consent is PENDING, disabled with "Resend available <local date time>" until `consentResendAllowedAt` (CB-081); optional ≤200-char note on Mark resolved and the stored note; in-screen notice with the backup-alert outcome; schedule warning that opens Edit; typed 409/429 copy; a "Last 30 days" list with one row per receiver-local day and its escalation count, and a pause that asks for an end date (CB-036) | from dashboard cards, from receiver-setup after a failed consent send |
-| `/(main)/admin-operations`         | Check-in operations summary                                     | drawer (shown to every user — CB-039)               |
-| `/(main)/admin-operations/[checkInId]` | Per-check-in attempts and escalations                       | from admin-operations rows                          |
-| `/(main)/admin-abuse-reports`      | Abuse-report review queue                                       | drawer (shown to every user — CB-039)               |
 | `/(main)/settings/profile`         | Name/phone form, seeded from `user_metadata` after the profile loads; Save disabled until something changes (CB-033) | profile menu                                        |
+| `/(main)/admin-operations`         | Check-in operations summary                                     | drawer, admins only (CB-039)                        |
+| `/(main)/admin-operations/[checkInId]` | Per-check-in attempts and escalations                       | from admin-operations rows                          |
+| `/(main)/admin-abuse-reports`      | Abuse-report review queue                                       | drawer, admins only (CB-039)                        |
 | `/(main)/settings/billing`         | RevenueCat plans, purchase, restore                             | profile menu, and an onboarding alert               |
 | `/(main)/settings/appearance`      | Theme picker — local `useState` only, nothing applied           | profile menu (decoy — CB-034)                       |
 | `/(main)/settings/language`        | Language picker — local `useState` only, nothing applied        | profile menu (decoy — CB-034)                       |
@@ -64,7 +65,7 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - `apps/mobile/.env` (see `.env.example`): `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_BACKEND_URL`, and optionally `EXPO_PUBLIC_REVENUECAT_IOS_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ANDROID_API_KEY` / `EXPO_PUBLIC_REVENUECAT_ENTITLEMENT_ID` (defaults to `nearby_access`).
 - Emulator: `npm run android` at the repo root (proxies to `npm --prefix apps/mobile run android` → `expo start --android`). Web: `npm --prefix apps/mobile run web`.
 - Pin the port when 8081 is busy: `npm --prefix apps/mobile run android -- --port 8082`.
-- Checks: `npm --prefix apps/mobile run type-check`, `npm --prefix apps/mobile run lint`, `npm test` at the root (runs the `mobile` vitest project; also `npx vitest run --project mobile`). Type-check and the `mobile` project pass as of 2026-09-06.
+- Checks: `npm --prefix apps/mobile run type-check`, `npm --prefix apps/mobile run lint`, `npm test` at the root (runs the `mobile` vitest project; also `npx vitest run --project mobile`). Type-check and the `mobile` project pass as of 2026-09-07 (16 spec files, 124 tests).
 - Metro port drift: Expo falls back to 8082/8083 when 8081 is taken. The backend CORS allow-list matches `http://localhost:80xx` and `http://127.0.0.1:80xx`, so requests still succeed, but Expo **web** storage is per-origin — a new port means a signed-out browser session and a fresh login.
 
 ## Invariants — do not break
@@ -83,8 +84,11 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - `EXPO_PUBLIC_*` values are inlined at bundle time — changing `.env` needs a Metro restart, not a reload.
 - `pushNotifications.ts` must keep loading `expo-notifications` through `await import()` and must keep the `Platform.OS === 'android' && Constants.appOwnership === 'expo'` early return. A static or `require()` import crashed Expo Go after sign-in (SDK 53+ dropped remote push in Expo Go). `AuthContext` likewise dynamic-imports the module only once `session.user` exists.
 - RevenueCat is a no-op without a native build: `revenueCatAvailability()` returns unconfigured on web or with no platform key, and `loadPurchases()` returning null yields "RevenueCat native module is unavailable. Use a development or store build." Purchase/restore controls stay disabled — expected in Expo Go.
+- One deep-link handler (CB-029). `useDeepLinks()` is mounted by the root layout and is the only thing in the app that calls `Linking.getInitialURL()` / `Linking.addEventListener('url')` and the only caller of `handleAuthDeepLink`. It processes each URL at most once (a `Set` of URLs already handled — Android can deliver the launch intent through both channels, and a second exchange of a spent PKCE code is what produced the "Verification Failed" flash) and reports the outcome to `/auth/callback` or `/auth/reset-password` as route params. Neither screen may read the URL again: on a warm start `getInitialURL()` returns the launch URL, not the link that just arrived. The classification (`classifyAuthDeepLink`), the outcome mapping (`resolveAuthDeepLink`) and the once-only handler (`createAuthDeepLinkHandler`) are plain exported functions covered by `hooks/useDeepLinks.spec.ts`.
+- The two auth screens have a settle window, not an instant verdict: with no `status` param they wait `DEEP_LINK_SETTLE_MS` (exported by `useDeepLinks.ts`) before falling back to login / "No valid session found", because the screen mounts from the intent URL before the handler has finished the token exchange. Shortening it to zero brings the error flash back.
 - `Sidebar` and `ProfileMenu` render outside the `(main)` `Stack` so the drawers survive route changes; `DrawerContext` handlers stay wrapped in `useCallback`/`useMemo` because the provider wraps every authenticated route.
-- `ProtectedRoute` redirects authenticated users out of `(auth)` and unauthenticated users out of `(main)`. Adding an authenticated screen under `(auth)` makes it unreachable.
+- Admin drawer entries are gated, not merely styled (CB-039). `AuthContext` calls `getAdminMe()` once per signed-in user id and caches the answer in a module-level map — a 403 (the ordinary answer for a sender) is remembered so a non-admin never produces a second one; a transport failure is not. `Sidebar` renders `visibleSidebarMenuItems(isAdmin)` from `utils/sidebarMenu.ts`; a new admin screen must set `adminOnly: true` on its entry there, not hide itself in the component.
+- `ProtectedRoute` redirects authenticated users out of `(auth)` and unauthenticated users out of `(main)`. It does **not** guard the `auth` segment, which is why `/auth/callback` and `/auth/reset-password` still render for a signed-in user. Adding an authenticated screen under `(auth)` makes it unreachable.
 - Screens refetch on focus. `useReceivers` (dashboard) and the receiver detail load inside `useFocusEffect` from `expo-router` — first mount and every return to the screen — and keep pull-to-refresh. `loading` blanks the screen only before the first successful load; later refetches leave the current content visible. `useReceivers` therefore has to be called from a screen inside a navigator.
 - A receiver-detail action that returns 404 reloads the receiver: if the receiver itself is gone, the screen says "This receiver was removed" and `router.replace('/(main)')`; otherwise it shows the message on a refreshed detail (`isNotFoundError` in `services/backendErrors.ts`).
 - Status labels: a SKIPPED check-in reads "Skipped" unless a skip reason is known (`utils/checkInSkipReason.ts`); "No backup available" is reserved for the `no_backup_contacts` reason, which no payload carries yet (CB-077 note in `docs/handoffs/admin-operations.md`). Consent and pause still win over the latest check-in.
@@ -100,13 +104,13 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 
 - CB-027 — `eas.json`/`app.json` not store-buildable: `${VAR}` env interpolation, empty `projectId`, wrong submit key path, no `versionCode`/`buildNumber`.
 - CB-028 — Google/Apple sign-in rejects every callback with "Invalid authentication state" (custom `state` check).
-- CB-029 — Deep links processed twice (root layout + callback screen); no "check your email" state after signup; reset-password warm start fails.
+- CB-029 — done 2026-09-07 (#44): one handler in `hooks/useDeepLinks.ts`, screens driven by route params, signup shows "Check your email". Device re-check pending: the next emulator pass should confirm an email confirmation on a cold start and a recovery link on a warm start.
 - CB-030 — Push: no foreground handler, no tap → deep link, tokens never unregistered on sign-out, no Time-Sensitive entitlement.
 - CB-031 — Android push impossible: no FCM `googleServicesFile`, no DND detection or guidance.
 - CB-034 — Appearance, Language and the biometric toggle are placeholders; Terms/Privacy point at an unowned domain.
 - CB-035 — No "Test my siren" control and no DND/critical-alert status.
 - CB-038 — Siren asset is a 0.35 s, 8 kHz mono blip.
-- CB-039 — Admin drawer items are shown to every user; non-admins get a 403 screen.
+- CB-039 — done 2026-09-07 (#44): the drawer gates its two admin entries on the cached `isAdmin` from `AuthContext`. The admin routes themselves are still reachable by direct navigation (the backend refuses them); locking the routes belongs with decision 4 (keep admin in the sender app or build the BRD panel).
 - CB-040 — expo-doctor 15/18: hoisted duplicate `react`/`react-native`, patch mismatches, metro overrides.
 - CB-041 — Billing: no post-purchase polling, `configure()` on user switch, wrong `userData.ts` export type keys.
 - CB-066 — Stale artefacts including the four mobile legacy redirect stubs, the "Family Check-In" splash/app name and the export filename.
@@ -122,3 +126,4 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - Sprint 2 wave B receivers app follow-ups (CB-074 backup-alert outcome notice, CB-069 schedule-attention chip and detail warning, resend invitation, resolution note, `describeBackendError` copy, `BackendRequestError.details`, failed-consent hand-off from the add form): PR #30.
 - Sprint 3 (CB-081 resend-window button state from `consentResendAllowedAt`; CB-080 `backendRequest` reads text, `BackendTransportError`, one GET retry, empty-body-tolerant deletes): PR #34.
 - Sprint 4 wave 1 (CB-032 dashboard error state and the dead quick action; CB-033 profile form seeding, `user_metadata.phone`, disabled Save, no "Change photo"; CB-036 30-day history, "last heard from", pause end dates; CB-037 request deadline, `PHONE_REQUIRED` routing, 429 copy, `AppState` refresh wiring): PR (#46). No screen-test framework was added: the logic lives in `hooks/useProfile.ts`, `hooks/useLovedOnes.ts`, `utils/receiverHistory.ts`, `utils/receiverPause.ts` and `services/sessionAutoRefresh.ts`, each with a plain vitest spec, which is how the other 14 mobile specs are written.
+- Sprint 4 wave 1 (CB-029 the single deep-link handler in `hooks/useDeepLinks.ts`, callback and reset-password driven by route params, the signup confirm-email state; CB-039 the cached `isAdmin` in `AuthContext` and `utils/sidebarMenu.ts`): PR #44. Touched four of the protected auth files under a narrow founder approval given on 2026-09-07 — see the per-file account in that PR description.

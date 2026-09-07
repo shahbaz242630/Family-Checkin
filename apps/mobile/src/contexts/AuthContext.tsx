@@ -2,20 +2,31 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '../services/supabase';
+import { getAdminMe } from '../services/backendApi';
+import { BackendRequestError } from '../services/backendErrors';
 
 interface AuthContextType {
   user: User | null;
   session: Session | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  /** True only for a signed-in admin; the drawer gates its admin entries on it (CB-039). */
+  isAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+/**
+ * `GET /auth/admin/me` answered once per signed-in user id. A sender who is not an admin is a 403, and
+ * caching it is what keeps the app from asking again on every mount (CB-039).
+ */
+const adminStatusCache = new Map<string, boolean>();
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
     // Get initial session
@@ -76,11 +87,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [session?.user?.id]);
 
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId) {
+      setIsAdmin(false);
+      return;
+    }
+
+    const cached = adminStatusCache.get(userId);
+    if (cached !== undefined) {
+      setIsAdmin(cached);
+      return;
+    }
+
+    let cancelled = false;
+    void getAdminMe()
+      .then(() => {
+        adminStatusCache.set(userId, true);
+        if (!cancelled) {
+          setIsAdmin(true);
+        }
+      })
+      .catch((error: unknown) => {
+        // 403 is the ordinary answer for a sender; remember it so this user never asks again. A transport
+        // failure is not remembered, so an admin who was offline is checked again next time.
+        if (error instanceof BackendRequestError && error.status === 403) {
+          adminStatusCache.set(userId, false);
+        }
+        if (!cancelled) {
+          setIsAdmin(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.user?.id]);
+
   const value: AuthContextType = {
     user,
     session,
     isLoading,
     isAuthenticated: !!session?.user,
+    isAdmin,
   };
 
   return (
