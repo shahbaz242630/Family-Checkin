@@ -60,4 +60,4 @@ BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and d
 ## History
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §29i (lines 2583–2666, foundation and provider decision), §29j (lines 2667–3036, compliance research, both paid-access gates, `PAST_DUE` grace, webhook idempotency, `appUserID` alignment, entitlement-config normalisation), and the 2026-05-18 emulator QA note (lines 3440–3472).
-- PRs: the archive records no PR numbers for the billing slices; they predate the numbered-PR flow that starts at #17. #34 (CB-026 constant-time webhook token comparison, 400 on payload errors). (#PR) (CB-042 webhook body schema; CB-084 alias removal).
+- PRs: the archive records no PR numbers for the billing slices; they predate the numbered-PR flow that starts at #17. #34 (CB-026 constant-time webhook token comparison, 400 on payload errors). #40 (CB-042 webhook body schema; CB-084 alias removal).
