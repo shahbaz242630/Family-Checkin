@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
-import { registerDeviceTokenBodySchema, type RegisterDeviceTokenBody } from '@nearby/shared-types';
+import { PUSH_PLATFORMS, registerDeviceTokenBodySchema, type RegisterDeviceTokenBody } from '@nearby/shared-types';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
 import { UsersService } from '../users/users.service';
 import { DomainError } from '../../shared/validation/domain-error';
@@ -8,13 +8,17 @@ import { ZodBodyPipe } from '../../shared/validation/zod-body.pipe';
 import type { PushPlatform } from './notifications.repository';
 import { INVALID_PUSH_TOKEN_CODE, INVALID_PUSH_TOKEN_MESSAGE, NotificationsService } from './notifications.service';
 
-/** Validated at the API boundary, not as a database enum, so a new platform is a code change only (CB-023). */
-const PUSH_PLATFORMS: readonly PushPlatform[] = ['ios', 'android', 'web'];
-const INVALID_PLATFORM_MESSAGE = `platform must be one of ${PUSH_PLATFORMS.join(', ')}`;
+/**
+ * Validated at the API boundary, not as a database enum, so a new platform is a code change only (CB-023).
+ * One list, shared with `registerDeviceTokenBodySchema`: this assignment stops the schema and the repository's
+ * `PushPlatform` from drifting apart (CB-042).
+ */
+const SUPPORTED_PUSH_PLATFORMS: readonly PushPlatform[] = PUSH_PLATFORMS;
+const INVALID_PLATFORM_MESSAGE = `platform must be one of ${SUPPORTED_PUSH_PLATFORMS.join(', ')}`;
 export const INVALID_PUSH_PLATFORM_CODE = 'INVALID_PUSH_PLATFORM';
 
 function parsePlatform(value: unknown): PushPlatform {
-  if (typeof value === 'string' && (PUSH_PLATFORMS as readonly string[]).includes(value)) {
+  if (typeof value === 'string' && (SUPPORTED_PUSH_PLATFORMS as readonly string[]).includes(value)) {
     return value as PushPlatform;
   }
   throw new BadRequestException({ code: INVALID_PUSH_PLATFORM_CODE, message: INVALID_PLATFORM_MESSAGE });
