@@ -16,7 +16,7 @@ class FakeSupabaseAuthService {
 }
 
 class FakeUsersService {
-  async upsertFromSupabaseIdentity() {
+  async findOrCreateFromSupabaseIdentity() {
     return {
       id: '61a5639c-c902-4950-9924-1a4d6db1e02d',
     };

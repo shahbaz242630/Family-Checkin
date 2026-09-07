@@ -54,6 +54,9 @@ Set up per `docs/EMULATOR_RUNBOOK.md`, then:
 
 ## Invariants — do not break
 
+- A sixth active backup contact is refused with `409 { code: "BACKUP_CONTACT_LIMIT_REACHED", message, limit: "5" }` (`backup-contact-policy.ts`), not the 500 it used to be; the limit itself lives in `MAX_ACTIVE_BACKUP_CONTACTS` and nothing else may spell it out (CB-042).
+- Create and update bodies are validated by `createBackupContactBodySchema` / `updateBackupContactBodySchema` from `@nearby/shared-types` before the service sees them: name, relationship and location instructions are bounded, the phone must be dialable (E.164 once a `+` is present), and update may omit the phone to keep the stored one. A mismatch is `400 VALIDATION_FAILED`.
+
 - Ownership is enforced in the query, never after the fetch: every read and write filters on the sender's `userId`, a non-deleted receiver, and `deletedAt: null`. A `null` return from the repository means "not found for this sender" and the controller must turn it into `404`, not an empty list.
 - The ≤5 cap is checked with `countActiveForReceiverForUser` before the insert, and `priorityOrder` is that count. Both the cap and the ordering depend on soft-deleted rows being excluded.
 - Delete is `deletedAt`, never a row removal. `findActiveByPhoneHash` and the escalation lookup both rely on `deletedAt: null` to stop alerting removed contacts.
@@ -78,4 +81,4 @@ Set up per `docs/EMULATOR_RUNBOOK.md`, then:
 
 - Archived handoff: `docs/archive/PROJECT_HANDOFF_2026-04-26_to_2026-09-06.md` §7 CRUD foundation (lines 1258–1334), §8 update/delete (1335–1400), §9 partial smoke (1401–1467), §28 DONE reply handling (2195–2233), §0a sprint 1 (793–804).
 - Acceptance: `docs/audits/2026-09-06/sprint1-acceptance.md` scenario S5 (HELP → backup alert → DONE, PASS).
-- PRs: #18 (CB-002 audit PII guard, which is what made HELP → backup work at all in production wiring; CB-003 real DI-graph boot spec), #19 (CB-010 English slice — backup bodies now render from `MessageCatalogService`), #20 (CB-006 guarded status writes, CB-008 cancellation), #27 (CB-018 the DONE wording is kept encrypted on `check_ins.resolutionNote`; CB-012 quiet `backup_contact_done` push to the sender).
+- PRs: (#PR) (CB-042 body schemas, the 409 backup-contact limit and `BACKUP_CONTACT_FIELD_INVALID`; CB-084 alias removal), #18 (CB-002 audit PII guard, which is what made HELP → backup work at all in production wiring; CB-003 real DI-graph boot spec), #19 (CB-010 English slice — backup bodies now render from `MessageCatalogService`), #20 (CB-006 guarded status writes, CB-008 cancellation), #27 (CB-018 the DONE wording is kept encrypted on `check_ins.resolutionNote`; CB-012 quiet `backup_contact_done` push to the sender).

@@ -4,6 +4,7 @@
  * per receiver per week (FR-SAF-07, BRD-4.5); "try later" retries the check-in two hours on (BRD-4.3).
  */
 import { ConsentStatus } from '@prisma/client';
+import { DomainError, InvalidRequestError } from '../../shared/validation/domain-error';
 
 /** Days a STOP keeps the phone off-limits for new consent invitations (CB-009). */
 export const OPT_OUT_COOLDOWN_DAYS = 7;
@@ -67,15 +68,25 @@ export function auditSafeErrorMessage(error: unknown, fallback = 'Unknown failur
  * A request the sender made that the receiver's state forbids. The controller turns these into an HTTP error
  * with `{ code, message, ...details }` so the app can explain the refusal instead of showing a generic failure.
  */
-export class ReceiverRequestError extends Error {
+export class ReceiverRequestError extends DomainError {
+  constructor(code: string, message: string, httpStatus: 409 | 429, details: Record<string, string> = {}) {
+    super(code, message, httpStatus, details);
+  }
+}
+
+/**
+ * 400: a field of the request is missing or too long. The body schemas in `@nearby/shared-types` reject these
+ * at the boundary; the service keeps its own checks so a caller that reaches it another way still gets a 400
+ * with a code rather than a 500 from Postgres or from libphonenumber (CB-042).
+ */
+export const RECEIVER_FIELD_INVALID_CODE = 'RECEIVER_FIELD_INVALID';
+
+export class ReceiverFieldError extends InvalidRequestError {
   constructor(
-    readonly code: string,
+    readonly field: string,
     message: string,
-    readonly httpStatus: 409 | 429,
-    readonly details: Record<string, string> = {},
   ) {
-    super(message);
-    this.name = 'ReceiverRequestError';
+    super(RECEIVER_FIELD_INVALID_CODE, message, { field });
   }
 }
 

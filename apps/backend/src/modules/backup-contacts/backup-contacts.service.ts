@@ -1,4 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
+import {
+  BackupContactFieldError,
+  BackupContactLimitReachedError,
+  MAX_ACTIVE_BACKUP_CONTACTS,
+} from './backup-contact-policy';
 import { ActorType } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
@@ -10,8 +15,6 @@ import type {
   UpdateBackupContactRecordInput,
 } from './backup-contacts.repository';
 import { BACKUP_CONTACTS_REPOSITORY } from './backup-contacts.tokens';
-
-const MAX_ACTIVE_BACKUP_CONTACTS = 5;
 
 export interface BackupContactSummary {
   id: string;
@@ -84,10 +87,12 @@ export class BackupContactsService {
       return null;
     }
     if (activeCount >= MAX_ACTIVE_BACKUP_CONTACTS) {
-      throw new Error('A receiver can have at most 5 active backup contacts');
+      throw new BackupContactLimitReachedError();
     }
 
-    const contact = await this.backupContactsRepository.createForReceiverForUser(this.toCreateRecordInput(normalized, activeCount));
+    const contact = await this.backupContactsRepository.createForReceiverForUser(
+      this.toCreateRecordInput(normalized, activeCount),
+    );
 
     if (!contact) {
       return null;
@@ -176,19 +181,19 @@ export class BackupContactsService {
     const locationInstructions = input.locationInstructions?.trim() || undefined;
 
     if (!userId) {
-      throw new Error('Sender user id is required');
+      throw new BackupContactFieldError('userId', 'Sender user id is required');
     }
     if (!receiverId) {
-      throw new Error('Receiver id is required');
+      throw new BackupContactFieldError('receiverId', 'Receiver id is required');
     }
     if (!name) {
-      throw new Error('Backup contact name is required');
+      throw new BackupContactFieldError('name', 'Backup contact name is required');
     }
     if (!phone) {
-      throw new Error('Backup contact phone is required');
+      throw new BackupContactFieldError('phone', 'Backup contact phone is required');
     }
     if (!relationshipToReceiver) {
-      throw new Error('Backup contact relationship is required');
+      throw new BackupContactFieldError('relationshipToReceiver', 'Backup contact relationship is required');
     }
 
     return {
@@ -212,19 +217,19 @@ export class BackupContactsService {
     const locationInstructions = input.locationInstructions?.trim() || undefined;
 
     if (!userId) {
-      throw new Error('Sender user id is required');
+      throw new BackupContactFieldError('userId', 'Sender user id is required');
     }
     if (!receiverId) {
-      throw new Error('Receiver id is required');
+      throw new BackupContactFieldError('receiverId', 'Receiver id is required');
     }
     if (!backupContactId) {
-      throw new Error('Backup contact id is required');
+      throw new BackupContactFieldError('backupContactId', 'Backup contact id is required');
     }
     if (!name) {
-      throw new Error('Backup contact name is required');
+      throw new BackupContactFieldError('name', 'Backup contact name is required');
     }
     if (!relationshipToReceiver) {
-      throw new Error('Backup contact relationship is required');
+      throw new BackupContactFieldError('relationshipToReceiver', 'Backup contact relationship is required');
     }
 
     return {
@@ -245,13 +250,13 @@ export class BackupContactsService {
     const backupContactId = input.backupContactId.trim();
 
     if (!userId) {
-      throw new Error('Sender user id is required');
+      throw new BackupContactFieldError('userId', 'Sender user id is required');
     }
     if (!receiverId) {
-      throw new Error('Receiver id is required');
+      throw new BackupContactFieldError('receiverId', 'Receiver id is required');
     }
     if (!backupContactId) {
-      throw new Error('Backup contact id is required');
+      throw new BackupContactFieldError('backupContactId', 'Backup contact id is required');
     }
 
     return {
@@ -272,7 +277,9 @@ export class BackupContactsService {
       phoneEncrypted: this.cryptoService.encrypt(normalizedPhone),
       phoneHash: this.cryptoService.hashForLookup(normalizedPhone),
       relationshipToReceiver: input.relationshipToReceiver,
-      locationInstructionsEncrypted: input.locationInstructions ? this.cryptoService.encrypt(input.locationInstructions) : undefined,
+      locationInstructionsEncrypted: input.locationInstructions
+        ? this.cryptoService.encrypt(input.locationInstructions)
+        : undefined,
       priorityOrder,
     };
   }
@@ -284,7 +291,9 @@ export class BackupContactsService {
       backupContactId: input.backupContactId,
       nameEncrypted: this.cryptoService.encrypt(input.name),
       relationshipToReceiver: input.relationshipToReceiver,
-      locationInstructionsEncrypted: input.locationInstructions ? this.cryptoService.encrypt(input.locationInstructions) : null,
+      locationInstructionsEncrypted: input.locationInstructions
+        ? this.cryptoService.encrypt(input.locationInstructions)
+        : null,
     };
 
     if (input.phone) {

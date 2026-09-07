@@ -9,6 +9,8 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { EscalateSenderRequestedBackupResult } from '../escalations/escalations.service';
 import { ReceiverScheduleValidationError } from '../../shared/schedule/receiver-schedule';
+import { transformBodyThroughRoute } from '../../shared/validation/route-body-metadata';
+import { BODY_VALIDATION_FAILED_CODE, type BodyValidationFailure } from '../../shared/validation/zod-body.pipe';
 import {
   CheckInInProgressError,
   ConsentResendLimitError,
@@ -18,6 +20,16 @@ import {
 } from './receiver-policy';
 import { ReceiversController } from './receivers.controller';
 import { PERSONAL_NOTE_TOO_LONG_MESSAGE } from './receivers.service';
+
+/** The error a synchronous call threw, or null. */
+function thrownBy(operation: () => unknown): unknown {
+  try {
+    operation();
+    return null;
+  } catch (error) {
+    return error;
+  }
+}
 
 class FakeSupabaseAuthService {
   async verifyAccessToken(accessToken: string) {
@@ -33,7 +45,7 @@ class FakeSupabaseAuthService {
 }
 
 class FakeUsersService {
-  async upsertFromSupabaseIdentity() {
+  async findOrCreateFromSupabaseIdentity() {
     return {
       id: '61a5639c-c902-4950-9924-1a4d6db1e02d',
     };
@@ -732,20 +744,10 @@ describe('ReceiversController', () => {
     expect(receiverConsentService.requestInput).toBeNull();
   });
 
-  it('rejects missing receiver enum fields as a bad request', async () => {
-    const receiversService = new FakeReceiversService();
-    const receiverConsentService = new FakeReceiverConsentService();
-    const controller = new ReceiversController(
-      new FakeSupabaseAuthService() as never,
-      new FakeUsersService() as never,
-      receiversService as never,
-      receiverConsentService as never,
-      undefined,
-      new FakeBillingService(true) as never,
-    );
-
-    await expect(
-      controller.create('Bearer access-token', 'Nearby Mobile/1.0', '203.0.113.10', {
+  it('rejects a create body with missing enum fields before the handler runs (CB-042)', () => {
+    // The route's own pipe, so removing @Body(new ZodBodyPipe(createReceiverBodySchema)) fails this spec.
+    const error = thrownBy(() =>
+      transformBodyThroughRoute(ReceiversController, 'create', {
         name: 'Fatima Parent',
         phone: '+971501234567',
         countryCode: 'AE',
@@ -756,9 +758,40 @@ describe('ReceiversController', () => {
         scheduleFrequency: 'daily',
         scheduleTimeWindow: { start: '09:00', end: '11:00' },
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
-    expect(receiversService.createInput).toBeNull();
-    expect(receiverConsentService.requestInput).toBeNull();
+    );
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    const response = (error as BadRequestException).getResponse() as BodyValidationFailure;
+    expect(response.code).toBe(BODY_VALIDATION_FAILED_CODE);
+    expect(response.issues.map((issue) => issue.path).sort()).toEqual(['relationshipType', 'techProfile']);
+  });
+
+  it("answers 4xx with a code for primaryChannel 'EMAIL' rather than a 500 (CB-042 acceptance)", () => {
+    const error = thrownBy(() =>
+      transformBodyThroughRoute(ReceiversController, 'create', { ...createBody, primaryChannel: 'EMAIL' }),
+    );
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getStatus()).toBe(400);
+    const response = (error as BadRequestException).getResponse() as BodyValidationFailure;
+    expect(response.code).toBe(BODY_VALIDATION_FAILED_CODE);
+    expect(response.issues.map((issue) => issue.path)).toEqual(['primaryChannel']);
+  });
+
+  it("answers 4xx with a code for fallbackChannels: 'SMS', a string where the array belongs (CB-042 acceptance)", () => {
+    for (const method of ['create', 'update'] as const) {
+      const error = thrownBy(() =>
+        transformBodyThroughRoute(ReceiversController, method, { ...createBody, fallbackChannels: 'SMS' }),
+      );
+
+      expect(error, method).toBeInstanceOf(BadRequestException);
+      const response = (error as BadRequestException).getResponse() as BodyValidationFailure;
+      expect(response.code, method).toBe(BODY_VALIDATION_FAILED_CODE);
+      expect(
+        response.issues.map((issue) => issue.path),
+        method,
+      ).toEqual(['fallbackChannels']);
+    }
   });
 
   it('maps receiver service validation failures to bad requests', async () => {

@@ -47,6 +47,8 @@ export default defineConfig({
         '**/*.spec.ts',
         '**/*.test.*',
         '**/node_modules/**',
+        // Build output of packages/shared-types; the TypeScript sources next to it are what is measured.
+        'packages/shared-types/dist/**',
         // Process entry points and wiring modules exercised only by booting the app.
         'apps/backend/src/main.ts',
         'apps/backend/src/**/*.module.ts',

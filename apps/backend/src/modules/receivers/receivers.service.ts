@@ -21,6 +21,7 @@ import {
 import {
   CheckInInProgressError,
   consentResendAllowedAt,
+  ReceiverFieldError,
   MAX_RESOLUTION_NOTE_LENGTH,
   OptOutCooldownError,
   ReceiverAlreadyMonitoredError,
@@ -404,7 +405,7 @@ export class ReceiversService {
     const checkInId = input.checkInId.trim();
     const note = input.note?.trim() || undefined;
     if (note && Array.from(note).length > MAX_RESOLUTION_NOTE_LENGTH) {
-      throw new Error(RESOLUTION_NOTE_TOO_LONG_MESSAGE);
+      throw new ReceiverFieldError('note', RESOLUTION_NOTE_TOO_LONG_MESSAGE);
     }
     const receiverBeforeUpdate = await this.receiversRepository.findForUserById({ userId, receiverId });
     const actionableStatuses: CheckInStatus[] = [
@@ -746,32 +747,32 @@ export class ReceiversService {
     const scheduleFrequency = input.scheduleFrequency.trim();
 
     if (!input.userId.trim()) {
-      throw new Error('Sender user id is required');
+      throw new ReceiverFieldError('userId', 'Sender user id is required');
     }
     if (!name) {
-      throw new Error('Receiver name is required');
+      throw new ReceiverFieldError('name', 'Receiver name is required');
     }
     if (!phone) {
-      throw new Error('Receiver phone is required');
+      throw new ReceiverFieldError('phone', 'Receiver phone is required');
     }
     if (!input.primaryChannel) {
-      throw new Error('Receiver primary channel is required');
+      throw new ReceiverFieldError('primaryChannel', 'Receiver primary channel is required');
     }
     if (!countryCode) {
-      throw new Error('Receiver country code is required');
+      throw new ReceiverFieldError('countryCode', 'Receiver country code is required');
     }
     if (!language) {
-      throw new Error('Receiver language is required');
+      throw new ReceiverFieldError('language', 'Receiver language is required');
     }
     if (!timezone) {
-      throw new Error('Receiver timezone is required');
+      throw new ReceiverFieldError('timezone', 'Receiver timezone is required');
     }
     if (!scheduleFrequency) {
-      throw new Error('Receiver schedule frequency is required');
+      throw new ReceiverFieldError('scheduleFrequency', 'Receiver schedule frequency is required');
     }
     const personalNote = input.personalNote?.trim() || undefined;
     if (personalNote && Array.from(personalNote).length > MAX_PERSONAL_NOTE_LENGTH) {
-      throw new Error(PERSONAL_NOTE_TOO_LONG_MESSAGE);
+      throw new ReceiverFieldError('personalNote', PERSONAL_NOTE_TOO_LONG_MESSAGE);
     }
     // The scheduler evaluates these on every tick; an invalid value is rejected here rather than stalling
     // every receiver's check-in later (CB-004).
@@ -821,28 +822,28 @@ export class ReceiversService {
     const scheduleFrequency = input.scheduleFrequency.trim();
 
     if (!userId) {
-      throw new Error('Sender user id is required');
+      throw new ReceiverFieldError('userId', 'Sender user id is required');
     }
     if (!receiverId) {
-      throw new Error('Receiver id is required');
+      throw new ReceiverFieldError('receiverId', 'Receiver id is required');
     }
     if (!name) {
-      throw new Error('Receiver name is required');
+      throw new ReceiverFieldError('name', 'Receiver name is required');
     }
     if (!input.primaryChannel) {
-      throw new Error('Receiver primary channel is required');
+      throw new ReceiverFieldError('primaryChannel', 'Receiver primary channel is required');
     }
     if (!countryCode) {
-      throw new Error('Receiver country code is required');
+      throw new ReceiverFieldError('countryCode', 'Receiver country code is required');
     }
     if (!language) {
-      throw new Error('Receiver language is required');
+      throw new ReceiverFieldError('language', 'Receiver language is required');
     }
     if (!timezone) {
-      throw new Error('Receiver timezone is required');
+      throw new ReceiverFieldError('timezone', 'Receiver timezone is required');
     }
     if (!scheduleFrequency) {
-      throw new Error('Receiver schedule frequency is required');
+      throw new ReceiverFieldError('scheduleFrequency', 'Receiver schedule frequency is required');
     }
     assertSupportedTimeZone(timezone);
     const scheduleTimeWindow = parseScheduleTimeWindow(input.scheduleTimeWindow);

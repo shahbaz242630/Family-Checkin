@@ -57,7 +57,7 @@ function fixture(webhookToken: string | null = 'revenuecat-webhook-token') {
       },
     } as unknown as SupabaseAuthService,
     {
-      upsertFromSupabaseIdentity: async () => {
+      findOrCreateFromSupabaseIdentity: async () => {
         calls.push({ upsert: true });
         return sender;
       },

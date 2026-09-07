@@ -10,6 +10,13 @@ import type {
   DeleteBackupContactRecordInput,
   UpdateBackupContactRecordInput,
 } from './backup-contacts.repository';
+import { HttpException } from '@nestjs/common';
+import { toHttpFailure } from '../../shared/validation/domain-error.interceptor';
+import {
+  BACKUP_CONTACT_LIMIT_REACHED_CODE,
+  BackupContactLimitReachedError,
+  MAX_ACTIVE_BACKUP_CONTACTS,
+} from './backup-contact-policy';
 import { BackupContactsService } from './backup-contacts.service';
 
 const masterKey = Buffer.from('0123456789abcdef0123456789abcdef', 'utf8');
@@ -25,7 +32,10 @@ class InMemoryBackupContactsRepository implements BackupContactsRepository {
     return this.contacts.find((contact) => contact.phoneHash === phoneHash && !contact.deletedAt) ?? null;
   }
 
-  async findManyForReceiverForUser(input: { userId: string; receiverId: string }): Promise<BackupContactRecord[] | null> {
+  async findManyForReceiverForUser(input: {
+    userId: string;
+    receiverId: string;
+  }): Promise<BackupContactRecord[] | null> {
     if (!this.receiverExists) return null;
     return this.contacts.filter((contact) => contact.receiverId === input.receiverId && !contact.deletedAt);
   }
@@ -57,7 +67,8 @@ class InMemoryBackupContactsRepository implements BackupContactsRepository {
     if (!this.receiverExists) return null;
     this.lastUpdateInput = input;
     const index = this.contacts.findIndex(
-      (contact) => contact.id === input.backupContactId && contact.receiverId === input.receiverId && !contact.deletedAt,
+      (contact) =>
+        contact.id === input.backupContactId && contact.receiverId === input.receiverId && !contact.deletedAt,
     );
     if (index === -1) return null;
 
@@ -78,11 +89,15 @@ class InMemoryBackupContactsRepository implements BackupContactsRepository {
     if (!this.receiverExists) return null;
     this.lastDeleteInput = input;
     const index = this.contacts.findIndex(
-      (contact) => contact.id === input.backupContactId && contact.receiverId === input.receiverId && !contact.deletedAt,
+      (contact) =>
+        contact.id === input.backupContactId && contact.receiverId === input.receiverId && !contact.deletedAt,
     );
     if (index === -1) return null;
 
-    const deleted: BackupContactRecord = { ...(this.contacts[index] as BackupContactRecord), deletedAt: input.deletedAt };
+    const deleted: BackupContactRecord = {
+      ...(this.contacts[index] as BackupContactRecord),
+      deletedAt: input.deletedAt,
+    };
     this.contacts[index] = deleted;
     return deleted;
   }
@@ -138,7 +153,9 @@ describe('BackupContactsService', () => {
     });
     expect(crypto.decrypt(repository.lastCreateInput?.nameEncrypted ?? '')).toBe('Fatima Backup');
     expect(crypto.decrypt(repository.lastCreateInput?.phoneEncrypted ?? '')).toBe('+971507654321');
-    expect(crypto.decrypt(repository.lastCreateInput?.locationInstructionsEncrypted ?? '')).toBe('Building 4, call before visiting');
+    expect(crypto.decrypt(repository.lastCreateInput?.locationInstructionsEncrypted ?? '')).toBe(
+      'Building 4, call before visiting',
+    );
     expect(audit.events).toEqual([
       {
         entityType: 'backup_contact',
@@ -173,7 +190,11 @@ describe('BackupContactsService', () => {
         createdAt: new Date('2026-04-28T10:00:00.000Z'),
       },
     ];
-    const service = new BackupContactsService(repository, crypto, new InMemoryAuditService() as unknown as AuditService);
+    const service = new BackupContactsService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+    );
 
     const contacts = await service.listForReceiver({
       userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
@@ -222,10 +243,10 @@ describe('BackupContactsService', () => {
     ).resolves.toBeNull();
   });
 
-  it('limits each receiver to five active backup contacts', async () => {
+  it('limits each receiver to five active backup contacts, refusing the sixth with a code (CB-042 acceptance)', async () => {
     const repository = new InMemoryBackupContactsRepository();
     const crypto = new CryptoService(masterKey);
-    repository.contacts = Array.from({ length: 5 }, (_, index) => ({
+    repository.contacts = Array.from({ length: MAX_ACTIVE_BACKUP_CONTACTS }, (_, index) => ({
       id: `contact-${index}`,
       receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
       nameEncrypted: crypto.encrypt(`Backup ${index}`),
@@ -235,17 +256,40 @@ describe('BackupContactsService', () => {
       priorityOrder: index,
       createdAt: new Date('2026-04-28T10:00:00.000Z'),
     }));
-    const service = new BackupContactsService(repository, crypto, new InMemoryAuditService() as unknown as AuditService);
+    const service = new BackupContactsService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+    );
 
-    await expect(
-      service.createForReceiver({
+    const error = await service
+      .createForReceiver({
         userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
         receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
         name: 'Too Many',
         phone: '+971507654321',
         relationshipToReceiver: 'Cousin',
-      }),
-    ).rejects.toThrow('A receiver can have at most 5 active backup contacts');
+      })
+      .then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+
+    expect(error).toBeInstanceOf(BackupContactLimitReachedError);
+    expect((error as BackupContactLimitReachedError).message).toBe(
+      'A receiver can have at most 5 active backup contacts',
+    );
+    // A rule the sender broke, so the API answers 409 with a code the app can explain — not the 500 this used
+    // to be when it was a plain Error (CB-042).
+    const failure = toHttpFailure(error);
+    expect(failure).toBeInstanceOf(HttpException);
+    expect((failure as HttpException).getStatus()).toBe(409);
+    expect((failure as HttpException).getResponse()).toEqual({
+      code: BACKUP_CONTACT_LIMIT_REACHED_CODE,
+      message: 'A receiver can have at most 5 active backup contacts',
+      limit: '5',
+    });
+    expect(repository.lastCreateInput).toBeNull();
   });
 
   it('updates encrypted backup contact fields and audits safe metadata', async () => {
@@ -330,7 +374,11 @@ describe('BackupContactsService', () => {
         createdAt: new Date('2026-04-28T10:00:00.000Z'),
       },
     ];
-    const service = new BackupContactsService(repository, crypto, new InMemoryAuditService() as unknown as AuditService);
+    const service = new BackupContactsService(
+      repository,
+      crypto,
+      new InMemoryAuditService() as unknown as AuditService,
+    );
 
     const contact = await service.updateForReceiver({
       userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
@@ -376,7 +424,12 @@ describe('BackupContactsService', () => {
 
     expect(deleted?.id).toBe('9f5d197a-c358-48f1-9a79-e4c9686b9dd4');
     expect(repository.lastDeleteInput?.deletedAt).toBeInstanceOf(Date);
-    expect(await repository.countActiveForReceiverForUser({ userId: 'user-1', receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb' })).toBe(0);
+    expect(
+      await repository.countActiveForReceiverForUser({
+        userId: 'user-1',
+        receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      }),
+    ).toBe(0);
     expect(audit.events).toMatchObject([
       {
         entityType: 'backup_contact',

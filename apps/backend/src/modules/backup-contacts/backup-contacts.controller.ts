@@ -11,25 +11,16 @@ import {
   Post,
   UnauthorizedException,
 } from '@nestjs/common';
+import {
+  createBackupContactBodySchema,
+  updateBackupContactBodySchema,
+  type CreateBackupContactBody,
+  type UpdateBackupContactBody,
+} from '@nearby/shared-types';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
 import { UsersService } from '../users/users.service';
+import { ZodBodyPipe } from '../../shared/validation/zod-body.pipe';
 import { BackupContactsService } from './backup-contacts.service';
-
-interface CreateBackupContactBody {
-  name?: string;
-  phone?: string;
-  phoneCountry?: string;
-  relationshipToReceiver?: string;
-  locationInstructions?: string;
-}
-
-interface UpdateBackupContactBody {
-  name?: string;
-  phone?: string;
-  phoneCountry?: string;
-  relationshipToReceiver?: string;
-  locationInstructions?: string;
-}
 
 @Controller('receivers/:receiverId/backup-contacts')
 export class BackupContactsController {
@@ -46,7 +37,7 @@ export class BackupContactsController {
   async list(@Headers('authorization') authorization: string | undefined, @Param('receiverId') receiverId: string) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const backupContacts = await this.backupContactsService.listForReceiver({
       userId: sender.id,
       receiverId,
@@ -65,18 +56,18 @@ export class BackupContactsController {
     @Headers('x-forwarded-for') forwardedFor: string | undefined,
     @Headers('user-agent') userAgent: string | undefined,
     @Param('receiverId') receiverId: string,
-    @Body() body: CreateBackupContactBody,
+    @Body(new ZodBodyPipe(createBackupContactBodySchema)) body: CreateBackupContactBody,
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const backupContact = await this.backupContactsService.createForReceiver({
       userId: sender.id,
       receiverId,
-      name: body.name ?? '',
-      phone: body.phone ?? '',
+      name: body.name,
+      phone: body.phone,
       phoneCountry: body.phoneCountry,
-      relationshipToReceiver: body.relationshipToReceiver ?? '',
+      relationshipToReceiver: body.relationshipToReceiver,
       locationInstructions: body.locationInstructions,
       ipAddress: this.firstForwardedIp(forwardedFor),
       userAgent,
@@ -96,19 +87,19 @@ export class BackupContactsController {
     @Headers('user-agent') userAgent: string | undefined,
     @Param('receiverId') receiverId: string,
     @Param('backupContactId') backupContactId: string,
-    @Body() body: UpdateBackupContactBody,
+    @Body(new ZodBodyPipe(updateBackupContactBodySchema)) body: UpdateBackupContactBody,
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const backupContact = await this.backupContactsService.updateForReceiver({
       userId: sender.id,
       receiverId,
       backupContactId,
-      name: body.name ?? '',
+      name: body.name,
       phone: body.phone,
       phoneCountry: body.phoneCountry,
-      relationshipToReceiver: body.relationshipToReceiver ?? '',
+      relationshipToReceiver: body.relationshipToReceiver,
       locationInstructions: body.locationInstructions,
       ipAddress: this.firstForwardedIp(forwardedFor),
       userAgent,
@@ -131,7 +122,7 @@ export class BackupContactsController {
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const backupContact = await this.backupContactsService.deleteForReceiver({
       userId: sender.id,
       receiverId,

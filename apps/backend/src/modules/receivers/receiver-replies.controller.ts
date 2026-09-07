@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Headers, Inject, Ip, Post, Query } from '@nestjs/common';
-import type { Channel, ConsentStatus } from '@prisma/client';
+import type { ConsentStatus } from '@prisma/client';
+import { fakeInboundReceiverReplyBodySchema, type FakeInboundReceiverReplyBody } from '@nearby/shared-types';
 import { assertBearerSecret } from '../../shared/auth/bearer-secret';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import {
@@ -7,14 +8,8 @@ import {
   FakeOutboundRecorder,
   type FakeOutboundRecord,
 } from '../channels/fake-outbound-recorder';
+import { ZodBodyPipe } from '../../shared/validation/zod-body.pipe';
 import { ReceiverReplyService } from './receiver-reply.service';
-
-interface FakeInboundReceiverReplyBody {
-  fromPhone: string;
-  channel: Channel;
-  body: string;
-  providerMessageId?: string;
-}
 
 interface FakeInboundReceiverReplyResponse {
   ok: true;
@@ -53,7 +48,7 @@ export class ReceiverRepliesController {
   @Post('fake')
   async handleFakeInboundReply(
     @Headers('authorization') authorization: string | undefined,
-    @Body() body: FakeInboundReceiverReplyBody,
+    @Body(new ZodBodyPipe(fakeInboundReceiverReplyBodySchema)) body: FakeInboundReceiverReplyBody,
     @Ip() ipAddress?: string,
     @Headers('user-agent') userAgent?: string,
   ): Promise<FakeInboundReceiverReplyResponse> {

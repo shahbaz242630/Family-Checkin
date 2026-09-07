@@ -78,15 +78,6 @@ export class UsersService {
   }
 
   /**
-   * @deprecated Kept for the controllers that still spell the read path this way (receivers, backup contacts,
-   * billing, notifications, account); it is `findOrCreateFromSupabaseIdentity` and performs no upsert (CB-024).
-   * Only `POST /auth/sync-user` upserts, through `syncProfileFromSupabaseIdentity`.
-   */
-  async upsertFromSupabaseIdentity(input: UpsertSupabaseSenderInput): Promise<SenderRecord> {
-    return this.findOrCreateFromSupabaseIdentity(input);
-  }
-
-  /**
    * The name receiver-facing copy uses for the sender (`senderDisplayName`): the stored display name, or
    * `fallback` when the sender is unknown, deleted or never gave one. Callers that speak to a backup contact pass
    * their own neutral wording. Never place the result in audit metadata (CB-010).
