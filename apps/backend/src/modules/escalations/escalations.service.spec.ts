@@ -1,5 +1,6 @@
+import { Logger } from '@nestjs/common';
 import { ActorType, Channel, CheckInStatus, EscalationResult } from '@prisma/client';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import { FakeChannelProvider } from '../channels/fake-channel.provider';
 import type { ChannelProvider, ChannelSendResult, TemplatedMessage, VoiceScript } from '../channels/channel-provider';
@@ -1409,3 +1410,135 @@ function backupContactFixture(
     createdAt: input.createdAt,
   };
 }
+
+/** Every structured record the service handed to the Nest logger. */
+function captureEscalationLogs() {
+  const records: Record<string, unknown>[] = [];
+  const collect = (message: unknown) => {
+    records.push(typeof message === 'object' && message !== null ? (message as Record<string, unknown>) : { message });
+  };
+
+  vi.spyOn(Logger.prototype, 'error').mockImplementation(collect);
+  vi.spyOn(Logger.prototype, 'warn').mockImplementation(collect);
+
+  return {
+    records,
+    of: (event: string) => records.filter((record) => record.event === event),
+    json: () => JSON.stringify(records),
+  };
+}
+
+describe('EscalationsService logs every failure it swallows (CB-047)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('logs each channel a backup alert could not go out on, without the contact phone or name', async () => {
+    const logs = captureEscalationLogs();
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const { auditService } = createRealAuditService();
+    repository.backupContacts = [
+      backupContactFixture(crypto, {
+        id: 'backup-contact-first',
+        phone: '+971502222222',
+        priorityOrder: 1,
+        createdAt: new Date('2026-04-29T08:20:00.000Z'),
+      }),
+    ];
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([new AlwaysFailingSmsProvider(), new SendFailingWhatsappProvider()]),
+      auditService,
+      () => AT,
+    );
+
+    const result = await service.escalateHelpResponse({
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      sourceChannel: Channel.SMS,
+    });
+
+    expect(result.failed).toBe(1);
+    const channelFailures = logs.of('escalation.backup_alert_channel_failed');
+    expect(channelFailures.length).toBeGreaterThan(0);
+    expect(channelFailures[0]).toMatchObject({
+      backupContactId: 'backup-contact-first',
+      errorName: 'Error',
+    });
+    expect(logs.json()).not.toContain('+971502222222');
+    expect(logs.json()).not.toContain('First Backup');
+  });
+
+  it('logs a backup alert that could not even be prepared', async () => {
+    const logs = captureEscalationLogs();
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const { auditService } = createRealAuditService();
+    repository.backupContacts = [
+      {
+        ...backupContactFixture(crypto, {
+          id: 'backup-contact-first',
+          phone: '+971502222222',
+          priorityOrder: 1,
+          createdAt: new Date('2026-04-29T08:20:00.000Z'),
+        }),
+        // Ciphertext this key cannot open: decryption throws before any provider is reached.
+        phoneEncrypted: 'not-a-valid-ciphertext',
+      },
+    ];
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      new ChannelRouterService([new FakeChannelProvider(Channel.SMS, { now: () => AT })]),
+      auditService,
+      () => AT,
+    );
+
+    const result = await service.escalateHelpResponse({
+      receiverId: 'receiver-1',
+      checkInId: 'check-in-1',
+      sourceChannel: Channel.SMS,
+    });
+
+    expect(result.failed).toBe(1);
+    expect(logs.of('escalation.backup_alert_unreachable')[0]).toMatchObject({
+      backupContactId: 'backup-contact-first',
+    });
+    expect(logs.json()).not.toContain('+971502222222');
+  });
+
+  it('logs the sender siren push failure and the voice fallback failure that follows it', async () => {
+    const logs = captureEscalationLogs();
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryEscalationsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const service = new EscalationsService(
+      repository,
+      crypto,
+      // No voice provider registered, so the fallback throws too and both catch paths run.
+      new ChannelRouterService([]),
+      auditService,
+      new ThrowingNotificationsService() as unknown as NotificationsService,
+      () => AT,
+    );
+
+    await service.notifySenderOfMissedCheckIn({ receiverId: 'receiver-1', checkInId: 'check-in-1' });
+
+    expect(audit.events.map((event) => event.action)).toEqual(['sender_push.failed', 'sender_voice_fallback.failed']);
+    expect(logs.of('sender_push.failed')[0]).toMatchObject({
+      checkInId: 'check-in-1',
+      receiverId: 'receiver-1',
+      reason: 'cascade_exhausted',
+      error: 'push gateway unreachable',
+    });
+    expect(logs.of('sender_voice_fallback.failed')[0]).toMatchObject({
+      checkInId: 'check-in-1',
+      receiverId: 'receiver-1',
+      reason: 'cascade_exhausted',
+      error: 'No channel provider registered for VOICE',
+    });
+    expect(logs.json()).not.toContain('+971509999999');
+  });
+});

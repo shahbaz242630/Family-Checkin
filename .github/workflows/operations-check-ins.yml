@@ -50,3 +50,20 @@ jobs:
         env:
           OPERATIONS_CHECK_INS_RUN_URL: ${{ secrets.OPERATIONS_CHECK_INS_RUN_URL }}
           OPERATIONS_CRON_SECRET: ${{ secrets.OPERATIONS_CRON_SECRET }}
+
+      # Expo answers a push with a ticket and reports the delivery receipt later, so the receipts are drained on
+      # their own schedule instead of only at the start of the next send: without this a `DeviceNotRegistered`
+      # token stays active through a quiet period (CB-085). `always()` so a failed tick does not leave the
+      # receipts unread; the step itself is a no-op until the URL secret exists.
+      - name: Run operations push receipts
+        if: always()
+        run: |
+          if [ -z "$OPERATIONS_PUSH_RECEIPTS_RUN_URL" ] || [ -z "$OPERATIONS_CRON_SECRET" ]; then
+            echo "::notice::Operations push-receipt secrets are not configured; skipping receipt run."
+            exit 0
+          fi
+
+          npm --prefix apps/backend run operations:push-receipts
+        env:
+          OPERATIONS_PUSH_RECEIPTS_RUN_URL: ${{ secrets.OPERATIONS_PUSH_RECEIPTS_RUN_URL }}
+          OPERATIONS_CRON_SECRET: ${{ secrets.OPERATIONS_CRON_SECRET }}

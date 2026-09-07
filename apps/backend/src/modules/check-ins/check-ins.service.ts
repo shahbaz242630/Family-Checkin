@@ -1,14 +1,16 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ActorType, Channel, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { BillingService } from '../billing/billing.service';
 import { ChannelRouterService } from '../channels/channel-router.service';
+import { TwilioRequestError } from '../channels/twilio-request-error';
 import { renderingAuditMetadata, type MessageRendering } from '../channels/message-catalog.service';
 import { NEUTRAL_RECEIVER_GREETING_NAME, NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { EscalationsService } from '../escalations/escalations.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { UsersService } from '../users/users.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
+import { errorLogFields, providerErrorCodeOf } from '../../shared/logging';
 import { CheckInAlreadyScheduledError } from './check-ins.repository';
 import type {
   CheckInAttemptRecord,
@@ -106,8 +108,19 @@ const CHECK_IN_LATER_ATTEMPT_TEMPLATE = 'checkin_retry';
 /** Voice attempts play the same script whatever their position in the cascade. */
 const CHECK_IN_VOICE_SCRIPT = 'checkin_daily_voice';
 
+/**
+ * `twilio_<code>` (for example `twilio_21606`) when the provider rejected the send, otherwise the generic
+ * `provider_send_failed` (CB-047). It is written to `check_in_attempts.failureReason` and to the audit row, so an
+ * operator reading either can tell an unreachable number from a sender-id problem without opening the logs.
+ */
+function providerFailureReason(error: unknown): string {
+  return error instanceof TwilioRequestError ? error.failureReason : PROVIDER_SEND_FAILED;
+}
+
 @Injectable()
 export class CheckInsService {
+  private readonly logger = new Logger(CheckInsService.name);
+
   constructor(
     @Inject(CHECK_INS_REPOSITORY) private readonly checkInsRepository: CheckInsRepository,
     @Inject(CryptoService)
@@ -257,8 +270,17 @@ export class CheckInsService {
         }
         result.timedOut += 1;
         await this.advanceCascade(this.toCheckInRef(attempt), now, result);
-      } catch {
+      } catch (error) {
         result.failed += 1;
+        this.logger.error({
+          message: 'Timed-out attempt could not be advanced',
+          event: 'check_in.cascade_timeout_failed',
+          checkInId: attempt.checkIn.id,
+          attemptId: attempt.id,
+          attemptNumber: attempt.attemptNumber,
+          channel: attempt.channel,
+          ...errorLogFields(error),
+        });
       }
     }
 
@@ -287,8 +309,17 @@ export class CheckInsService {
         if (await this.flagIfExhausted(this.toCheckInRef(attempt))) {
           result.needsAttention += 1;
         }
-      } catch {
+      } catch (error) {
         result.failed += 1;
+        this.logger.error({
+          message: 'Due attempt could not be processed',
+          event: 'check_in.cascade_attempt_failed',
+          checkInId: attempt.checkIn.id,
+          attemptId: attempt.id,
+          attemptNumber: attempt.attemptNumber,
+          channel: attempt.channel,
+          ...errorLogFields(error),
+        });
       }
     }
 
@@ -484,7 +515,14 @@ export class CheckInsService {
         actorType: ActorType.SYSTEM,
         metadata: { ...metadata, attempted: result.attempted, sent: result.sent, failed: result.failed },
       });
-    } catch {
+    } catch (error) {
+      this.logger.warn({
+        message: 'Schedule-invalid push to the sender failed',
+        event: 'sender_push.failed',
+        receiverId: invalid.receiverId,
+        reason: SCHEDULE_INVALID,
+        ...errorLogFields(error),
+      });
       await this.auditService.append({
         entityType: 'receiver',
         entityId: invalid.receiverId,
@@ -513,12 +551,27 @@ export class CheckInsService {
     let providerResult: { providerId: string; providerStatus: string; rendering?: MessageRendering };
     try {
       providerResult = await this.sendInitialCheckIn(receiver);
-    } catch {
+    } catch (error) {
+      // A Twilio rejection is recorded as what it actually was (`twilio_21606`), not as a generic
+      // `provider_send_failed`, so the operator can tell a bad number from a sender-id problem (CB-047).
+      const failureReason = providerFailureReason(error);
+      const providerErrorCode = providerErrorCodeOf(error);
+      this.logger.error({
+        message: 'First check-in attempt could not be sent',
+        event: 'check_in.attempt_failed',
+        checkInId,
+        receiverId: receiver.id,
+        attemptId: attempt?.id,
+        attemptNumber: attempt?.attemptNumber ?? 1,
+        channel: receiver.primaryChannel,
+        failureReason,
+        ...errorLogFields(error),
+      });
       if (attempt) {
         await this.checkInsRepository.markAttemptFailed({
           attemptId: attempt.id,
           completedAt: now,
-          failureReason: PROVIDER_SEND_FAILED,
+          failureReason,
         });
       }
       await this.auditAttemptFailed({
@@ -526,6 +579,8 @@ export class CheckInsService {
         receiverId: receiver.id,
         channel: receiver.primaryChannel,
         attemptNumber: attempt?.attemptNumber ?? 1,
+        failureReason,
+        providerErrorCode: providerErrorCode === undefined ? undefined : String(providerErrorCode),
       });
       await this.flagIfExhausted({ checkInId, receiverId: receiver.id });
       return 'failed';
@@ -672,17 +727,33 @@ export class CheckInsService {
 
     try {
       await this.sendAttempt(attempt, now);
-    } catch {
+    } catch (error) {
+      // Same as the first attempt: the Twilio code becomes the attempt's `failureReason` (CB-047).
+      const failureReason = providerFailureReason(error);
+      const providerErrorCode = providerErrorCodeOf(error);
+      this.logger.error({
+        message: 'Cascade check-in attempt could not be sent',
+        event: 'check_in.attempt_failed',
+        checkInId: attempt.checkIn.id,
+        receiverId: attempt.checkIn.receiverId,
+        attemptId: attempt.id,
+        attemptNumber: attempt.attemptNumber,
+        channel: attempt.channel,
+        failureReason,
+        ...errorLogFields(error),
+      });
       await this.checkInsRepository.markAttemptFailed({
         attemptId: attempt.id,
         completedAt: now,
-        failureReason: PROVIDER_SEND_FAILED,
+        failureReason,
       });
       await this.auditAttemptFailed({
         checkInId: attempt.checkIn.id,
         receiverId: attempt.checkIn.receiverId,
         channel: attempt.channel,
         attemptNumber: attempt.attemptNumber,
+        failureReason,
+        providerErrorCode: providerErrorCode === undefined ? undefined : String(providerErrorCode),
       });
       return 'failed';
     }
@@ -825,9 +896,17 @@ export class CheckInsService {
         receiverId: input.receiverId,
         checkInId: input.checkInId,
       });
-    } catch {
+    } catch (error) {
       // Push and voice failures are audited inside EscalationsService; this covers a failure before either
       // (for example the owner lookup) so the cron tick still completes for every other receiver.
+      this.logger.error({
+        message: 'Sender could not be notified of an exhausted cascade',
+        event: 'check_in.sender_notify_failed',
+        checkInId: input.checkInId,
+        receiverId: input.receiverId,
+        reason: CASCADE_EXHAUSTED,
+        ...errorLogFields(error),
+      });
       await this.auditService.append({
         entityType: 'check_in',
         entityId: input.checkInId,

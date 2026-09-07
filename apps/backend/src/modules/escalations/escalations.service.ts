@@ -1,4 +1,4 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ActorType, Channel, CheckInStatus, EscalationResult } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import type { ChannelSendResult, TemplatedMessage } from '../channels/channel-provider';
@@ -13,6 +13,7 @@ import {
 import { NotificationsService } from '../notifications/notifications.service';
 import { UsersService } from '../users/users.service';
 import { CryptoService } from '../../shared/crypto/crypto.service';
+import { errorLogFields } from '../../shared/logging';
 import type { EscalationBackupContactRecord, EscalationsRepository } from './escalations.repository';
 import { ESCALATIONS_REPOSITORY } from './escalations.tokens';
 
@@ -98,6 +99,7 @@ function backupAlertChannelOrder(plan: ReachableChannelPlan): Channel[] {
 
 @Injectable()
 export class EscalationsService {
+  private readonly logger = new Logger(EscalationsService.name);
   private readonly now: () => Date;
   private readonly notificationsService?: Pick<NotificationsService, 'sendToUser' | 'sendEscalationAlertToUser'>;
 
@@ -519,12 +521,27 @@ export class EscalationsService {
         try {
           const providerResult = await this.channelRouter.sendMessage(channel, phone, message);
           return { delivered: true, channel, providerResult, attemptedChannels, channelDetection };
-        } catch {
+        } catch (error) {
           // The next channel, if any, gets its turn; the single ERROR event covers the contact as a whole.
+          this.logger.warn({
+            message: 'Backup-contact alert failed on one channel',
+            event: 'escalation.backup_alert_channel_failed',
+            backupContactId: input.contact.id,
+            templateKey: input.templateKey,
+            channel,
+            ...errorLogFields(error),
+          });
         }
       }
-    } catch {
+    } catch (error) {
       // Decrypting the contact or resolving the plan failed: nothing can be sent to this contact.
+      this.logger.error({
+        message: 'Backup-contact alert could not be prepared',
+        event: 'escalation.backup_alert_unreachable',
+        backupContactId: input.contact.id,
+        templateKey: input.templateKey,
+        ...errorLogFields(error),
+      });
     }
 
     return {
@@ -614,7 +631,15 @@ export class EscalationsService {
         deepLink: input.deepLink,
       });
       return undefined;
-    } catch {
+    } catch (error) {
+      this.logger.error({
+        message: 'Sender siren push failed; falling back to a voice call',
+        event: 'sender_push.failed',
+        checkInId: input.checkInId,
+        receiverId: input.receiverId,
+        reason: input.reason,
+        ...errorLogFields(error),
+      });
       await this.auditService.append({
         entityType: 'check_in',
         entityId: input.checkInId,
@@ -671,7 +696,15 @@ export class EscalationsService {
           deepLink: input.deepLink,
         },
       });
-    } catch {
+    } catch (error) {
+      this.logger.error({
+        message: 'Sender voice fallback failed; the sender was not reached',
+        event: 'sender_voice_fallback.failed',
+        checkInId: input.checkInId,
+        receiverId: input.receiverId,
+        reason: input.reason,
+        ...errorLogFields(error),
+      });
       await this.auditService.append({
         entityType: 'check_in',
         entityId: input.checkInId,
