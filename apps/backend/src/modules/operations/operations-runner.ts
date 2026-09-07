@@ -101,3 +101,57 @@ export async function runOperationsCheckIns(input: {
     },
   };
 }
+
+/** Counts from `POST /operations/push-receipts/run`: tickets looked at, answered, deactivated and aged out. */
+export type OperationsPushReceiptsAggregate = {
+  ok: true;
+  checked: number;
+  received: number;
+  deactivated: number;
+  expired: number;
+};
+
+/**
+ * The scheduler's second call (CB-085). Expo answers a push with a ticket and the delivery receipt only later, so
+ * without this the receipts are read at the start of the next send and a `DeviceNotRegistered` token survives a
+ * quiet period. The response carries counts only — no tokens, no user ids.
+ */
+export async function runOperationsPushReceipts(input: {
+  endpointUrl: string;
+  operationsCronSecret: string;
+  fetchImpl?: FetchLike;
+}): Promise<OperationsPushReceiptsAggregate> {
+  const endpointUrl = input.endpointUrl.trim();
+  const operationsCronSecret = input.operationsCronSecret.trim();
+
+  if (!endpointUrl) {
+    throw new Error('OPERATIONS_PUSH_RECEIPTS_RUN_URL is required');
+  }
+
+  if (!operationsCronSecret) {
+    throw new Error('OPERATIONS_CRON_SECRET is required');
+  }
+
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const response = await fetchImpl(endpointUrl, {
+    method: 'POST',
+    headers: {
+      authorization: `Bearer ${operationsCronSecret}`,
+      'content-type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Operations push receipts run failed with HTTP ${response.status} ${response.statusText}`);
+  }
+
+  const body = (await response.json()) as Partial<OperationsPushReceiptsAggregate>;
+
+  return {
+    ok: true,
+    checked: body.checked ?? 0,
+    received: body.received ?? 0,
+    deactivated: body.deactivated ?? 0,
+    expired: body.expired ?? 0,
+  };
+}

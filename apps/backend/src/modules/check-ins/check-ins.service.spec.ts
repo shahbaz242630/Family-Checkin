@@ -1,8 +1,10 @@
+import { Logger } from '@nestjs/common';
 import { ActorType, Channel, CheckInAttemptStatus, CheckInStatus, ConsentStatus, TechProfile } from '@prisma/client';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ChannelRouterService } from '../channels/channel-router.service';
 import type { ChannelProvider, TemplatedMessage, VoiceScript } from '../channels/channel-provider';
 import { FakeChannelProvider } from '../channels/fake-channel.provider';
+import { TwilioRequestError } from '../channels/twilio-request-error';
 import { CryptoService } from '../../shared/crypto/crypto.service';
 import { createRealAuditService } from '../../shared/testing/real-audit';
 import {
@@ -2067,3 +2069,291 @@ function pendingAttempt(input: {
     updatedAt: new Date('2026-04-27T05:30:00.000Z'),
   };
 }
+
+/** A provider that fails the way Twilio does: an HTTP error carrying a numeric error code (CB-019). */
+class TwilioRejectingChannelProvider implements ChannelProvider {
+  public attempts = 0;
+
+  constructor(
+    public readonly channel: Channel,
+    private readonly code = 21606,
+  ) {}
+
+  private reject(): never {
+    this.attempts += 1;
+    throw new TwilioRequestError(400, this.code, `https://www.twilio.com/docs/errors/${this.code}`);
+  }
+
+  async sendMessage(_to: string, _message: TemplatedMessage): Promise<never> {
+    this.reject();
+  }
+
+  async makeVoiceCall(_to: string, _script: VoiceScript): Promise<never> {
+    this.reject();
+  }
+
+  async isAvailableForNumber(_phone: string): Promise<boolean> {
+    return true;
+  }
+}
+
+/** Every structured record the service passed to the Nest logger, plus the raw JSON of all of them. */
+function captureServiceLogs() {
+  const records: Record<string, unknown>[] = [];
+  const collect = (message: unknown) => {
+    records.push(typeof message === 'object' && message !== null ? (message as Record<string, unknown>) : { message });
+  };
+
+  vi.spyOn(Logger.prototype, 'error').mockImplementation(collect);
+  vi.spyOn(Logger.prototype, 'warn').mockImplementation(collect);
+
+  return {
+    records,
+    of: (event: string) => records.filter((record) => record.event === event),
+    json: () => JSON.stringify(records),
+  };
+}
+
+describe('CheckInsService logs every failure it swallows (CB-047)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('records a Twilio rejection of the first attempt as its real reason, in the attempt, the audit row and the log', async () => {
+    const logs = captureServiceLogs();
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [
+      { ...receiverCandidate(crypto), primaryChannel: Channel.SMS, fallbackChannels: [Channel.VOICE] },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([new TwilioRejectingChannelProvider(Channel.SMS)]),
+      auditService,
+      new InMemoryEscalationsService(),
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    const result = await service.sendDueCheckIns();
+
+    expect(result).toEqual({ created: 1, sent: 0, skipped: 0, failed: 1 });
+    // Was `provider_send_failed` before CB-047: the code Twilio gave is now what the row carries.
+    expect(repository.attempts[0]).toMatchObject({
+      attemptNumber: 1,
+      status: CheckInAttemptStatus.FAILED,
+      failureReason: 'twilio_21606',
+    });
+    expect(audit.events).toContainEqual({
+      entityType: 'check_in',
+      entityId: 'check-in-1',
+      action: 'check_in.attempt_failed',
+      actorType: ActorType.SYSTEM,
+      metadata: {
+        receiverId: 'receiver-1',
+        channel: Channel.SMS,
+        attemptNumber: 1,
+        failureReason: 'twilio_21606',
+        providerErrorCode: '21606',
+      },
+    });
+    expect(logs.of('check_in.attempt_failed')[0]).toMatchObject({
+      checkInId: 'check-in-1',
+      receiverId: 'receiver-1',
+      channel: Channel.SMS,
+      attemptNumber: 1,
+      failureReason: 'twilio_21606',
+      providerErrorCode: 21606,
+      errorName: 'TwilioRequestError',
+    });
+    // Hard rule: no phone number, no receiver name, no message body reaches the logs (BRD-8.7).
+    expect(logs.json()).not.toContain('+971');
+    expect(logs.json()).not.toContain('Fatima');
+  });
+
+  it('records a Twilio rejection of a cascade attempt as its real reason and logs it', async () => {
+    const logs = captureServiceLogs();
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    repository.attempts = [
+      pendingAttempt({
+        id: 'attempt-2',
+        attemptNumber: 2,
+        channel: Channel.SMS,
+        scheduledAt: new Date('2026-04-27T05:45:00.000Z'),
+      }),
+      pendingAttempt({
+        id: 'attempt-3',
+        attemptNumber: 3,
+        channel: Channel.VOICE,
+        scheduledAt: new Date('2026-04-27T06:30:00.000Z'),
+      }),
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([new TwilioRejectingChannelProvider(Channel.SMS, 21211)]),
+      auditService,
+      new InMemoryEscalationsService(),
+      () => new Date('2026-04-27T05:46:00.000Z'),
+    );
+
+    const result = await service.processCascadeAttempts();
+
+    expect(result).toEqual({ sent: 0, timedOut: 0, failed: 1, needsAttention: 0, skipped: 0 });
+    expect(repository.attempts[0]).toMatchObject({
+      id: 'attempt-2',
+      status: CheckInAttemptStatus.FAILED,
+      failureReason: 'twilio_21211',
+    });
+    expect(audit.events[0]).toMatchObject({
+      action: 'check_in.attempt_failed',
+      metadata: { failureReason: 'twilio_21211', providerErrorCode: '21211' },
+    });
+    expect(logs.of('check_in.attempt_failed')[0]).toMatchObject({
+      checkInId: 'check-in-1',
+      attemptId: 'attempt-2',
+      attemptNumber: 2,
+      failureReason: 'twilio_21211',
+      providerErrorCode: 21211,
+    });
+    expect(logs.json()).not.toContain('+971');
+  });
+
+  it('keeps the generic reason for a provider error that carries no code, and still logs it', async () => {
+    const logs = captureServiceLogs();
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService } = createRealAuditService();
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [
+      { ...receiverCandidate(crypto), primaryChannel: Channel.SMS, fallbackChannels: [Channel.VOICE] },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([new ThrowingChannelProvider(Channel.SMS)]),
+      auditService,
+      new InMemoryEscalationsService(),
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    await service.sendDueCheckIns();
+
+    expect(repository.attempts[0]).toMatchObject({ failureReason: 'provider_send_failed' });
+    expect(logs.of('check_in.attempt_failed')[0]).toMatchObject({
+      failureReason: 'provider_send_failed',
+      error: 'provider unavailable',
+      errorName: 'Error',
+    });
+    expect(logs.of('check_in.attempt_failed')[0]).not.toHaveProperty('providerErrorCode');
+  });
+
+  it('logs the failure that stops the sender being told a cascade is exhausted', async () => {
+    const logs = captureServiceLogs();
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    const escalations = new InMemoryEscalationsService();
+    escalations.nextError = new Error('owner lookup failed');
+    const billing = new InMemoryBillingService();
+    billing.entitledByUserId.set('sender-user-1', true);
+    repository.candidates = [{ ...receiverCandidate(crypto), primaryChannel: Channel.SMS, fallbackChannels: [] }];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([new ThrowingChannelProvider(Channel.SMS)]),
+      auditService,
+      escalations,
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      billing,
+    );
+
+    await service.sendDueCheckIns();
+
+    expect(audit.events.map((event) => event.action)).toContain('check_in.sender_notify_failed');
+    expect(logs.of('check_in.sender_notify_failed')[0]).toMatchObject({
+      checkInId: 'check-in-1',
+      receiverId: 'receiver-1',
+      reason: 'cascade_exhausted',
+      error: 'owner lookup failed',
+    });
+  });
+
+  it('logs the failure of the quiet push that warns the sender about an unusable schedule', async () => {
+    const logs = captureServiceLogs();
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService, audit } = createRealAuditService();
+    repository.invalidSchedules = [
+      { receiverId: 'receiver-dubai', userId: 'sender-user-1', reason: 'invalid_timezone' },
+    ];
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([]),
+      auditService,
+      new InMemoryEscalationsService(),
+      () => new Date('2026-04-27T05:30:00.000Z'),
+      undefined,
+      undefined,
+      undefined,
+      {
+        async sendQuietUpdateToUser() {
+          throw new Error('expo unreachable');
+        },
+      },
+    );
+
+    await service.sendDueCheckIns();
+
+    expect(audit.events.map((event) => event.action)).toContain('sender_push.failed');
+    expect(logs.of('sender_push.failed')[0]).toMatchObject({
+      receiverId: 'receiver-dubai',
+      reason: 'schedule_invalid',
+      error: 'expo unreachable',
+    });
+  });
+
+  it('logs a repository failure that would otherwise disappear into the tick counters', async () => {
+    const logs = captureServiceLogs();
+    const crypto = new CryptoService(masterKey);
+    const repository = new InMemoryCheckInsRepository();
+    const { auditService } = createRealAuditService();
+    repository.attempts = [
+      sentAttempt({
+        id: 'attempt-1',
+        attemptNumber: 1,
+        channel: Channel.SMS,
+        sentAt: new Date('2026-04-27T05:00:00.000Z'),
+      }),
+    ];
+    repository.markAttemptTimedOut = async () => {
+      throw new Error('database unavailable');
+    };
+    const service = new CheckInsService(
+      repository,
+      crypto,
+      new ChannelRouterService([new FakeChannelProvider(Channel.SMS)]),
+      auditService,
+      new InMemoryEscalationsService(),
+      () => new Date('2026-04-27T05:46:00.000Z'),
+    );
+
+    const result = await service.processCascadeAttempts();
+
+    expect(result.failed).toBe(1);
+    expect(logs.of('check_in.cascade_timeout_failed')[0]).toMatchObject({
+      checkInId: 'check-in-1',
+      attemptId: 'attempt-1',
+      error: 'database unavailable',
+    });
+  });
+});

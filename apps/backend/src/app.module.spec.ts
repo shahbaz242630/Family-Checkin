@@ -53,6 +53,7 @@ const configuredModeRoutes = [
   'POST /billing/revenuecat/webhook',
   'POST /device-tokens',
   'POST /operations/check-ins/run',
+  'POST /operations/push-receipts/run',
   'POST /provider-webhooks/twilio/messaging',
   'POST /provider-webhooks/twilio/messaging/status',
   'POST /provider-webhooks/twilio/voice',

@@ -1,7 +1,9 @@
+import { Logger } from '@nestjs/common';
 import { Channel } from '@prisma/client';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FakeChannelProvider } from './fake-channel.provider';
 import { ChannelRouterService } from './channel-router.service';
+import { TwilioRequestError } from './twilio-request-error';
 
 describe('ChannelRouterService', () => {
   it('routes templated messages to the provider registered for the requested channel', async () => {
@@ -116,5 +118,39 @@ describe('ChannelRouterService', () => {
         variables: {},
       }),
     ).rejects.toThrow('No channel provider registered for WHATSAPP');
+  });
+});
+
+describe('ChannelRouterService logs the availability check it swallows (CB-047)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('warns with the channel and the Twilio code, and never the phone number, before falling back to manual selection', async () => {
+    const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+    const whatsapp = new FakeChannelProvider(Channel.WHATSAPP);
+    whatsapp.isAvailableForNumber = async () => {
+      throw new TwilioRequestError(400, 21606, 'https://www.twilio.com/docs/errors/21606');
+    };
+    const router = new ChannelRouterService([whatsapp, new FakeChannelProvider(Channel.SMS)]);
+
+    await expect(
+      router.resolveReachablePlan({
+        phone: '+971501234567',
+        primaryChannel: Channel.WHATSAPP,
+        fallbackChannels: [Channel.SMS],
+      }),
+    ).resolves.toMatchObject({ detectionStatus: 'MANUAL_REQUIRED', detectionConfidence: 'manual_selection' });
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const record = warn.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(record).toMatchObject({
+      event: 'channel_router.availability_check_failed',
+      channel: Channel.WHATSAPP,
+      primaryChannel: Channel.WHATSAPP,
+      providerErrorCode: 21606,
+      errorName: 'TwilioRequestError',
+    });
+    expect(JSON.stringify(record)).not.toContain('+971');
   });
 });

@@ -1,5 +1,6 @@
-import { Inject, Injectable, Optional } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import type { Channel } from '@prisma/client';
+import { errorLogFields } from '../../shared/logging';
 import type {
   ChannelProvider,
   ChannelCallResult,
@@ -26,6 +27,7 @@ export interface ReachableChannelPlan {
 
 @Injectable()
 export class ChannelRouterService {
+  private readonly logger = new Logger(ChannelRouterService.name);
   private readonly providersByChannel: Map<Channel, ChannelProvider>;
 
   constructor(@Optional() @Inject(CHANNEL_PROVIDERS) providers: ChannelProvider[] = []) {
@@ -36,7 +38,12 @@ export class ChannelRouterService {
     return this.providerFor(channel).sendMessage(to, message);
   }
 
-  async makeVoiceCall(channel: Channel, to: string, script: VoiceScript, options?: VoiceCallOptions): Promise<ChannelCallResult> {
+  async makeVoiceCall(
+    channel: Channel,
+    to: string,
+    script: VoiceScript,
+    options?: VoiceCallOptions,
+  ): Promise<ChannelCallResult> {
     return this.providerFor(channel).makeVoiceCall(to, script, options);
   }
 
@@ -55,14 +62,26 @@ export class ChannelRouterService {
         if (await this.isAvailableForNumber(channel, input.phone)) {
           return {
             primaryChannel: channel,
-            fallbackChannels: channels.filter((candidate) => candidate !== channel && !unavailableChannels.includes(candidate)),
+            fallbackChannels: channels.filter(
+              (candidate) => candidate !== channel && !unavailableChannels.includes(candidate),
+            ),
             detectionStatus: channel === input.primaryChannel ? 'PRIMARY_AVAILABLE' : 'FALLBACK_SELECTED',
             unavailableChannels,
             detectionConfidence: 'provider_availability_check',
           };
         }
         unavailableChannels.push(channel);
-      } catch {
+      } catch (error) {
+        // The phone number is deliberately absent from the line; the channel and the provider's error code are
+        // enough to tell a rejected number from a Twilio outage (CB-047).
+        this.logger.warn({
+          message: 'Channel availability check failed; the plan falls back to manual selection',
+          event: 'channel_router.availability_check_failed',
+          channel,
+          primaryChannel: input.primaryChannel,
+          ...errorLogFields(error),
+        });
+
         return {
           primaryChannel: input.primaryChannel,
           fallbackChannels: input.fallbackChannels,

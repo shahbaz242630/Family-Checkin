@@ -10,6 +10,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "operations:check-ins": "tsx scripts/run-operations-check-ins.ts",
+    "operations:push-receipts": "tsx scripts/run-operations-push-receipts.ts",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",
     "db:apply-all": "node scripts/db/apply-all.mjs",

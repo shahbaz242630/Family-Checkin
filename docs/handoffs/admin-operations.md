@@ -33,7 +33,7 @@ All routes below take `Authorization: Bearer <Supabase access token>`. Missing o
 - `PATCH /admin/abuse-reports/:abuseReportId/review-safe` — `SUPER_ADMIN` or `OPERATOR` only. Sets `REVIEWED_SAFE` and clears the abuse-review pause.
 - `PATCH /admin/abuse-reports/:abuseReportId/review-action-taken` — `SUPER_ADMIN` or `OPERATOR` only. Sets `REVIEWED_ACTION_TAKEN`, receiver stays paused.
 - Report fields returned by all three abuse routes: `id`, `receiverId`, `reportedAt`, `reviewStatus`, `reviewerAdminId?`, `reviewedAt?`, `hasReportContent` (boolean).
-- Not owned by this feature: `POST /operations/check-ins/run` is the scheduler tick, authorised by `OPERATIONS_CRON_SECRET` (timing-safe compare) and `@SkipThrottle()`.
+- Not owned by this feature: `POST /operations/check-ins/run` (the scheduler tick) and `POST /operations/push-receipts/run` (the Expo receipt drain, CB-085, `docs/handoffs/escalations-and-notifications.md`) share the controller but are authorised by `OPERATIONS_CRON_SECRET` (timing-safe compare) and carry `@SkipThrottle()`, not the admin bearer.
 
 Provisioning an admin: there is no invite endpoint, seed or script. Insert a row into `admin_users` by hand over a service-role connection (RLS denies everything else). The code requires `authProviderId` = the Supabase auth user's id (`user.id`, as read by `SupabaseAuthService.verifyAccessToken`), `active = true`, and `role` set to one of the three enum values. `emailEncrypted` and `emailHash` are `NOT NULL` (and `emailHash` is unique), so the insert must supply both, but the admin auth path never selects or returns them.
 

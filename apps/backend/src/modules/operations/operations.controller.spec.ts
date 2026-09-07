@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { CheckInsService } from '../check-ins/check-ins.service';
 import type { AppConfigService } from '../../shared/config/app-config.service';
 import type { AdminAuthService } from '../auth/admin-auth.service';
+import type { NotificationsService } from '../notifications/notifications.service';
 import type { OperationsVisibilityService } from './operations-visibility.service';
 import { OperationsController } from './operations.controller';
 
@@ -97,6 +98,17 @@ class FakeOperationsVisibilityService {
   }
 }
 
+class FakeNotificationsService {
+  public calls: string[] = [];
+  /** One quiet-period run: four tickets due, three answered, one of them a dead token (CB-085). */
+  public result = { checked: 4, received: 3, deactivated: 1, expired: 1 };
+
+  async processDuePushReceipts() {
+    this.calls.push('processDuePushReceipts');
+    return this.result;
+  }
+}
+
 class FakeAdminAuthService {
   public tokens: string[] = [];
 
@@ -119,6 +131,7 @@ describe('OperationsController', () => {
       { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
       new FakeOperationsVisibilityService() as unknown as OperationsVisibilityService,
       new FakeAdminAuthService() as unknown as AdminAuthService,
+      new FakeNotificationsService() as unknown as NotificationsService,
     );
 
     const response = await controller.runCheckIns('Bearer operations-cron-secret');
@@ -152,6 +165,7 @@ describe('OperationsController', () => {
       { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
       new FakeOperationsVisibilityService() as unknown as OperationsVisibilityService,
       new FakeAdminAuthService() as unknown as AdminAuthService,
+      new FakeNotificationsService() as unknown as NotificationsService,
     );
 
     await expect(controller.runCheckIns('Bearer operations-cron-secret')).resolves.toEqual({ ok: true, locked: true });
@@ -164,11 +178,52 @@ describe('OperationsController', () => {
       { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
       new FakeOperationsVisibilityService() as unknown as OperationsVisibilityService,
       new FakeAdminAuthService() as unknown as AdminAuthService,
+      new FakeNotificationsService() as unknown as NotificationsService,
     );
 
     await expect(controller.runCheckIns(undefined)).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(controller.runCheckIns('Basic operations-cron-secret')).rejects.toBeInstanceOf(UnauthorizedException);
     await expect(controller.runCheckIns('Bearer wrong-secret')).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('deactivates a dead push token from the scheduler even when no push was sent (CB-085)', async () => {
+    const notifications = new FakeNotificationsService();
+    const checkIns = new FakeCheckInsService();
+    const controller = new OperationsController(
+      checkIns as unknown as CheckInsService,
+      { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
+      new FakeOperationsVisibilityService() as unknown as OperationsVisibilityService,
+      new FakeAdminAuthService() as unknown as AdminAuthService,
+      notifications as unknown as NotificationsService,
+    );
+
+    const response = await controller.runPushReceipts('Bearer operations-cron-secret');
+
+    expect(notifications.calls).toEqual(['processDuePushReceipts']);
+    // The route stands on its own: draining the receipts never depends on a check-in tick having sent anything.
+    expect(checkIns.calls).toEqual([]);
+    expect(response).toEqual({ ok: true, checked: 4, received: 3, deactivated: 1, expired: 1 });
+    expect(JSON.stringify(response)).not.toContain('ExponentPushToken');
+    expect(JSON.stringify(response)).not.toContain('token');
+    expect(JSON.stringify(response)).not.toContain('userId');
+  });
+
+  it('requires the configured operations cron bearer token for the push-receipt run', async () => {
+    const notifications = new FakeNotificationsService();
+    const controller = new OperationsController(
+      new FakeCheckInsService() as unknown as CheckInsService,
+      { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
+      new FakeOperationsVisibilityService() as unknown as OperationsVisibilityService,
+      new FakeAdminAuthService() as unknown as AdminAuthService,
+      notifications as unknown as NotificationsService,
+    );
+
+    await expect(controller.runPushReceipts(undefined)).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(controller.runPushReceipts('Basic operations-cron-secret')).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    await expect(controller.runPushReceipts('Bearer wrong-secret')).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(notifications.calls).toEqual([]);
   });
 
   it('returns a PII-safe check-in operations summary for a valid admin bearer token', async () => {
@@ -179,6 +234,7 @@ describe('OperationsController', () => {
       { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
       visibility as unknown as OperationsVisibilityService,
       adminAuth as unknown as AdminAuthService,
+      new FakeNotificationsService() as unknown as NotificationsService,
     );
 
     const response = await controller.getCheckInSummary('Bearer admin-token');
@@ -217,6 +273,7 @@ describe('OperationsController', () => {
       { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
       new FakeOperationsVisibilityService() as unknown as OperationsVisibilityService,
       new FakeAdminAuthService() as unknown as AdminAuthService,
+      new FakeNotificationsService() as unknown as NotificationsService,
     );
 
     await expect(controller.getCheckInSummary(undefined)).rejects.toBeInstanceOf(UnauthorizedException);
@@ -231,6 +288,7 @@ describe('OperationsController', () => {
       { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
       visibility as unknown as OperationsVisibilityService,
       adminAuth as unknown as AdminAuthService,
+      new FakeNotificationsService() as unknown as NotificationsService,
     );
 
     const response = await controller.getCheckInDetail('Bearer admin-token', 'check-in-1');
@@ -274,6 +332,7 @@ describe('OperationsController', () => {
       { operationsCronSecret: 'operations-cron-secret' } as AppConfigService,
       new FakeOperationsVisibilityService() as unknown as OperationsVisibilityService,
       new FakeAdminAuthService() as unknown as AdminAuthService,
+      new FakeNotificationsService() as unknown as NotificationsService,
     );
 
     await expect(controller.getCheckInDetail('Bearer admin-token', 'missing-check-in')).rejects.toMatchObject({
