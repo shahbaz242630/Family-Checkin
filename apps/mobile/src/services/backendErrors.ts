@@ -11,6 +11,12 @@ export const RECEIVER_ALREADY_MONITORED_CODE = 'RECEIVER_ALREADY_MONITORED';
 export const CHECK_IN_IN_PROGRESS_CODE = 'CHECK_IN_IN_PROGRESS';
 export const CONSENT_NOT_PENDING_CODE = 'CONSENT_NOT_PENDING';
 export const CONSENT_RESEND_LIMIT_CODE = 'CONSENT_RESEND_LIMIT';
+/**
+ * A 401 that means "the session is fine, the account has no usable phone number yet" (CB-037). Without it the
+ * app could not tell this from an expired or forged token and signed the sender out; with it the app sends them
+ * to the profile screen. The backend puts it on both the missing and the unparseable phone.
+ */
+export const PHONE_REQUIRED_CODE = 'PHONE_REQUIRED';
 
 export class BackendRequestError extends Error {
   constructor(
@@ -30,6 +36,15 @@ export const EMPTY_RESPONSE_MESSAGE =
   'The reply from the server did not arrive in full. Check the screen and try again if needed.';
 /** A 2xx whose body is not the JSON the app expected (CB-080). */
 export const UNREADABLE_RESPONSE_MESSAGE = 'The reply from the server could not be read. Please try again.';
+/** The request was still unanswered after `REQUEST_TIMEOUT_MS` and was aborted (CB-037). */
+export const REQUEST_TIMEOUT_MESSAGE = 'The server took too long to answer. Check your connection and try again.';
+/** A throttled request: Nest answers "ThrottlerException: Too many requests", which is not sender copy (CB-037). */
+export const TOO_MANY_REQUESTS_MESSAGE = 'Too many requests just now. Wait a moment and try again.';
+/** What the sender is told when the account has no phone number yet; the screen sends them to Profile (CB-037). */
+export const PHONE_REQUIRED_MESSAGE =
+  'Add your phone number in Profile. Nearby needs it to reach you when a check-in needs attention.';
+/** A 401 that is a real authentication failure: the session cannot be used again (CB-037). */
+export const SESSION_EXPIRED_MESSAGE = 'Your session has ended. Sign in again to continue.';
 
 /**
  * The request reached the backend and was answered with a success status, but the body was missing or unreadable
@@ -39,7 +54,7 @@ export class BackendTransportError extends Error {
   constructor(
     message: string,
     public readonly status: number,
-    public readonly reason: 'empty_body' | 'unreadable_body',
+    public readonly reason: 'empty_body' | 'unreadable_body' | 'timeout',
   ) {
     super(message);
     this.name = 'BackendTransportError';
@@ -52,6 +67,30 @@ export function isPaidAccessRequiredError(error: unknown): boolean {
     error.status === 403 &&
     (error.code === PAID_ACCESS_REQUIRED_CODE || error.message === PAID_ACCESS_REQUIRED_MESSAGE)
   );
+}
+
+/** The request was aborted by the client's own 15-second deadline rather than answered (CB-037). */
+export function isTimeoutError(error: unknown): boolean {
+  return error instanceof BackendTransportError && error.reason === 'timeout';
+}
+
+/**
+ * What a 401 asks the app to do (CB-037). `add-phone` is the account that has never had a usable phone number:
+ * the session is valid and signing the sender out would strand them, so the screen sends them to Profile.
+ * `sign-out` is every other 401 — expired, forged, wrong project. Anything else is not an auth failure at all.
+ */
+export type AuthFailureAction = 'sign-out' | 'add-phone';
+
+export function authFailureAction(error: unknown): AuthFailureAction | null {
+  if (!(error instanceof BackendRequestError) || error.status !== 401) {
+    return null;
+  }
+
+  return error.code === PHONE_REQUIRED_CODE ? 'add-phone' : 'sign-out';
+}
+
+export function isPhoneRequiredError(error: unknown): boolean {
+  return authFailureAction(error) === 'add-phone';
 }
 
 /** The backend answered 404: the receiver, contact or check-in acted on no longer exists (removed or superseded). */
@@ -104,8 +143,18 @@ export function describeBackendError(
           ? `You can resend on ${next}.`
           : 'The invitation was sent recently. You can resend it once the waiting period has passed.';
       }
+      case PHONE_REQUIRED_CODE:
+        return PHONE_REQUIRED_MESSAGE;
       default:
         break;
+    }
+
+    // Throttling has no code of its own; the raw body is Nest's "ThrottlerException: Too many requests" (CB-037).
+    if (error.status === 429) {
+      return TOO_MANY_REQUESTS_MESSAGE;
+    }
+    if (error.status === 401) {
+      return SESSION_EXPIRED_MESSAGE;
     }
   }
 

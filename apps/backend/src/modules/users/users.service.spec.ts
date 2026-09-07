@@ -1,7 +1,13 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { CryptoService } from '../../shared/crypto/crypto.service';
-import { UsersService } from './users.service';
+import {
+  PHONE_INVALID_MESSAGE,
+  PHONE_MISSING_MESSAGE,
+  PHONE_REQUIRED_CODE,
+  SenderPhoneRequiredError,
+  UsersService,
+} from './users.service';
 import { SenderUniqueConflictError } from './users.repository';
 import type { SenderRecord, UpsertSenderRecordInput, UsersRepository } from './users.repository';
 
@@ -177,24 +183,35 @@ describe('UsersService resolves the sender for authenticated routes (CB-024)', (
     await expect(service.findOrCreateFromSupabaseIdentity(identity)).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('refuses to insert a sender without a usable phone with 401, never 500', async () => {
+  it('refuses to insert a sender without a usable phone with a 401 the app can act on (CB-037)', async () => {
     const repository = new InMemoryUsersRepository();
     const service = new UsersService(repository, new CryptoService(masterKey));
+    // The code is what lets the app send the sender to the profile screen instead of signing them out; a
+    // missing and an unparseable phone share it because the remedy is the same.
+    const phoneRequired = { name: 'SenderPhoneRequiredError', code: PHONE_REQUIRED_CODE, httpStatus: 401 };
 
     const { phone: _phone, ...withoutPhone } = identity;
-    await expect(service.findOrCreateFromSupabaseIdentity(withoutPhone)).rejects.toThrow(
-      new UnauthorizedException('Supabase user is missing a phone number'),
-    );
-    await expect(service.findOrCreateFromSupabaseIdentity({ ...identity, phone: '   ' })).rejects.toThrow(
-      new UnauthorizedException('Supabase user is missing a phone number'),
-    );
-    await expect(service.findOrCreateFromSupabaseIdentity({ ...identity, phone: 'call me maybe' })).rejects.toThrow(
-      new UnauthorizedException('Supabase user phone number is invalid'),
-    );
+    await expect(service.findOrCreateFromSupabaseIdentity(withoutPhone)).rejects.toMatchObject({
+      ...phoneRequired,
+      message: PHONE_MISSING_MESSAGE,
+    });
+    await expect(service.findOrCreateFromSupabaseIdentity({ ...identity, phone: '   ' })).rejects.toMatchObject({
+      ...phoneRequired,
+      message: PHONE_MISSING_MESSAGE,
+    });
+    await expect(
+      service.findOrCreateFromSupabaseIdentity({ ...identity, phone: 'call me maybe' }),
+    ).rejects.toMatchObject({ ...phoneRequired, message: PHONE_INVALID_MESSAGE });
     await expect(service.findOrCreateFromSupabaseIdentity({ ...identity, email: '  ' })).rejects.toThrow(
       new UnauthorizedException('Supabase user is missing an email'),
     );
     expect(repository.creates).toEqual([]);
+  });
+
+  it('answers the missing-phone 401 with PHONE_REQUIRED in the body, not a bare Unauthorized (CB-037)', () => {
+    const failure = new SenderPhoneRequiredError(PHONE_MISSING_MESSAGE);
+
+    expect(failure.toResponseBody()).toEqual({ code: PHONE_REQUIRED_CODE, message: PHONE_MISSING_MESSAGE });
   });
 
   it('has no deprecated upsert alias left for a controller to call (CB-084)', () => {
@@ -279,12 +296,16 @@ describe('UsersService syncs the profile from POST /auth/sync-user', () => {
     await expect(service.syncProfileFromSupabaseIdentity({ ...identity, email: '' })).rejects.toThrow(
       new UnauthorizedException('Supabase user is missing an email'),
     );
-    await expect(service.syncProfileFromSupabaseIdentity({ ...identity, phone: '' })).rejects.toThrow(
-      new UnauthorizedException('Supabase user is missing a phone number'),
-    );
-    await expect(service.syncProfileFromSupabaseIdentity({ ...identity, phone: '12' })).rejects.toThrow(
-      new UnauthorizedException('Supabase user phone number is invalid'),
-    );
+    await expect(service.syncProfileFromSupabaseIdentity({ ...identity, phone: '' })).rejects.toMatchObject({
+      code: PHONE_REQUIRED_CODE,
+      httpStatus: 401,
+      message: PHONE_MISSING_MESSAGE,
+    });
+    await expect(service.syncProfileFromSupabaseIdentity({ ...identity, phone: '12' })).rejects.toMatchObject({
+      code: PHONE_REQUIRED_CODE,
+      httpStatus: 401,
+      message: PHONE_INVALID_MESSAGE,
+    });
     expect(repository.upserts).toEqual([]);
   });
 

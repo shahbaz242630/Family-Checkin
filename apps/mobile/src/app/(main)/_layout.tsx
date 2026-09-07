@@ -3,8 +3,13 @@ import { Stack } from 'expo-router';
 import { View, StyleSheet } from 'react-native';
 import { DrawerProvider } from '../../contexts/DrawerContext';
 import { Header, Sidebar, ProfileMenu } from '../../components/layout';
+import { useSessionAutoRefresh } from '../../hooks/useSessionAutoRefresh';
 
 export default function MainLayout() {
+  // Supabase's token refresh follows the app lifecycle from here: this layout is mounted exactly while there is
+  // an authenticated session to refresh (CB-037).
+  useSessionAutoRefresh();
+
   return (
     <DrawerProvider>
       <View style={styles.container}>

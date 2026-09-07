@@ -9,7 +9,7 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { EscalateSenderRequestedBackupResult } from '../escalations/escalations.service';
 import { ReceiverScheduleValidationError } from '../../shared/schedule/receiver-schedule';
-import { transformBodyThroughRoute } from '../../shared/validation/route-body-metadata';
+import { transformBodyThroughRoute, transformQueryThroughRoute } from '../../shared/validation/route-body-metadata';
 import { BODY_VALIDATION_FAILED_CODE, type BodyValidationFailure } from '../../shared/validation/zod-body.pipe';
 import {
   CheckInInProgressError,
@@ -68,6 +68,10 @@ class FakeReceiversService {
   public backupAlertResult: EscalateSenderRequestedBackupResult = { outcome: 'alerted', alerted: 1, failed: 0 };
   /** Simulates a check-in that is not the latest or not actionable: the service answers null. */
   public alertBackupNotFound = false;
+  /** What the history route asked for (CB-036). */
+  public historyInput: { userId: string; receiverId: string; days: number } | null = null;
+  /** Simulates a receiver that is missing, deleted or owned by somebody else. */
+  public historyNotFound = false;
 
   async listForSender(userId: string) {
     this.listedForUserId = userId;
@@ -119,6 +123,29 @@ class FakeReceiversService {
       },
       createdAt: '2026-04-26T08:00:00.000Z',
       updatedAt: '2026-04-27T10:02:00.000Z',
+    };
+  }
+
+  async listCheckInHistoryForSender(input: { userId: string; receiverId: string; days: number }) {
+    this.historyInput = input;
+    if (this.historyNotFound) {
+      return null;
+    }
+
+    return {
+      receiverId: input.receiverId,
+      days: input.days,
+      from: '2026-08-08T12:00:00.000Z',
+      to: '2026-09-07T12:00:00.000Z',
+      checkIns: [
+        {
+          id: '49a43e47-4e21-46f1-9fcc-2cf81ca3b41d',
+          status: 'RESPONDED_OK',
+          scheduledAt: '2026-09-07T05:00:00.000Z',
+          scheduledLocalDate: '2026-09-07',
+          escalations: [],
+        },
+      ],
     };
   }
 
@@ -1253,5 +1280,64 @@ describe('ReceiversController check-in actions (CB-017, CB-018)', () => {
     }
     expect(receiversService.tryLaterInput).toBeNull();
     expect(receiversService.alertBackupInput).toBeNull();
+  });
+  it('returns the receiver check-in history with its escalation events (CB-036)', async () => {
+    const receiversService = new FakeReceiversService();
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    const response = await controller.checkInHistory('Bearer access-token', '1aef91f9-64c9-4548-baa5-d70b52386efb', {
+      days: 30,
+    });
+
+    expect(receiversService.historyInput).toEqual({
+      userId: '61a5639c-c902-4950-9924-1a4d6db1e02d',
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      days: 30,
+    });
+    expect(response).toMatchObject({
+      receiverId: '1aef91f9-64c9-4548-baa5-d70b52386efb',
+      days: 30,
+      from: '2026-08-08T12:00:00.000Z',
+      to: '2026-09-07T12:00:00.000Z',
+    });
+    expect(response.checkIns[0]).toMatchObject({ scheduledLocalDate: '2026-09-07', escalations: [] });
+  });
+
+  it('answers 404 for the history of a receiver the sender does not own (CB-036)', async () => {
+    const receiversService = new FakeReceiversService();
+    receiversService.historyNotFound = true;
+    const controller = new ReceiversController(
+      new FakeSupabaseAuthService() as never,
+      new FakeUsersService() as never,
+      receiversService as never,
+      new FakeReceiverConsentService() as never,
+    );
+
+    await expect(
+      controller.checkInHistory('Bearer access-token', 'someone-elses-receiver', { days: 30 }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('bounds the history window at the route: days defaults to 30 and an absurd value is refused (CB-036)', () => {
+    expect(transformQueryThroughRoute(ReceiversController, 'checkInHistory', {})).toEqual({ days: 30 });
+    expect(transformQueryThroughRoute(ReceiversController, 'checkInHistory', { days: '7' })).toEqual({ days: 7 });
+
+    // An unbounded `days` would reach `scheduledAt >= now - days` as a full-table read for any signed-in caller.
+    const tooWide = thrownBy(() =>
+      transformQueryThroughRoute(ReceiversController, 'checkInHistory', { days: '99999' }),
+    );
+    expect(tooWide).toBeInstanceOf(BadRequestException);
+    expect((tooWide as BadRequestException).getResponse()).toMatchObject({ code: BODY_VALIDATION_FAILED_CODE });
+
+    for (const days of ['0', '-1', '1.5', 'lots', '']) {
+      expect(
+        thrownBy(() => transformQueryThroughRoute(ReceiversController, 'checkInHistory', { days })),
+      ).toBeInstanceOf(BadRequestException);
+    }
   });
 });

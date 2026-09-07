@@ -48,3 +48,41 @@ export function transformBodyThroughRoute(
     return instance.transform(value, { type: 'body', metatype: undefined, data: undefined });
   }, body);
 }
+
+/** The pipes Nest will run on each `@Query()` parameter of `controller.method` (CB-036). */
+export function queryParameterPipes(
+  controller: abstract new (...args: never[]) => object,
+  method: string,
+): (PipeTransform | (new (...args: never[]) => PipeTransform))[][] {
+  const metadata = (Reflect.getMetadata(ROUTE_ARGS_METADATA, controller, method) ?? {}) as Record<
+    string,
+    RouteArgMetadata
+  >;
+
+  return Object.entries(metadata)
+    .filter(([key]) => key.startsWith(`${RouteParamtypes.QUERY}:`))
+    .sort(([, a], [, b]) => a.index - b.index)
+    .map(([, argument]) => argument.pipes ?? []);
+}
+
+/**
+ * Runs a query object through the pipes a route actually declares. Without it, a `@Query(new ZodQueryPipe(...))`
+ * could be dropped from `GET /receivers/:id/check-ins` and the specs — which call the handler directly — would
+ * stay green while `?days=999999` became an unbounded read again (CB-036).
+ */
+export function transformQueryThroughRoute(
+  controller: abstract new (...args: never[]) => object,
+  method: string,
+  query: unknown,
+  parameterIndex = 0,
+): unknown {
+  const pipes = queryParameterPipes(controller, method)[parameterIndex];
+  if (!pipes) {
+    throw new Error(`${controller.name}.${method} has no @Query() parameter at index ${parameterIndex}`);
+  }
+
+  return pipes.reduce<unknown>((value, pipe) => {
+    const instance = typeof pipe === 'function' ? new pipe() : pipe;
+    return instance.transform(value, { type: 'query', metatype: undefined, data: undefined });
+  }, query);
+}

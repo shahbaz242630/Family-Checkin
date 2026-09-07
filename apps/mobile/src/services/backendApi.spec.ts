@@ -348,3 +348,179 @@ describe('backend API transport hardening (CB-080)', () => {
     });
   });
 });
+
+describe('backend API request hardening (CB-037)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+  });
+
+  function reply(status: number, text: string) {
+    return { ok: status >= 200 && status < 300, status, text: async () => text };
+  }
+
+  it('aborts a request that is still unanswered after the 15-second deadline, and does not retry it', async () => {
+    vi.stubEnv('EXPO_PUBLIC_BACKEND_URL', 'https://backend.example');
+    // A connection that accepts the request and then says nothing: without a deadline this never settles and
+    // the screen spins for ever.
+    const fetch = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(new Error('Aborted')));
+        }),
+    );
+    vi.stubGlobal('fetch', fetch);
+
+    const { listReceivers, REQUEST_TIMEOUT_MS } = await import('./backendApi');
+    const { REQUEST_TIMEOUT_MESSAGE } = await import('./backendErrors');
+    vi.useFakeTimers();
+
+    // The rejection is captured up front: the deadline fires inside `advanceTimersByTimeAsync`, before an
+    // assertion could attach to the promise.
+    const pending = listReceivers().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(REQUEST_TIMEOUT_MS);
+
+    expect(await pending).toMatchObject({
+      name: 'BackendTransportError',
+      reason: 'timeout',
+      message: REQUEST_TIMEOUT_MESSAGE,
+    });
+    // A GET is normally retried once; a timeout is not, or the sender waits 30 seconds for the same silence.
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(REQUEST_TIMEOUT_MS).toBe(15_000);
+  });
+
+  it('lets a request that answers inside the deadline through untouched', async () => {
+    vi.stubEnv('EXPO_PUBLIC_BACKEND_URL', 'https://backend.example');
+    const fetch = vi.fn().mockResolvedValue(reply(200, JSON.stringify({ receivers: [] })));
+    vi.stubGlobal('fetch', fetch);
+
+    const { listReceivers } = await import('./backendApi');
+
+    await expect(listReceivers()).resolves.toEqual([]);
+    // The deadline rides on the request as an abort signal.
+    expect(fetch.mock.calls[0][1].signal).toBeDefined();
+  });
+
+  it('routes a missing-phone 401 to the profile screen instead of signing the sender out', async () => {
+    vi.stubEnv('EXPO_PUBLIC_BACKEND_URL', 'https://backend.example');
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          reply(401, JSON.stringify({ code: 'PHONE_REQUIRED', message: 'Supabase user is missing a phone number' })),
+        ),
+    );
+
+    const { listReceivers } = await import('./backendApi');
+    const { authFailureAction, isPhoneRequiredError, describeBackendError, PHONE_REQUIRED_MESSAGE } =
+      await import('./backendErrors');
+
+    const failure = await listReceivers().catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ name: 'BackendRequestError', status: 401, code: 'PHONE_REQUIRED' });
+    expect(authFailureAction(failure)).toBe('add-phone');
+    expect(isPhoneRequiredError(failure)).toBe(true);
+    expect(describeBackendError(failure, 'fallback')).toBe(PHONE_REQUIRED_MESSAGE);
+  });
+
+  it('treats every other 401 as a session that has to be signed out', async () => {
+    vi.stubEnv('EXPO_PUBLIC_BACKEND_URL', 'https://backend.example');
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(reply(401, JSON.stringify({ statusCode: 401, message: 'Invalid Supabase access token' }))),
+    );
+
+    const { listReceivers } = await import('./backendApi');
+    const { authFailureAction, isPhoneRequiredError, describeBackendError, SESSION_EXPIRED_MESSAGE } =
+      await import('./backendErrors');
+
+    const failure = await listReceivers().catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ name: 'BackendRequestError', status: 401 });
+    expect(authFailureAction(failure)).toBe('sign-out');
+    expect(isPhoneRequiredError(failure)).toBe(false);
+    expect(describeBackendError(failure, 'fallback')).toBe(SESSION_EXPIRED_MESSAGE);
+  });
+
+  it('replaces the throttler 429 body with something a sender can read', async () => {
+    vi.stubEnv('EXPO_PUBLIC_BACKEND_URL', 'https://backend.example');
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          reply(429, JSON.stringify({ statusCode: 429, message: 'ThrottlerException: Too many requests' })),
+        ),
+    );
+
+    const { listReceivers } = await import('./backendApi');
+    const { TOO_MANY_REQUESTS_MESSAGE, describeBackendError } = await import('./backendErrors');
+
+    const failure = await listReceivers().catch((error: unknown) => error);
+
+    expect(failure).toMatchObject({ name: 'BackendRequestError', status: 429, message: TOO_MANY_REQUESTS_MESSAGE });
+    expect(describeBackendError(failure, 'fallback')).toBe(TOO_MANY_REQUESTS_MESSAGE);
+  });
+
+  it('leaves a 429 that carries its own code alone, so the resend window keeps its date', async () => {
+    vi.stubEnv('EXPO_PUBLIC_BACKEND_URL', 'https://backend.example');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        reply(
+          429,
+          JSON.stringify({
+            code: 'CONSENT_RESEND_LIMIT',
+            message: 'A consent request was sent to this receiver in the last 7 days',
+            nextAllowedAt: '2026-09-13T09:00:00.000Z',
+          }),
+        ),
+      ),
+    );
+
+    const { resendReceiverConsent } = await import('./backendApi');
+
+    await expect(resendReceiverConsent('receiver-1')).rejects.toMatchObject({
+      status: 429,
+      code: 'CONSENT_RESEND_LIMIT',
+      message: 'A consent request was sent to this receiver in the last 7 days',
+      details: { nextAllowedAt: '2026-09-13T09:00:00.000Z' },
+    });
+  });
+
+  it('asks for the bounded check-in history window and returns the check-ins with their escalations (CB-036)', async () => {
+    vi.stubEnv('EXPO_PUBLIC_BACKEND_URL', 'https://backend.example');
+    const fetch = vi.fn().mockResolvedValue(
+      reply(
+        200,
+        JSON.stringify({
+          receiverId: 'receiver-1',
+          days: 30,
+          from: '2026-08-08T12:00:00.000Z',
+          to: '2026-09-07T12:00:00.000Z',
+          checkIns: [
+            { id: 'check-in-1', status: 'RESPONDED_OK', scheduledAt: '2026-09-07T05:00:00.000Z', escalations: [] },
+          ],
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetch);
+
+    const { listReceiverCheckIns } = await import('./backendApi');
+
+    const history = await listReceiverCheckIns('receiver-1');
+
+    expect(fetch).toHaveBeenCalledWith(
+      'https://backend.example/receivers/receiver-1/check-ins?days=30',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(history.checkIns).toHaveLength(1);
+    expect(history.days).toBe(30);
+  });
+});

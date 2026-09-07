@@ -12,16 +12,19 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UnauthorizedException,
 } from '@nestjs/common';
 import { SensitiveAction } from '@prisma/client';
 import {
   createReceiverBodySchema,
   pauseReceiverBodySchema,
+  receiverCheckInHistoryQuerySchema,
   resolveCheckInBodySchema,
   updateReceiverBodySchema,
   type CreateReceiverBody,
   type PauseReceiverBody,
+  type ReceiverCheckInHistoryQuery,
   type ResolveCheckInBody,
   type UpdateReceiverBody,
 } from '@nearby/shared-types';
@@ -35,6 +38,7 @@ import { ReceiverScheduleValidationError } from '../../shared/schedule/receiver-
 import { DomainError } from '../../shared/validation/domain-error';
 import { toHttpFailure } from '../../shared/validation/domain-error.interceptor';
 import { ZodBodyPipe } from '../../shared/validation/zod-body.pipe';
+import { ZodQueryPipe } from '../../shared/validation/zod-query.pipe';
 import { ReceiverConsentService } from './receiver-consent.service';
 import { RESOLUTION_NOTE_TOO_LONG_MESSAGE } from './receiver-policy';
 import { PERSONAL_NOTE_TOO_LONG_MESSAGE, ReceiversService } from './receivers.service';
@@ -117,6 +121,33 @@ export class ReceiversController {
         },
       },
     };
+  }
+
+  /**
+   * The receiver's check-in history for the sender's detail screen (CB-036): the last `days` days, newest first,
+   * each check-in with its escalation events. `days` is validated and bounded by the query schema before the
+   * handler runs — an unbounded window would be a free full-table read for any signed-in caller.
+   */
+  @Get(':receiverId/check-ins')
+  async checkInHistory(
+    @Headers('authorization') authorization: string | undefined,
+    @Param('receiverId') receiverId: string,
+    @Query(new ZodQueryPipe(receiverCheckInHistoryQuerySchema)) query: ReceiverCheckInHistoryQuery,
+  ) {
+    const accessToken = this.getBearerToken(authorization);
+    const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
+    const history = await this.receiversService.listCheckInHistoryForSender({
+      userId: sender.id,
+      receiverId,
+      days: query.days,
+    });
+
+    if (!history) {
+      throw new NotFoundException('Receiver not found');
+    }
+
+    return history;
   }
 
   @Patch(':receiverId/pause')
