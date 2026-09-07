@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ActorType } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
+import { InvalidRequestError } from '../../shared/validation/domain-error';
 import type { ExpoPushMessage, ExpoPushReceipt, ExpoPushTicket, PushGateway } from './expo-push.gateway';
 import { EXPO_DEVICE_NOT_REGISTERED, ExpoPushGateway } from './expo-push.gateway';
 import type { PushNotificationsRepository, PushPlatform } from './notifications.repository';
@@ -19,6 +20,14 @@ export const PUSH_TICKET_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 /** Tickets looked at per pass; the next send batch picks up the rest. */
 export const PUSH_RECEIPT_BATCH_LIMIT = 300;
 export const INVALID_PUSH_TOKEN_MESSAGE = 'A valid Expo push token is required';
+export const INVALID_PUSH_TOKEN_CODE = 'INVALID_PUSH_TOKEN';
+
+/** 400: the app posted something that is not an Expo push token; pushes to it would never arrive (CB-042). */
+export class InvalidPushTokenError extends InvalidRequestError {
+  constructor() {
+    super(INVALID_PUSH_TOKEN_CODE, INVALID_PUSH_TOKEN_MESSAGE);
+  }
+}
 
 export interface ProcessPushReceiptsResult {
   /** Tickets old enough to have a receipt that were looked at. */
@@ -83,7 +92,7 @@ export class NotificationsService {
     const userId = input.userId.trim();
     const token = input.token.trim();
     if (!this.isExpoPushToken(token)) {
-      throw new Error(INVALID_PUSH_TOKEN_MESSAGE);
+      throw new InvalidPushTokenError();
     }
 
     const registeredAt = this.now();

@@ -1,13 +1,11 @@
 import {
   BadRequestException,
   Body,
-  ConflictException,
   Controller,
   Delete,
   ForbiddenException,
   Get,
   Headers,
-  HttpException,
   Inject,
   NotFoundException,
   Optional,
@@ -17,8 +15,16 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { SensitiveAction } from '@prisma/client';
-import type { Channel, RelationshipType, TechProfile } from '@prisma/client';
-import type { Prisma } from '@prisma/client';
+import {
+  createReceiverBodySchema,
+  pauseReceiverBodySchema,
+  resolveCheckInBodySchema,
+  updateReceiverBodySchema,
+  type CreateReceiverBody,
+  type PauseReceiverBody,
+  type ResolveCheckInBody,
+  type UpdateReceiverBody,
+} from '@nearby/shared-types';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
 import { StepUpService } from '../account/step-up.service';
 import { BackupContactsService } from '../backup-contacts/backup-contacts.service';
@@ -26,8 +32,11 @@ import { BillingService } from '../billing/billing.service';
 import { NEUTRAL_SENDER_DISPLAY_NAME } from '../channels/message-catalog.templates';
 import { UsersService } from '../users/users.service';
 import { ReceiverScheduleValidationError } from '../../shared/schedule/receiver-schedule';
+import { DomainError } from '../../shared/validation/domain-error';
+import { toHttpFailure } from '../../shared/validation/domain-error.interceptor';
+import { ZodBodyPipe } from '../../shared/validation/zod-body.pipe';
 import { ReceiverConsentService } from './receiver-consent.service';
-import { ReceiverRequestError, RESOLUTION_NOTE_TOO_LONG_MESSAGE } from './receiver-policy';
+import { RESOLUTION_NOTE_TOO_LONG_MESSAGE } from './receiver-policy';
 import { PERSONAL_NOTE_TOO_LONG_MESSAGE, ReceiversService } from './receivers.service';
 
 const PAID_ACCESS_REQUIRED_CODE = 'PAID_ACCESS_REQUIRED';
@@ -49,45 +58,6 @@ const RECEIVER_VALIDATION_MESSAGES = new Set([
 
 /** Whether the consent invitation actually left; `failed` tells the app to offer "Send again" (CB-009). */
 type ConsentRequestStatus = 'requested' | 'failed';
-
-interface CreateReceiverBody {
-  name?: string;
-  phone?: string;
-  phoneCountry?: string;
-  countryCode?: string;
-  relationshipType?: RelationshipType;
-  language?: string;
-  timezone?: string;
-  techProfile?: TechProfile;
-  primaryChannel?: Channel;
-  fallbackChannels?: Channel[];
-  scheduleFrequency?: string;
-  scheduleTimeWindow?: Prisma.InputJsonObject;
-  scheduleCustomCron?: string;
-  personalNote?: string;
-}
-
-interface UpdateReceiverBody {
-  name?: string;
-  countryCode?: string;
-  relationshipType?: RelationshipType;
-  language?: string;
-  timezone?: string;
-  techProfile?: TechProfile;
-  primaryChannel?: Channel;
-  fallbackChannels?: Channel[];
-  scheduleFrequency?: string;
-  scheduleTimeWindow?: Prisma.InputJsonObject;
-  scheduleCustomCron?: string;
-}
-
-interface PauseReceiverBody {
-  pausedUntil?: string;
-}
-
-interface ResolveCheckInBody {
-  note?: string;
-}
 
 @Controller('receivers')
 export class ReceiversController {
@@ -114,7 +84,7 @@ export class ReceiversController {
   async list(@Headers('authorization') authorization: string | undefined) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const receivers = await this.receiversService.listForSender(sender.id);
 
     return { receivers };
@@ -124,7 +94,7 @@ export class ReceiversController {
   async detail(@Headers('authorization') authorization: string | undefined, @Param('receiverId') receiverId: string) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const receiver = await this.receiversService.getForSender({ userId: sender.id, receiverId });
 
     if (!receiver) {
@@ -155,11 +125,11 @@ export class ReceiversController {
     @Headers('x-forwarded-for') forwardedFor: string | undefined,
     @Headers('user-agent') userAgent: string | undefined,
     @Param('receiverId') receiverId: string,
-    @Body() body: PauseReceiverBody = {},
+    @Body(new ZodBodyPipe(pauseReceiverBodySchema)) body: PauseReceiverBody = {},
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const receiver = await this.receiversService.pauseForSender({
       userId: sender.id,
       receiverId,
@@ -184,7 +154,7 @@ export class ReceiversController {
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const receiver = await this.receiversService.resumeForSender({
       userId: sender.id,
       receiverId,
@@ -205,25 +175,25 @@ export class ReceiversController {
     @Headers('x-forwarded-for') forwardedFor: string | undefined,
     @Headers('user-agent') userAgent: string | undefined,
     @Param('receiverId') receiverId: string,
-    @Body() body: UpdateReceiverBody,
+    @Body(new ZodBodyPipe(updateReceiverBodySchema)) body: UpdateReceiverBody,
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const receiver = await this.mapReceiverValidationFailure(() =>
       this.receiversService.updateForSender({
         userId: sender.id,
         receiverId,
-        name: body.name ?? '',
-        countryCode: body.countryCode ?? '',
-        relationshipType: this.required(body.relationshipType, 'Receiver relationship type is required'),
-        language: body.language ?? '',
-        timezone: body.timezone ?? '',
-        techProfile: this.required(body.techProfile, 'Receiver tech profile is required'),
-        primaryChannel: this.required(body.primaryChannel, 'Receiver primary channel is required'),
-        fallbackChannels: body.fallbackChannels ?? [],
-        scheduleFrequency: body.scheduleFrequency ?? '',
-        scheduleTimeWindow: body.scheduleTimeWindow ?? {},
+        name: body.name,
+        countryCode: body.countryCode,
+        relationshipType: body.relationshipType,
+        language: body.language,
+        timezone: body.timezone,
+        techProfile: body.techProfile,
+        primaryChannel: body.primaryChannel,
+        fallbackChannels: body.fallbackChannels,
+        scheduleFrequency: body.scheduleFrequency,
+        scheduleTimeWindow: body.scheduleTimeWindow,
         scheduleCustomCron: body.scheduleCustomCron,
         ipAddress: this.firstForwardedIp(forwardedFor),
         userAgent,
@@ -247,7 +217,7 @@ export class ReceiversController {
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     await this.consumeReceiverRemoveStepUp(sender.id, stepUpToken);
     const receiver = await this.receiversService.deleteForSender({
       userId: sender.id,
@@ -270,11 +240,11 @@ export class ReceiversController {
     @Headers('user-agent') userAgent: string | undefined,
     @Param('receiverId') receiverId: string,
     @Param('checkInId') checkInId: string,
-    @Body() body: ResolveCheckInBody = {},
+    @Body(new ZodBodyPipe(resolveCheckInBodySchema)) body: ResolveCheckInBody = {},
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const receiver = await this.mapReceiverValidationFailure(() =>
       this.receiversService.resolveCheckInForSender({
         userId: sender.id,
@@ -302,7 +272,7 @@ export class ReceiversController {
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const result = await this.mapReceiverValidationFailure(() =>
       this.receiverConsentService.resendConsent({
         userId: sender.id,
@@ -341,7 +311,7 @@ export class ReceiversController {
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const result = await this.mapReceiverValidationFailure(() =>
       this.receiversService.alertBackupForSender({
         userId: sender.id,
@@ -371,7 +341,7 @@ export class ReceiversController {
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const receiver = await this.mapReceiverValidationFailure(() =>
       this.receiversService.tryCheckInLaterForSender({
         userId: sender.id,
@@ -394,11 +364,11 @@ export class ReceiversController {
     @Headers('authorization') authorization: string | undefined,
     @Headers('user-agent') userAgent: string | undefined,
     @Headers('x-forwarded-for') forwardedFor: string | undefined,
-    @Body() body: CreateReceiverBody,
+    @Body(new ZodBodyPipe(createReceiverBodySchema)) body: CreateReceiverBody,
   ) {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    const sender = await this.usersService.upsertFromSupabaseIdentity(identity);
+    const sender = await this.usersService.findOrCreateFromSupabaseIdentity(identity);
     const billingStatus = await this.billingService?.getBillingStatus(sender.id);
 
     if (!billingStatus?.entitled) {
@@ -411,18 +381,18 @@ export class ReceiversController {
     const receiver = await this.mapReceiverValidationFailure(() =>
       this.receiversService.createForSender({
         userId: sender.id,
-        name: body.name ?? '',
-        phone: body.phone ?? '',
+        name: body.name,
+        phone: body.phone,
         phoneCountry: body.phoneCountry,
-        countryCode: body.countryCode ?? '',
-        relationshipType: this.required(body.relationshipType, 'Receiver relationship type is required'),
-        language: body.language ?? '',
-        timezone: body.timezone ?? '',
-        techProfile: this.required(body.techProfile, 'Receiver tech profile is required'),
-        primaryChannel: this.required(body.primaryChannel, 'Receiver primary channel is required'),
-        fallbackChannels: body.fallbackChannels ?? [],
-        scheduleFrequency: body.scheduleFrequency ?? '',
-        scheduleTimeWindow: body.scheduleTimeWindow ?? {},
+        countryCode: body.countryCode,
+        relationshipType: body.relationshipType,
+        language: body.language,
+        timezone: body.timezone,
+        techProfile: body.techProfile,
+        primaryChannel: body.primaryChannel,
+        fallbackChannels: body.fallbackChannels,
+        scheduleFrequency: body.scheduleFrequency,
+        scheduleTimeWindow: body.scheduleTimeWindow,
         scheduleCustomCron: body.scheduleCustomCron,
         personalNote: body.personalNote,
         ipAddress: this.firstForwardedIp(forwardedFor),
@@ -502,21 +472,14 @@ export class ReceiversController {
     return date;
   }
 
-  private required<T>(value: T | undefined, message: string): T {
-    if (!value) {
-      throw new BadRequestException(message);
-    }
-
-    return value;
-  }
-
   private optionalText(value: string | undefined): string | undefined {
     return typeof value === 'string' ? value.trim() || undefined : undefined;
   }
 
   /**
-   * Turns the receivers services' typed failures into HTTP errors the app can act on: validation as 400, a
-   * `ReceiverRequestError` as its own 409 or 429 with `{ code, message, ...details }`.
+   * Turns the receivers services' typed failures into HTTP errors the app can act on: every `DomainError`
+   * keeps its own status and answers `{ code, message, ...details }`, and the legacy plain-`Error` messages the
+   * services can still raise stay a 400.
    */
   private async mapReceiverValidationFailure<T>(operation: () => Promise<T>): Promise<T> {
     try {
@@ -525,9 +488,8 @@ export class ReceiversController {
       if (error instanceof ReceiverScheduleValidationError) {
         throw new BadRequestException({ code: error.code, message: error.message });
       }
-      if (error instanceof ReceiverRequestError) {
-        const body = { code: error.code, message: error.message, ...error.details };
-        throw error.httpStatus === 409 ? new ConflictException(body) : new HttpException(body, error.httpStatus);
+      if (error instanceof DomainError) {
+        throw toHttpFailure(error);
       }
       if (error instanceof Error && RECEIVER_VALIDATION_MESSAGES.has(error.message)) {
         throw new BadRequestException(error.message);

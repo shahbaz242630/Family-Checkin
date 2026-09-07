@@ -1,8 +1,9 @@
 import { Channel } from '@prisma/client';
-import { UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { createHmac } from 'node:crypto';
 import type { HandleInboundReceiverReplyInput } from '../receivers/receiver-reply.service';
+import { transformBodyThroughRoute } from '../../shared/validation/route-body-metadata';
 import { ProviderWebhooksController } from './provider-webhooks.controller';
 import type { CreateProviderWebhookEventInput } from './provider-webhook-events.repository';
 
@@ -640,6 +641,62 @@ describe('ProviderWebhooksController', () => {
         payload: { MessageSid: 'SM903', channel: 'sms', bodyLength: undefined, hasButtonPayload: 'false' },
       }),
     ]);
+  });
+});
+
+describe('the body schemas keep Twilio signatures verifiable (CB-042)', () => {
+  // Twilio signs the URL followed by every posted parameter, sorted. A schema that dropped the fields the
+  // controller does not read would change that string and turn a genuine Twilio request into a 401, so the
+  // webhook schemas are deliberately loose. This spec posts a payload shaped like a real one.
+  const postedByTwilio = {
+    ToCountry: 'AE',
+    ToState: '',
+    SmsMessageSid: 'SM901',
+    NumMedia: '0',
+    ToCity: '',
+    FromZip: '',
+    SmsSid: 'SM901',
+    FromState: '',
+    SmsStatus: 'received',
+    FromCity: '',
+    Body: 'YES',
+    FromCountry: 'AE',
+    To: '+971500000000',
+    MessagingServiceSid: 'MG123',
+    ToZip: '',
+    NumSegments: '1',
+    MessageSid: 'SM901',
+    AccountSid: 'AC123',
+    From: '+971501234569',
+    ApiVersion: '2010-04-01',
+  };
+
+  it('leaves every posted field in place, so the signature still matches after validation', async () => {
+    const service = new FakeReceiverReplyService();
+    const controller = new ProviderWebhooksController(
+      service as never,
+      config,
+      new FakeProviderWebhookEventsRepository(),
+      new FakeCheckInsService() as never,
+    );
+    const signature = signatureFor('https://api.nearby.test/provider-webhooks/twilio/messaging', postedByTwilio);
+    const validated = transformBodyThroughRoute(
+      ProviderWebhooksController,
+      'handleTwilioMessagingWebhook',
+      postedByTwilio,
+    );
+
+    expect(validated).toEqual(postedByTwilio);
+    await expect(
+      controller.handleTwilioMessagingWebhook(signature, validated as never, '203.0.113.30', 'TwilioProxy/1.1'),
+    ).resolves.toEqual({ ok: true, processed: 1 });
+    expect(service.handled[0]).toMatchObject({ fromPhone: '+971501234569', body: 'YES' });
+  });
+
+  it('still refuses a body that is not a form at all', () => {
+    expect(() =>
+      transformBodyThroughRoute(ProviderWebhooksController, 'handleTwilioVoiceStatusWebhook', 'nope'),
+    ).toThrow(BadRequestException);
   });
 });
 

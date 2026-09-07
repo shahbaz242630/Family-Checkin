@@ -197,14 +197,12 @@ describe('UsersService resolves the sender for authenticated routes (CB-024)', (
     expect(repository.creates).toEqual([]);
   });
 
-  it('keeps upsertFromSupabaseIdentity as the read-or-insert path for controllers not yet renamed', async () => {
-    const repository = new InMemoryUsersRepository();
-    repository.rows.set('supabase-user-123', existingRow());
-    const service = new UsersService(repository, new CryptoService(masterKey));
+  it('has no deprecated upsert alias left for a controller to call (CB-084)', () => {
+    const service = new UsersService(new InMemoryUsersRepository(), new CryptoService(masterKey));
 
-    await expect(service.upsertFromSupabaseIdentity({ ...identity, country: 'GB' })).resolves.toEqual(existingRow());
-    expect(repository.upserts).toEqual([]);
-    expect(repository.creates).toEqual([]);
+    // The alias read like a write. Every controller now calls findOrCreateFromSupabaseIdentity, and nothing
+    // may reintroduce a second spelling of the read path.
+    expect((service as unknown as Record<string, unknown>)['upsertFromSupabaseIdentity']).toBeUndefined();
   });
 });
 

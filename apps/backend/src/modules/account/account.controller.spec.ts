@@ -42,7 +42,7 @@ function controller() {
         },
       } as unknown as SupabaseAuthService,
       {
-        upsertFromSupabaseIdentity: async () => {
+        findOrCreateFromSupabaseIdentity: async () => {
           calls.push({ upsert: true });
           return sender;
         },
@@ -54,7 +54,12 @@ function controller() {
         },
         verifyStepUp: async (input: Parameters<StepUpService['verifyStepUp']>[0]) => {
           calls.push({ verifyStepUp: input });
-          return { ok: true, stepUpToken: 'token-1', action: SensitiveAction.EXPORT_DATA, expiresAt: '2026-05-01T10:10:00.000Z' };
+          return {
+            ok: true,
+            stepUpToken: 'token-1',
+            action: SensitiveAction.EXPORT_DATA,
+            expiresAt: '2026-05-01T10:10:00.000Z',
+          };
         },
       } as unknown as StepUpService,
       {
@@ -76,9 +81,16 @@ describe('AccountController', () => {
   it('requests step-up after verifying sender auth and decrypting sender phone', async () => {
     const fixture = controller();
 
-    const result = await fixture.controller.requestStepUp('Bearer access-token', { action: SensitiveAction.EXPORT_DATA });
+    const result = await fixture.controller.requestStepUp('Bearer access-token', {
+      action: SensitiveAction.EXPORT_DATA,
+    });
 
-    expect(result).toEqual({ ok: true, challengeId: 'challenge-1', action: SensitiveAction.EXPORT_DATA, expiresAt: '2026-05-01T10:10:00.000Z' });
+    expect(result).toEqual({
+      ok: true,
+      challengeId: 'challenge-1',
+      action: SensitiveAction.EXPORT_DATA,
+      expiresAt: '2026-05-01T10:10:00.000Z',
+    });
     expect(fixture.calls).toContainEqual({
       requestStepUp: {
         userId: 'user-1',
@@ -92,19 +104,31 @@ describe('AccountController', () => {
   it('verifies step-up challenges for the authenticated sender', async () => {
     const fixture = controller();
 
-    const result = await fixture.controller.verifyStepUp('Bearer access-token', { challengeId: 'challenge-1', code: '123456' });
+    const result = await fixture.controller.verifyStepUp('Bearer access-token', {
+      challengeId: 'challenge-1',
+      code: '123456',
+    });
 
-    expect(result).toEqual({ ok: true, stepUpToken: 'token-1', action: SensitiveAction.EXPORT_DATA, expiresAt: '2026-05-01T10:10:00.000Z' });
-    expect(fixture.calls).toContainEqual({ verifyStepUp: { userId: 'user-1', challengeId: 'challenge-1', code: '123456' } });
+    expect(result).toEqual({
+      ok: true,
+      stepUpToken: 'token-1',
+      action: SensitiveAction.EXPORT_DATA,
+      expiresAt: '2026-05-01T10:10:00.000Z',
+    });
+    expect(fixture.calls).toContainEqual({
+      verifyStepUp: { userId: 'user-1', challengeId: 'challenge-1', code: '123456' },
+    });
   });
 
   it('requires a step-up token for export and delete', async () => {
     const fixture = controller();
 
-    await expect(fixture.controller.exportAccount('Bearer access-token', undefined)).rejects.toThrow('Step-up verification is required');
-    await expect(fixture.controller.deleteAccount('Bearer access-token', undefined, undefined, undefined)).rejects.toThrow(
+    await expect(fixture.controller.exportAccount('Bearer access-token', undefined)).rejects.toThrow(
       'Step-up verification is required',
     );
+    await expect(
+      fixture.controller.deleteAccount('Bearer access-token', undefined, undefined, undefined),
+    ).rejects.toThrow('Step-up verification is required');
 
     await fixture.controller.exportAccount('Bearer access-token', 'token-1');
     await fixture.controller.deleteAccount('Bearer access-token', 'token-2', '127.0.0.1', 'vitest');

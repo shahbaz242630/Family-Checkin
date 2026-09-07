@@ -110,6 +110,8 @@ nul
 # Build outputs
 build/
 *.log
+# Compiled shared-types package (apps import the built JS; the source is the truth)
+packages/shared-types/dist/
 
 # Test coverage
 coverage/

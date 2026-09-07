@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AccountModule } from './modules/account/account.module';
 import { AdminAbuseModule } from './modules/admin-abuse/admin-abuse.module';
@@ -20,6 +20,7 @@ import { UsersModule } from './modules/users/users.module';
 import { AppConfigModule } from './shared/config/app-config.module';
 import { AppConfigService, channelProviderModeFromEnv } from './shared/config/app-config.service';
 import { throttlerOptionsFromConfig } from './shared/http/http-hardening';
+import { DomainErrorInterceptor } from './shared/validation/domain-error.interceptor';
 
 @Module({
   imports: [
@@ -52,6 +53,9 @@ import { throttlerOptionsFromConfig } from './shared/http/http-hardening';
     // Global rate limit for every route; controllers that are machine-called and
     // authenticated by signature/secret opt out with @SkipThrottle().
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Every DomainError raised below a controller becomes its own 4xx with a machine-readable code, so a rule
+    // the caller broke is never a 500 (CB-042). Request bodies are validated per route by ZodBodyPipe.
+    { provide: APP_INTERCEPTOR, useClass: DomainErrorInterceptor },
   ],
 })
 export class AppModule {}

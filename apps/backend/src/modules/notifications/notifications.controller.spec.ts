@@ -1,7 +1,7 @@
 import { BadRequestException } from '@nestjs/common';
 import { describe, expect, it } from 'vitest';
 import { NotificationsController } from './notifications.controller';
-import { INVALID_PUSH_TOKEN_MESSAGE } from './notifications.service';
+import { INVALID_PUSH_TOKEN_CODE, INVALID_PUSH_TOKEN_MESSAGE, InvalidPushTokenError } from './notifications.service';
 import type { RegisterDeviceTokenInput } from './notifications.service';
 
 function fixture() {
@@ -10,11 +10,11 @@ function fixture() {
     {
       verifyAccessToken: async (token: string) => ({ id: `auth-${token}`, email: 'sender@example.com' }),
     } as never,
-    { upsertFromSupabaseIdentity: async () => ({ id: 'sender-1' }) } as never,
+    { findOrCreateFromSupabaseIdentity: async () => ({ id: 'sender-1' }) } as never,
     {
       registerDeviceToken: async (input: RegisterDeviceTokenInput) => {
         if (!/^Expo(nent)?PushToken\[[^\]]+\]$/.test(input.token)) {
-          throw new Error(INVALID_PUSH_TOKEN_MESSAGE);
+          throw new InvalidPushTokenError();
         }
         registered.push(input);
         return {
@@ -41,7 +41,7 @@ describe('NotificationsController (CB-023)', () => {
   it('registers a token for each supported platform', async () => {
     const { controller, registered } = fixture();
 
-    for (const platform of ['ios', 'android', 'web']) {
+    for (const platform of ['ios', 'android', 'web'] as const) {
       await expect(
         controller.register('Bearer access-token', '203.0.113.10', 'Nearby Mobile/1.0', {
           token: 'ExpoPushToken[abc]',
@@ -72,6 +72,9 @@ describe('NotificationsController (CB-023)', () => {
       );
       expect(error, String(platform)).toBeInstanceOf(BadRequestException);
       expect((error as BadRequestException).message).toBe('platform must be one of ios, android, web');
+      expect((error as BadRequestException).getResponse(), String(platform)).toMatchObject({
+        code: 'INVALID_PUSH_PLATFORM',
+      });
     }
     expect(registered).toEqual([]);
   });
@@ -85,6 +88,11 @@ describe('NotificationsController (CB-023)', () => {
 
     expect(error).toBeInstanceOf(BadRequestException);
     expect((error as BadRequestException).message).toBe(INVALID_PUSH_TOKEN_MESSAGE);
+    // CB-042: a refused token carries a code the app can switch on, not just prose.
+    expect((error as BadRequestException).getResponse()).toEqual({
+      code: INVALID_PUSH_TOKEN_CODE,
+      message: INVALID_PUSH_TOKEN_MESSAGE,
+    });
   });
 
   it('requires a bearer token', async () => {

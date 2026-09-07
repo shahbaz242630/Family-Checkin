@@ -188,6 +188,22 @@ describe('AppModule', () => {
       ).toBeDefined();
     });
 
+    it('registers the domain-error interceptor, so a rule the caller broke is a 4xx and not a 500 (CB-042)', async () => {
+      const { APP_INTERCEPTOR } = await import('@nestjs/core');
+      const { AppModule } = await import('./app.module');
+      const { DomainErrorInterceptor } = await import('./shared/validation/domain-error.interceptor');
+      const providers = (Reflect.getMetadata('providers', AppModule) ?? []) as {
+        provide?: unknown;
+        useClass?: unknown;
+      }[];
+
+      expect(
+        providers.some(
+          (provider) => provider?.provide === APP_INTERCEPTOR && provider?.useClass === DomainErrorInterceptor,
+        ),
+      ).toBe(true);
+    });
+
     it('maps every expected route plus the fake reply and fake outbound routes', () => {
       expect(mappedRoutes(booted.app)).toEqual([...configuredModeRoutes, ...fakeModeOnlyRoutes].sort());
     });

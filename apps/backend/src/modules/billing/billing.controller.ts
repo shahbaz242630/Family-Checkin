@@ -9,27 +9,14 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { BillingStore } from '@prisma/client';
+import { revenueCatWebhookBodySchema, type RevenueCatWebhookBody } from '@nearby/shared-types';
 import { isMatchingSecret } from '../../shared/auth/bearer-secret';
+import { ZodBodyPipe } from '../../shared/validation/zod-body.pipe';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
 import { UsersService } from '../users/users.service';
 import type { SenderRecord } from '../users/users.repository';
 import { BillingService, type RevenueCatWebhookEvent } from './billing.service';
-
-interface RevenueCatWebhookBody {
-  event?: {
-    type?: string;
-    id?: string;
-    app_user_id?: string;
-    product_id?: string;
-    entitlement_ids?: string[];
-    store?: string;
-    purchased_at_ms?: number;
-    expiration_at_ms?: number | null;
-    period_type?: string | null;
-    transaction_id?: string;
-  };
-}
 
 @Controller('billing')
 export class BillingController {
@@ -37,7 +24,7 @@ export class BillingController {
     @Inject(SupabaseAuthService)
     private readonly supabaseAuthService: Pick<SupabaseAuthService, 'verifyAccessToken'>,
     @Inject(UsersService)
-    private readonly usersService: Pick<UsersService, 'upsertFromSupabaseIdentity'>,
+    private readonly usersService: Pick<UsersService, 'findOrCreateFromSupabaseIdentity'>,
     @Inject(BillingService)
     private readonly billingService: BillingService,
     @Inject(AppConfigService)
@@ -54,7 +41,7 @@ export class BillingController {
   async handleRevenueCatWebhook(
     @Headers('authorization') authorization: string | undefined,
     @Headers('x-revenuecat-authorization') revenueCatAuthorization: string | undefined,
-    @Body() body: RevenueCatWebhookBody,
+    @Body(new ZodBodyPipe(revenueCatWebhookBodySchema)) body: RevenueCatWebhookBody,
   ) {
     this.assertRevenueCatAuth(authorization ?? revenueCatAuthorization);
     const event = this.parseRevenueCatEvent(body);
@@ -64,7 +51,7 @@ export class BillingController {
   private async authenticateSender(authorization: string | undefined): Promise<SenderRecord> {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    return this.usersService.upsertFromSupabaseIdentity(identity);
+    return this.usersService.findOrCreateFromSupabaseIdentity(identity);
   }
 
   /**

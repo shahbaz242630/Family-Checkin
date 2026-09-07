@@ -1,6 +1,23 @@
-import { Body, Controller, Delete, ForbiddenException, Get, Headers, Inject, Post, UnauthorizedException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  ForbiddenException,
+  Get,
+  Headers,
+  Inject,
+  Post,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { SensitiveAction } from '@prisma/client';
+import {
+  stepUpRequestBodySchema,
+  stepUpVerifyBodySchema,
+  type StepUpRequestBody,
+  type StepUpVerifyBody,
+} from '@nearby/shared-types';
 import { CryptoService } from '../../shared/crypto/crypto.service';
+import { ZodBodyPipe } from '../../shared/validation/zod-body.pipe';
 import { SupabaseAuthService } from '../auth/supabase-auth.service';
 import { UsersService } from '../users/users.service';
 import type { SenderRecord } from '../users/users.repository';
@@ -13,7 +30,7 @@ export class AccountController {
     @Inject(SupabaseAuthService)
     private readonly supabaseAuthService: Pick<SupabaseAuthService, 'verifyAccessToken'>,
     @Inject(UsersService)
-    private readonly usersService: Pick<UsersService, 'upsertFromSupabaseIdentity'>,
+    private readonly usersService: Pick<UsersService, 'findOrCreateFromSupabaseIdentity'>,
     @Inject(StepUpService)
     private readonly stepUpService: Pick<StepUpService, 'requestStepUp' | 'verifyStepUp'>,
     @Inject(AccountPrivacyService)
@@ -23,7 +40,10 @@ export class AccountController {
   ) {}
 
   @Post('step-up/request')
-  async requestStepUp(@Headers('authorization') authorization: string | undefined, @Body() body: { action?: SensitiveAction }) {
+  async requestStepUp(
+    @Headers('authorization') authorization: string | undefined,
+    @Body(new ZodBodyPipe(stepUpRequestBodySchema)) body: StepUpRequestBody,
+  ) {
     const sender = await this.authenticateSender(authorization);
     const action = this.parseSensitiveAction(body.action);
 
@@ -36,7 +56,10 @@ export class AccountController {
   }
 
   @Post('step-up/verify')
-  async verifyStepUp(@Headers('authorization') authorization: string | undefined, @Body() body: { challengeId?: string; code?: string }) {
+  async verifyStepUp(
+    @Headers('authorization') authorization: string | undefined,
+    @Body(new ZodBodyPipe(stepUpVerifyBodySchema)) body: StepUpVerifyBody,
+  ) {
     const sender = await this.authenticateSender(authorization);
 
     return this.stepUpService.verifyStepUp({
@@ -79,7 +102,7 @@ export class AccountController {
   private async authenticateSender(authorization: string | undefined): Promise<SenderRecord> {
     const accessToken = this.getBearerToken(authorization);
     const identity = await this.supabaseAuthService.verifyAccessToken(accessToken);
-    return this.usersService.upsertFromSupabaseIdentity(identity);
+    return this.usersService.findOrCreateFromSupabaseIdentity(identity);
   }
 
   private parseSensitiveAction(action: SensitiveAction | undefined): SensitiveAction {

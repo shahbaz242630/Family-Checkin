@@ -13,6 +13,18 @@ import {
 } from '@nestjs/common';
 import { SkipThrottle } from '@nestjs/throttler';
 import { Channel } from '@prisma/client';
+import {
+  twilioMessagingStatusWebhookBodySchema,
+  twilioMessagingWebhookBodySchema,
+  twilioVoiceAmdWebhookBodySchema,
+  twilioVoiceStatusWebhookBodySchema,
+  twilioVoiceWebhookBodySchema,
+  type TwilioMessagingStatusWebhookBody,
+  type TwilioMessagingWebhookBody,
+  type TwilioVoiceAmdWebhookBody,
+  type TwilioVoiceStatusWebhookBody,
+  type TwilioVoiceWebhookBody,
+} from '@nearby/shared-types';
 import { AppConfigService } from '../../shared/config/app-config.service';
 import {
   renderTwilioVoiceReplyTwiml,
@@ -23,6 +35,7 @@ import { CheckInsService } from '../check-ins/check-ins.service';
 import type { HandleInboundReceiverReplyInput } from '../receivers/receiver-reply.service';
 import { ReceiverReplyService } from '../receivers/receiver-reply.service';
 import type { ProviderWebhookEventsRepository } from './provider-webhook-events.repository';
+import { ZodBodyPipe } from '../../shared/validation/zod-body.pipe';
 import { PROVIDER_WEBHOOK_EVENTS_REPOSITORY } from './provider-webhooks.tokens';
 import { twilioVoiceReplyKeyword } from './twilio-voice-input';
 
@@ -30,46 +43,6 @@ interface ProviderWebhookResponse {
   ok: true;
   processed: number;
 }
-
-type TwilioMessagingWebhookBody = {
-  From?: string;
-  Body?: string;
-  ButtonText?: string;
-  ButtonPayload?: string;
-  MessageSid?: string;
-};
-
-/** Twilio `StatusCallback` for an outbound SMS or WhatsApp message; `To` is the receiver, `From` our number. */
-type TwilioMessagingStatusWebhookBody = {
-  MessageSid?: string;
-  MessageStatus?: string;
-  ErrorCode?: string;
-  To?: string;
-  From?: string;
-};
-
-type TwilioVoiceWebhookBody = {
-  From?: string;
-  To?: string;
-  Digits?: string;
-  SpeechResult?: string;
-  CallSid?: string;
-};
-
-type TwilioVoiceStatusWebhookBody = {
-  CallSid?: string;
-  CallStatus?: string;
-  CallDuration?: string;
-  From?: string;
-  To?: string;
-};
-
-type TwilioVoiceAmdWebhookBody = {
-  CallSid?: string;
-  AnsweredBy?: string;
-  From?: string;
-  To?: string;
-};
 
 /**
  * The part of the incoming request the voice route needs: the URL exactly as Twilio requested it, query string
@@ -113,7 +86,7 @@ export class ProviderWebhooksController {
   @Post('twilio/messaging')
   async handleTwilioMessagingWebhook(
     @Headers('x-twilio-signature') twilioSignature: string | undefined,
-    @Body() body: TwilioMessagingWebhookBody,
+    @Body(new ZodBodyPipe(twilioMessagingWebhookBodySchema)) body: TwilioMessagingWebhookBody,
     @Ip() ipAddress?: string,
     @Headers('user-agent') userAgent?: string,
   ): Promise<ProviderWebhookResponse> {
@@ -153,7 +126,7 @@ export class ProviderWebhooksController {
   @Post('twilio/messaging/status')
   async handleTwilioMessagingStatusWebhook(
     @Headers('x-twilio-signature') twilioSignature: string | undefined,
-    @Body() body: TwilioMessagingStatusWebhookBody,
+    @Body(new ZodBodyPipe(twilioMessagingStatusWebhookBodySchema)) body: TwilioMessagingStatusWebhookBody,
   ): Promise<ProviderWebhookResponse> {
     this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/messaging/status', body);
 
@@ -199,7 +172,7 @@ export class ProviderWebhooksController {
   @Header('Content-Type', 'text/xml; charset=utf-8')
   async handleTwilioVoiceWebhook(
     @Headers('x-twilio-signature') twilioSignature: string | undefined,
-    @Body() body: TwilioVoiceWebhookBody,
+    @Body(new ZodBodyPipe(twilioVoiceWebhookBodySchema)) body: TwilioVoiceWebhookBody,
     @Req() request: WebhookRequestUrl | undefined,
     @Ip() ipAddress?: string,
     @Headers('user-agent') userAgent?: string,
@@ -219,7 +192,7 @@ export class ProviderWebhooksController {
   @Post('twilio/voice/status')
   async handleTwilioVoiceStatusWebhook(
     @Headers('x-twilio-signature') twilioSignature: string | undefined,
-    @Body() body: TwilioVoiceStatusWebhookBody,
+    @Body(new ZodBodyPipe(twilioVoiceStatusWebhookBodySchema)) body: TwilioVoiceStatusWebhookBody,
   ): Promise<ProviderWebhookResponse> {
     this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/voice/status', body);
     const stored = await this.providerWebhookEventsRepository.createEventIfAbsent({
@@ -227,7 +200,7 @@ export class ProviderWebhooksController {
       eventType: 'voice_status',
       providerEventId: this.twilioProviderEventId(body.CallSid, body.CallStatus),
       providerMessageId: body.CallSid,
-      payload: body,
+      payload: body as Record<string, string | undefined>,
     });
     // The transition is status-guarded, so running it again on a replay is harmless and covers a retry after a
     // failure between the store and the transition.
@@ -242,7 +215,7 @@ export class ProviderWebhooksController {
   @Post('twilio/voice/amd')
   async handleTwilioVoiceAmdWebhook(
     @Headers('x-twilio-signature') twilioSignature: string | undefined,
-    @Body() body: TwilioVoiceAmdWebhookBody,
+    @Body(new ZodBodyPipe(twilioVoiceAmdWebhookBodySchema)) body: TwilioVoiceAmdWebhookBody,
   ): Promise<ProviderWebhookResponse> {
     this.assertTwilioSignature(twilioSignature, '/provider-webhooks/twilio/voice/amd', body);
     const stored = await this.providerWebhookEventsRepository.createEventIfAbsent({
@@ -250,7 +223,7 @@ export class ProviderWebhooksController {
       eventType: 'voice_amd',
       providerEventId: this.twilioProviderEventId(body.CallSid, body.AnsweredBy),
       providerMessageId: body.CallSid,
-      payload: body,
+      payload: body as Record<string, string | undefined>,
     });
     await this.checkInsService.recordVoiceProviderFailure({
       providerMessageId: body.CallSid,
@@ -356,7 +329,7 @@ export class ProviderWebhooksController {
   private assertTwilioSignature(
     twilioSignature: string | undefined,
     path: TwilioSignedPath,
-    params: Record<string, string | undefined>,
+    params: Record<string, unknown>,
     queryString = '',
   ): void {
     const authToken = this.config.twilioAuthToken;
@@ -373,11 +346,11 @@ export class ProviderWebhooksController {
     }
   }
 
-  private computeTwilioSignature(url: string, params: Record<string, string | undefined>, authToken: string): string {
+  private computeTwilioSignature(url: string, params: Record<string, unknown>, authToken: string): string {
     const data = Object.keys(params)
       .filter((key) => params[key] !== undefined)
       .sort()
-      .reduce((accumulator, key) => `${accumulator}${key}${params[key]}`, url);
+      .reduce((accumulator, key) => `${accumulator}${key}${String(params[key])}`, url);
 
     return createHmac('sha1', authToken).update(data).digest('base64');
   }
