@@ -33,16 +33,17 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text-summary', 'lcov', 'html'],
       reportsDirectory: 'coverage',
-      // Ratchet (CB-055, "+5 per sprint"). Raised on 2026-09-07 after sprint 3
-      // wave 2 measured lines 59.65%, statements 58.96%, functions 60.7%,
-      // branches 53.0% — the floor sits a few points under the measurement so
-      // an unrelated PR does not trip it. Raise as tests land; lowering needs a
-      // reason in the PR.
+      // Ratchet (CB-055, "+5 per sprint"). Raised again on 2026-09-07 after
+      // sprint 4 wave 1 measured lines 62.5%, statements 61.69%, functions
+      // 62.28%, branches 55.87% — the floor sits a few points under the
+      // measurement so an unrelated PR does not trip it. Enforced by CI through
+      // `npm run test:coverage`; `npm run verify` alone does not exercise it.
+      // Raise as tests land; lowering needs a reason in the PR.
       thresholds: {
-        lines: 55,
-        statements: 54,
-        functions: 56,
-        branches: 48,
+        lines: 60,
+        statements: 59,
+        functions: 60,
+        branches: 53,
       },
       include: ['apps/backend/src/**', 'apps/mobile/src/**', 'packages/shared-types/**', 'scripts/**'],
       exclude: [

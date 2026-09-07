@@ -6,13 +6,13 @@ import {
   signUpWithEmail,
   signInWithGoogle,
   signInWithApple,
-  signOut as authSignOut,
   resetPassword,
   getCurrentSession,
   onAuthStateChange,
   type AuthError,
   type SenderSignupMetadata,
 } from '../services/auth';
+import { signOutEverywhere } from '../services/signOutEverywhere';
 
 interface UseAuthReturn {
   user: User | null;
@@ -58,7 +58,9 @@ export function useAuth(): UseAuthReturn {
     initAuth();
 
     // Listen for auth changes
-    const { data: { subscription } } = onAuthStateChange((event, newSession) => {
+    const {
+      data: { subscription },
+    } = onAuthStateChange((event, newSession) => {
       if (mounted) {
         setSession(newSession);
         setUser(newSession?.user ?? null);
@@ -91,26 +93,24 @@ export function useAuth(): UseAuthReturn {
     return true;
   }, []);
 
-  const signUp = useCallback(async (
-    email: string,
-    password: string,
-    fullName: string,
-    metadata?: SenderSignupMetadata,
-  ): Promise<boolean> => {
-    setLoading(true);
-    setError(null);
+  const signUp = useCallback(
+    async (email: string, password: string, fullName: string, metadata?: SenderSignupMetadata): Promise<boolean> => {
+      setLoading(true);
+      setError(null);
 
-    const result = await signUpWithEmail(email, password, fullName, metadata);
+      const result = await signUpWithEmail(email, password, fullName, metadata);
 
-    setLoading(false);
+      setLoading(false);
 
-    if (result.error) {
-      setError(result.error);
-      return false;
-    }
+      if (result.error) {
+        setError(result.error);
+        return false;
+      }
 
-    return true;
-  }, []);
+      return true;
+    },
+    [],
+  );
 
   const signInGoogle = useCallback(async (metadata?: SenderSignupMetadata): Promise<boolean> => {
     setLoading(true);
@@ -146,8 +146,11 @@ export function useAuth(): UseAuthReturn {
 
   const signOut = useCallback(async (): Promise<void> => {
     setLoading(true);
-    await authSignOut();
-    setLoading(false);
+    try {
+      await signOutEverywhere();
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   const forgotPassword = useCallback(async (email: string): Promise<boolean> => {
