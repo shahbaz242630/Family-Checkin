@@ -292,6 +292,21 @@ async function readEmergencyChannel(notifications: ExpoNotificationsModule): Pro
   };
 }
 
+/**
+ * Creates the emergency-alert channel, asking for Do Not Disturb bypass (CB-031).
+ *
+ * Two Android rules make this a request rather than a setting:
+ *
+ * 1. `bypassDnd` is only honoured if the user has granted Nearby notification-policy
+ *    access in system settings. Without it Android ignores the flag silently — no
+ *    error, no warning. `readEmergencyChannel` reads the channel back so the
+ *    security screen can say which way it actually went.
+ * 2. A channel's importance and bypass are fixed at creation. Re-running this with
+ *    different values does not change an existing channel, so a device that already
+ *    has `emergency-alerts` keeps whatever it was created with until the app is
+ *    reinstalled. That is acceptable today because nothing is installed anywhere,
+ *    but it means this must be right before the first store build.
+ */
 async function ensureEmergencyAlertChannel(notifications: ExpoNotificationsModule): Promise<void> {
   if (Platform.OS !== 'android' || !notifications.setNotificationChannelAsync) {
     return;
@@ -302,7 +317,7 @@ async function ensureEmergencyAlertChannel(notifications: ExpoNotificationsModul
     importance: notifications.AndroidImportance?.MAX ?? notifications.AndroidImportance?.HIGH ?? 'max',
     sound: EMERGENCY_ALERT_SOUND,
     vibrationPattern: EMERGENCY_ALERT_VIBRATION_PATTERN,
-    bypassDnd: false,
+    bypassDnd: true,
     enableVibrate: true,
     lockscreenVisibility: notifications.AndroidNotificationVisibility?.PUBLIC ?? 1,
   });

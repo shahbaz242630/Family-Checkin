@@ -2,12 +2,10 @@
 //
 // It is a module rather than JSON so that `android.googleServicesFile` can read
 // `process.env.GOOGLE_SERVICES_JSON`, an EAS file environment variable, which a
-// static file cannot do. That line is **not here yet**: no Firebase project
-// exists, and pointing `googleServicesFile` at a missing file fails the Android
-// build outright. Adding it is CB-031's job, and this conversion is what makes
-// it possible. See `docs/providers/store-and-push-keys.md`.
+// static file cannot do (CB-031).
 //
-// Everything here is public: identifiers, not credentials.
+// Everything committed here is public: identifiers, not credentials.
+// `google-services.json` itself is gitignored and lives on EAS.
 //
 // This file is on the protected list in `docs/handoffs/auth-and-accounts.md`
 // (it inherited `app.json`'s place there); changes need explicit approval.
@@ -51,6 +49,12 @@ module.exports = {
       },
       package: 'com.familycheckin.app',
       versionCode: 1,
+      // FCM config for Android push (CB-031). On EAS this resolves to the
+      // secret file variable uploaded with `eas env:create --type file`; the
+      // local fallback is the gitignored copy that `firebase apps:sdkconfig`
+      // writes. The file carries a project id and an app-restricted API key,
+      // which is why it never enters a public repository.
+      googleServicesFile: process.env.GOOGLE_SERVICES_JSON ?? './google-services.json',
       edgeToEdgeEnabled: true,
       permissions: ['android.permission.RECEIVE_BOOT_COMPLETED', 'android.permission.VIBRATE'],
       intentFilters: [

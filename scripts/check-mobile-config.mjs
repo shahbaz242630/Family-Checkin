@@ -64,6 +64,15 @@ export function findMobileConfigProblems({ easJsonText, expoConfig }) {
     problems.push('ios.buildNumber is missing; App Store Connect rejects a build without one.');
   }
 
+  // CB-031. Without this the Android binary has no FCM sender config and no
+  // device can ever receive a push — a failure with no error message anywhere.
+  if (!expoConfig?.android?.googleServicesFile) {
+    problems.push(
+      'android.googleServicesFile is missing; Android push cannot work without the FCM config baked in. ' +
+        'It should read process.env.GOOGLE_SERVICES_JSON, the secret file variable on EAS.',
+    );
+  }
+
   return problems;
 }
 
@@ -76,7 +85,9 @@ function main() {
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
-  console.log('Mobile config check passed: no ${} interpolation, projectId/owner/versionCode/buildNumber all set.');
+  console.log(
+    'Mobile config check passed: no ${} interpolation; projectId, owner, versionCode, buildNumber and googleServicesFile all set.',
+  );
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
