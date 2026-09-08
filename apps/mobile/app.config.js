@@ -97,7 +97,10 @@ module.exports = {
       [
         'expo-notifications',
         {
-          sounds: ['./assets/sounds/escalation-siren.wav'],
+          // The filename becomes an Android `res/raw` resource name, which allows
+          // only [a-z0-9_]. A hyphen here fails prebuild — see CB-089. Must match
+          // `EMERGENCY_ALERT_SOUND` in the app and the backend push payload.
+          sounds: ['./assets/sounds/escalation_siren.wav'],
         },
       ],
       'expo-secure-store',

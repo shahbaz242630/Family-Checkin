@@ -75,7 +75,7 @@ describe('push notification registration', () => {
     expect(setNotificationChannelAsync).toHaveBeenCalledWith('emergency-alerts', {
       name: 'Emergency alerts',
       importance: 'max',
-      sound: 'escalation-siren.wav',
+      sound: 'escalation_siren.wav',
       vibrationPattern: [0, 500, 250, 500, 250, 500],
       // Requested, not guaranteed: Android grants it only if the user has given
       // Nearby Do Not Disturb access, and silently ignores it otherwise. The
@@ -117,7 +117,7 @@ describe('siren test (CB-035)', () => {
     expect(scheduleNotificationAsync).toHaveBeenCalledTimes(1);
 
     const request = scheduleNotificationAsync.mock.calls[0][0];
-    expect(request.content.sound).toBe('escalation-siren.wav');
+    expect(request.content.sound).toBe('escalation_siren.wav');
     expect(request.content.interruptionLevel).toBe('timeSensitive');
     expect(request.content.priority).toBe('max');
     expect(request.content.vibrate).toEqual([0, 500, 250, 500, 250, 500]);
@@ -142,7 +142,7 @@ describe('siren test (CB-035)', () => {
 
     expect(setNotificationChannelAsync).toHaveBeenCalledWith(
       'emergency-alerts',
-      expect.objectContaining({ sound: 'escalation-siren.wav' }),
+      expect.objectContaining({ sound: 'escalation_siren.wav' }),
     );
     expect(setNotificationChannelAsync.mock.invocationCallOrder[0]).toBeLessThan(
       scheduleNotificationAsync.mock.invocationCallOrder[0],
