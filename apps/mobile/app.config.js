@@ -17,7 +17,12 @@ module.exports = {
     version: '1.0.0',
     orientation: 'portrait',
     icon: './assets/icon.png',
-    userInterfaceStyle: 'automatic',
+    // The app ships one light theme — there is no `useColorScheme` or
+    // `Appearance` call anywhere in `src`. `automatic` claimed a behaviour it
+    // does not implement, and without `expo-system-ui` it did nothing but emit
+    // a prebuild warning (CB-090). Change this back when a dark theme exists,
+    // and install `expo-system-ui` in the same change.
+    userInterfaceStyle: 'light',
     newArchEnabled: true,
     scheme: 'familycheckin',
     splash: {
