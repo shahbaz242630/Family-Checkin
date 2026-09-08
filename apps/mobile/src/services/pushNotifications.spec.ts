@@ -77,7 +77,10 @@ describe('push notification registration', () => {
       importance: 'max',
       sound: 'escalation-siren.wav',
       vibrationPattern: [0, 500, 250, 500, 250, 500],
-      bypassDnd: false,
+      // Requested, not guaranteed: Android grants it only if the user has given
+      // Nearby Do Not Disturb access, and silently ignores it otherwise. The
+      // security screen reads the channel back and says which way it went.
+      bypassDnd: true,
       enableVibrate: true,
       lockscreenVisibility: 1,
     });

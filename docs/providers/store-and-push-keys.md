@@ -58,10 +58,12 @@ is now `apps/mobile/app.config.js` (#49, CB-027). `app.config.js` inherited
 `docs/handoffs/auth-and-accounts.md`, so it still needs explicit approval to
 change.
 
-The `googleServicesFile` line itself is deliberately **not** in the config yet.
-Pointing at a file that does not exist fails an Android build outright, and no
-Firebase project has been created. Adding those three lines is the whole of
-CB-031's config work once `google-services.json` exists.
+Both halves are now done (#50, CB-031). `GOOGLE_SERVICES_JSON` is a
+**file-type, secret** EAS environment variable in all three environments, and
+`app.config.js` reads it with a gitignored local file as the fallback. The
+Firebase project is `nearby-family-checkin`; the Android app inside it is
+registered against `com.familycheckin.app`, which FCM matches exactly — a
+different package would silently receive nothing.
 
 ## Identifiers, which are not secrets
 
@@ -75,7 +77,7 @@ These are public by design and belong in committed config:
 | EAS project ID (UUID) | `app.config.js` → `extra.eas.projectId` | set: `ddb699e2-f321-4f9e-8c17-64eeefc4cfd3` (2026-09-08) |
 | Expo owner | `app.config.js` → `expo.owner` | set: `shahbaz242630` (2026-09-08) |
 | Apple Team ID | `eas.json` submit profile | **absent** — needed for the first `eas submit --platform ios` (CB-027) |
-| Firebase project ID | inside `google-services.json` | **absent** (CB-031) |
+| Firebase project ID | inside `google-services.json` | set: `nearby-family-checkin` (2026-09-08) |
 
 ## What is still open
 
@@ -98,7 +100,9 @@ Still open:
   without them; billing simply will not work in a build until they exist.
 - **Apple Team ID** is absent from the `eas.json` submit profile. Needed for
   the first iOS submission, not for a build.
-- `android.googleServicesFile` and the Firebase project. CB-031.
+- **iOS push is not configured.** APNs needs an Apple push key uploaded to EAS,
+  which is a separate credential from anything here. Android only, today.
+
 
 ## A trap in `.gitignore`
 

@@ -4,7 +4,7 @@ import { findMobileConfigProblems, readExpoConfig } from './check-mobile-config.
 const soundConfig = {
   owner: 'an-account',
   ios: { buildNumber: '1' },
-  android: { versionCode: 1 },
+  android: { versionCode: 1, googleServicesFile: './google-services.json' },
   extra: { eas: { projectId: 'ddb699e2-f321-4f9e-8c17-64eeefc4cfd3' } },
 };
 
@@ -43,6 +43,13 @@ describe('findMobileConfigProblems', () => {
     ]);
   });
 
+  it('catches a missing googleServicesFile, without which Android push cannot work', () => {
+    const expoConfig = { ...soundConfig, android: { versionCode: 1 } };
+    expect(findMobileConfigProblems({ easJsonText: soundEasJson, expoConfig })).toEqual([
+      expect.stringContaining('googleServicesFile is missing'),
+    ]);
+  });
+
   it('reports every missing store identifier at once rather than one per run', () => {
     const problems = findMobileConfigProblems({
       easJsonText: soundEasJson,
@@ -52,6 +59,7 @@ describe('findMobileConfigProblems', () => {
       expect.stringContaining('owner is missing'),
       expect.stringContaining('versionCode is missing'),
       expect.stringContaining('buildNumber is missing'),
+      expect.stringContaining('googleServicesFile is missing'),
     ]);
   });
 });
