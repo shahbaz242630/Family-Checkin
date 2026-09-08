@@ -58,8 +58,16 @@ type ExpoNotificationsModule = {
 };
 
 export const EMERGENCY_ALERT_CHANNEL_ID = 'emergency-alerts';
-/** Must stay identical to the backend push payload and the `sounds` array in app.json. */
-export const EMERGENCY_ALERT_SOUND = 'escalation-siren.wav';
+/**
+ * Must stay identical to the backend push payload and the `sounds` array in `app.config.js`.
+ *
+ * The underscore is not cosmetic. `expo-notifications` copies this into an Android
+ * `res/raw` resource, and Android resource names accept only `[a-z0-9_]` — the
+ * hyphen this file used until CB-089 failed prebuild, so no Android build could
+ * ever be produced. A channel id like `emergency-alerts` is unaffected: that is a
+ * runtime string, not a resource name.
+ */
+export const EMERGENCY_ALERT_SOUND = 'escalation_siren.wav';
 const EMERGENCY_ALERT_VIBRATION_PATTERN = [0, 500, 250, 500, 250, 500];
 
 /** Long enough for the sender to lock the phone before the siren fires (CB-035). */
@@ -152,7 +160,7 @@ export type SirenTestOutcome = { scheduled: true; delaySeconds: number } | { sch
 
 /**
  * Whether a siren test can honestly be run here. Expo Go is excluded because it
- * does not bundle `escalation-siren.wav`: the notification would arrive with the
+ * does not bundle `escalation_siren.wav`: the notification would arrive with the
  * default sound and tell the sender the siren works when nothing was proven.
  */
 export function sirenTestAvailability(): SirenTestAvailability {

@@ -70,7 +70,10 @@ export interface SendUserPushResult {
   sentAt?: Date;
 }
 
-const ESCALATION_SIREN_SOUND = 'escalation-siren.wav';
+// Must match `EMERGENCY_ALERT_SOUND` in the app and the `sounds` array in
+// `app.config.js`. The underscore is required: Android turns this into a
+// `res/raw` resource name, which cannot contain a hyphen (CB-089).
+const ESCALATION_SIREN_SOUND = 'escalation_siren.wav';
 const DEFAULT_DEEP_LINK = '/(main)';
 export const QUIET_UPDATE_NOTIFICATION_TYPE = 'quiet_update';
 
