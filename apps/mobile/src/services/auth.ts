@@ -55,7 +55,7 @@ export async function signUpWithEmail(
   email: string,
   password: string,
   fullName: string,
-  metadata?: SenderSignupMetadata
+  metadata?: SenderSignupMetadata,
 ): Promise<AuthResult> {
   try {
     const { data, error } = await supabase.auth.signUp({
@@ -133,10 +133,7 @@ export async function signInWithGoogle(metadata?: SenderSignupMetadata): Promise
 
     if (data?.url) {
       // Open the OAuth URL in the browser
-      const result = await WebBrowser.openAuthSessionAsync(
-        data.url,
-        redirectTo
-      );
+      const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
 
       if (result.type === 'success' && result.url) {
         const handleResult = await handleAuthDeepLink(result.url);
@@ -264,20 +261,22 @@ export async function signOut(): Promise<{ error: AuthError | null }> {
 
 // Get Current Session
 export async function getCurrentSession(): Promise<Session | null> {
-  const { data: { session } } = await supabase.auth.getSession();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
   return session;
 }
 
 // Get Current User
 export async function getCurrentUser(): Promise<User | null> {
-  const { data: { user } } = await supabase.auth.getUser();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
   return user;
 }
 
 // Listen to auth state changes
-export function onAuthStateChange(
-  callback: (event: string, session: Session | null) => void
-) {
+export function onAuthStateChange(callback: (event: string, session: Session | null) => void) {
   return supabase.auth.onAuthStateChange((event, session) => {
     callback(event, session);
   });

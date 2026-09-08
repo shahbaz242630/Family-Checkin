@@ -1,7 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { ActorType, BillingInterval, BillingStore, SubscriptionStatus, SubscriptionTier } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
-import type { BillingRepository, LocalSubscriptionRecord, UpsertRevenueCatSubscriptionInput } from './billing.repository';
+import type {
+  BillingRepository,
+  LocalSubscriptionRecord,
+  UpsertRevenueCatSubscriptionInput,
+} from './billing.repository';
 import { BILLING_REPOSITORY } from './billing.tokens';
 
 export interface BillingStatusResponse {
@@ -146,7 +150,9 @@ export class BillingService {
       case 'BILLING_ISSUE':
         return SubscriptionStatus.PAST_DUE;
       default:
-        return event.expirationAt && event.expirationAt > this.now() ? SubscriptionStatus.ACTIVE : SubscriptionStatus.CANCELED;
+        return event.expirationAt && event.expirationAt > this.now()
+          ? SubscriptionStatus.ACTIVE
+          : SubscriptionStatus.CANCELED;
     }
   }
 

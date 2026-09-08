@@ -53,9 +53,9 @@ describe('AdminAuthService', () => {
   it('rejects missing, inactive, and disallowed-role admins', async () => {
     const supabaseAuth = new FakeSupabaseAuthService() as unknown as SupabaseAuthService;
 
-    await expect(new AdminAuthService(supabaseAuth, new FakeAdminUsersRepository(null)).verifyAdminAccessToken('token')).rejects.toBeInstanceOf(
-      ForbiddenException,
-    );
+    await expect(
+      new AdminAuthService(supabaseAuth, new FakeAdminUsersRepository(null)).verifyAdminAccessToken('token'),
+    ).rejects.toBeInstanceOf(ForbiddenException);
     await expect(
       new AdminAuthService(
         supabaseAuth,

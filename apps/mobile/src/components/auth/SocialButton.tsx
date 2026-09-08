@@ -43,9 +43,7 @@ export function SocialButton({
         <ActivityIndicator size="small" color={colors.text} />
       ) : (
         <>
-          <Text style={[styles.icon, { color: config.iconColor }]}>
-            {config.icon}
-          </Text>
+          <Text style={[styles.icon, { color: config.iconColor }]}>{config.icon}</Text>
           <Text style={styles.label}>
             {actionText} {config.label}
           </Text>

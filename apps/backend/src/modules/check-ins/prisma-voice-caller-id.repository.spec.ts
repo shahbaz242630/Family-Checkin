@@ -9,7 +9,9 @@ describe('PrismaVoiceCallerIdRepository', () => {
     });
     const repository = new PrismaVoiceCallerIdRepository(prisma as never);
 
-    await expect(repository.resolveForReceiver({ receiverId: 'receiver-1', countryCode: 'AE' })).resolves.toBe('+15550001111');
+    await expect(repository.resolveForReceiver({ receiverId: 'receiver-1', countryCode: 'AE' })).resolves.toBe(
+      '+15550001111',
+    );
 
     expect(prisma.voiceCallerIdPool.findFirstCalls).toEqual([]);
     expect(prisma.receiverVoiceCallerIdAssignment.createCalls).toEqual([]);
@@ -21,7 +23,9 @@ describe('PrismaVoiceCallerIdRepository', () => {
     });
     const repository = new PrismaVoiceCallerIdRepository(prisma as never, () => new Date('2026-05-10T19:00:00.000Z'));
 
-    await expect(repository.resolveForReceiver({ receiverId: 'receiver-2', countryCode: 'AE' })).resolves.toBe('+15550002222');
+    await expect(repository.resolveForReceiver({ receiverId: 'receiver-2', countryCode: 'AE' })).resolves.toBe(
+      '+15550002222',
+    );
 
     expect(prisma.voiceCallerIdPool.findFirstCalls).toEqual([
       {
@@ -47,7 +51,9 @@ describe('PrismaVoiceCallerIdRepository', () => {
     const prisma = new FakePrismaVoiceCallerIdClient({ selectedPool: null });
     const repository = new PrismaVoiceCallerIdRepository(prisma as never);
 
-    await expect(repository.resolveForReceiver({ receiverId: 'receiver-3', countryCode: 'AE' })).resolves.toBeUndefined();
+    await expect(
+      repository.resolveForReceiver({ receiverId: 'receiver-3', countryCode: 'AE' }),
+    ).resolves.toBeUndefined();
     expect(prisma.receiverVoiceCallerIdAssignment.createCalls).toEqual([]);
     expect(prisma.voiceCallerIdPool.updateCalls).toEqual([]);
   });
@@ -59,7 +65,9 @@ describe('PrismaVoiceCallerIdRepository', () => {
     });
     const repository = new PrismaVoiceCallerIdRepository(prisma as never);
 
-    await expect(repository.resolveForReceiver({ receiverId: 'receiver-4', countryCode: 'AE' })).resolves.toBeUndefined();
+    await expect(
+      repository.resolveForReceiver({ receiverId: 'receiver-4', countryCode: 'AE' }),
+    ).resolves.toBeUndefined();
 
     expect(prisma.receiverVoiceCallerIdAssignment.findFirstCalls).toEqual([
       {

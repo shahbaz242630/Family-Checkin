@@ -142,7 +142,9 @@ describe('AdminAbuseController', () => {
         allowedRoles: [AdminRole.SUPER_ADMIN, AdminRole.OPERATOR],
       },
     ]);
-    expect(abuse.calls).toEqual([{ method: 'markSafe', abuseReportId: 'abuse-report-1', input: { adminId: 'admin-1' } }]);
+    expect(abuse.calls).toEqual([
+      { method: 'markSafe', abuseReportId: 'abuse-report-1', input: { adminId: 'admin-1' } },
+    ]);
     expect(response.abuseReport.reviewStatus).toBe(AbuseReportStatus.REVIEWED_SAFE);
   });
 

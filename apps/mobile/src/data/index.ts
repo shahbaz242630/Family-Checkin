@@ -14,16 +14,8 @@ export {
 } from './constants';
 export type { CountryOption } from './countries';
 
-export {
-  LANGUAGES,
-  getLanguage,
-} from './languages';
+export { LANGUAGES, getLanguage } from './languages';
 export type { LanguageOption } from './languages';
 
-export {
-  TIMEZONES,
-  getAvailableTimezones,
-  searchTimezones,
-  getTimezone,
-} from './timezones';
+export { TIMEZONES, getAvailableTimezones, searchTimezones, getTimezone } from './timezones';
 export type { TimezoneOption } from './timezones';

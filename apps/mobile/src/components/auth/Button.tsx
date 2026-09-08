@@ -11,14 +11,7 @@ interface ButtonProps {
   style?: StyleProp<ViewStyle>;
 }
 
-export function Button({
-  title,
-  onPress,
-  loading = false,
-  disabled = false,
-  variant = 'primary',
-  style,
-}: ButtonProps) {
+export function Button({ title, onPress, loading = false, disabled = false, variant = 'primary', style }: ButtonProps) {
   const isDisabled = disabled || loading;
 
   return (
@@ -36,10 +29,7 @@ export function Button({
       disabled={isDisabled}
     >
       {loading ? (
-        <ActivityIndicator
-          size="small"
-          color={variant === 'primary' ? colors.textOnPrimary : colors.primary}
-        />
+        <ActivityIndicator size="small" color={variant === 'primary' ? colors.textOnPrimary : colors.primary} />
       ) : (
         <Text
           style={[

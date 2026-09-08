@@ -68,7 +68,10 @@ export class PrismaBackupContactsRepository implements BackupContactsRepository 
     return contact ? this.toRecord(contact) : null;
   }
 
-  async findManyForReceiverForUser(input: { userId: string; receiverId: string }): Promise<BackupContactRecord[] | null> {
+  async findManyForReceiverForUser(input: {
+    userId: string;
+    receiverId: string;
+  }): Promise<BackupContactRecord[] | null> {
     const ownsReceiver = await this.receiverExistsForUser(input);
     if (!ownsReceiver) {
       return null;

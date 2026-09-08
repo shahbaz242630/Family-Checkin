@@ -11,19 +11,9 @@ interface MenuItemProps {
   rightElement?: React.ReactNode;
 }
 
-export function MenuItem({
-  icon,
-  label,
-  onPress,
-  isActive = false,
-  showChevron = false,
-  rightElement,
-}: MenuItemProps) {
+export function MenuItem({ icon, label, onPress, isActive = false, showChevron = false, rightElement }: MenuItemProps) {
   return (
-    <Pressable
-      style={[styles.container, isActive && styles.containerActive]}
-      onPress={onPress}
-    >
+    <Pressable style={[styles.container, isActive && styles.containerActive]} onPress={onPress}>
       <View style={styles.left}>
         <Text style={[styles.icon, isActive && styles.iconActive]}>{icon}</Text>
         <Text style={[styles.label, isActive && styles.labelActive]}>{label}</Text>

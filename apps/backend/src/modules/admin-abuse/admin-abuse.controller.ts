@@ -1,4 +1,13 @@
-import { Controller, Get, Headers, Inject, NotFoundException, Param, Patch, UnauthorizedException } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Headers,
+  Inject,
+  NotFoundException,
+  Param,
+  Patch,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { AdminRole } from '@prisma/client';
 import { AdminAuthService } from '../auth/admin-auth.service';
 import { AdminAbuseService } from './admin-abuse.service';
@@ -11,7 +20,10 @@ export class AdminAbuseController {
     @Inject(AdminAuthService)
     private readonly adminAuthService: Pick<AdminAuthService, 'verifyAdminAccessToken'>,
     @Inject(AdminAbuseService)
-    private readonly adminAbuseService: Pick<AdminAbuseService, 'listPendingReports' | 'getReport' | 'markSafe' | 'markActionTaken'>,
+    private readonly adminAbuseService: Pick<
+      AdminAbuseService,
+      'listPendingReports' | 'getReport' | 'markSafe' | 'markActionTaken'
+    >,
   ) {}
 
   @Get()

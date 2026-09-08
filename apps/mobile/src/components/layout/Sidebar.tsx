@@ -42,10 +42,7 @@ export function Sidebar() {
       <Pressable style={styles.backdrop} onPress={closeSidebar} />
 
       <Animated.View
-        style={[
-          styles.sidebar,
-          { paddingTop: insets.top + spacing.md, transform: [{ translateX: slideAnim }] },
-        ]}
+        style={[styles.sidebar, { paddingTop: insets.top + spacing.md, transform: [{ translateX: slideAnim }] }]}
       >
         <View style={styles.header}>
           <Text style={styles.logo}>Nearby</Text>

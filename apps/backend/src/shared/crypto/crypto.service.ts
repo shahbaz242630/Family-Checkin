@@ -23,10 +23,7 @@ export class CryptoService {
   decrypt(ciphertext: string): string {
     const buffer = Buffer.from(ciphertext, 'base64');
     const iv = buffer.subarray(0, GCM_IV_LENGTH_BYTES);
-    const authTag = buffer.subarray(
-      GCM_IV_LENGTH_BYTES,
-      GCM_IV_LENGTH_BYTES + GCM_AUTH_TAG_LENGTH_BYTES,
-    );
+    const authTag = buffer.subarray(GCM_IV_LENGTH_BYTES, GCM_IV_LENGTH_BYTES + GCM_AUTH_TAG_LENGTH_BYTES);
     const encrypted = buffer.subarray(GCM_IV_LENGTH_BYTES + GCM_AUTH_TAG_LENGTH_BYTES);
     const decipher = createDecipheriv('aes-256-gcm', this.masterKey, iv);
 

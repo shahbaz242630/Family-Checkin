@@ -1,14 +1,6 @@
 // Phone input with country code selector
 import { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  Modal,
-  FlatList,
-  StyleSheet,
-} from 'react-native';
+import { View, Text, TextInput, Pressable, Modal, FlatList, StyleSheet } from 'react-native';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
 import { COUNTRY_CODES } from '../../data/constants';
 

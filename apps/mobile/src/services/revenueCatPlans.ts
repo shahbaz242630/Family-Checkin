@@ -30,10 +30,14 @@ export function revenueCatPlanOptionsFromOffering(offering?: RevenueCatPlanOffer
   const annual = offering?.annual;
 
   if (monthly) {
-    plans.push(planOption('MONTHLY', 'Monthly', 'Flexible monthly access through App Store or Google Play billing.', monthly));
+    plans.push(
+      planOption('MONTHLY', 'Monthly', 'Flexible monthly access through App Store or Google Play billing.', monthly),
+    );
   }
   if (annual) {
-    plans.push(planOption('ANNUAL', 'Annual', 'One yearly subscription through App Store or Google Play billing.', annual));
+    plans.push(
+      planOption('ANNUAL', 'Annual', 'One yearly subscription through App Store or Google Play billing.', annual),
+    );
   }
 
   return plans;

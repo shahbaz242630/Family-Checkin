@@ -1,14 +1,6 @@
 // Reset Password screen - Enter new password after clicking email link
 import { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  ScrollView,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, StyleSheet, KeyboardAvoidingView, Platform, ScrollView, ActivityIndicator } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { colors, spacing, fontSize, borderRadius } from '../../theme';
@@ -55,7 +47,9 @@ export default function ResetPasswordScreen() {
     // No outcome yet: check if we already have a valid session (user might have navigated here).
     const checkExistingSession = async () => {
       try {
-        const { data: { session } } = await supabase.auth.getSession();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
         if (cancelled) return;
 
         if (session) {
@@ -165,11 +159,7 @@ export default function ResetPasswordScreen() {
             onPress={() => router.replace('/(auth)/forgot-password')}
             style={styles.actionButton}
           />
-          <Button
-            title="Back to login"
-            onPress={() => router.replace('/(auth)/login')}
-            variant="secondary"
-          />
+          <Button title="Back to login" onPress={() => router.replace('/(auth)/login')} variant="secondary" />
         </View>
       </SafeAreaView>
     );
@@ -184,9 +174,7 @@ export default function ResetPasswordScreen() {
             <Text style={styles.successIcon}>✓</Text>
           </View>
           <Text style={styles.successTitle}>Password Updated!</Text>
-          <Text style={styles.successMessage}>
-            Your password has been reset successfully. Redirecting to login...
-          </Text>
+          <Text style={styles.successMessage}>Your password has been reset successfully. Redirecting to login...</Text>
         </View>
       </SafeAreaView>
     );
@@ -195,10 +183,7 @@ export default function ResetPasswordScreen() {
   // Main form - enter new password
   return (
     <SafeAreaView style={styles.container}>
-      <KeyboardAvoidingView
-        style={styles.keyboardView}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <KeyboardAvoidingView style={styles.keyboardView} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <ScrollView
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
@@ -207,9 +192,7 @@ export default function ResetPasswordScreen() {
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.title}>Create new password</Text>
-            <Text style={styles.subtitle}>
-              Enter a strong password for your account
-            </Text>
+            <Text style={styles.subtitle}>Enter a strong password for your account</Text>
           </View>
 
           {/* Form */}
@@ -238,9 +221,7 @@ export default function ResetPasswordScreen() {
                 }}
                 error={confirmError}
               />
-              <Text style={styles.passwordHint}>
-                Use 8+ characters with uppercase, lowercase, numbers & symbols
-              </Text>
+              <Text style={styles.passwordHint}>Use 8+ characters with uppercase, lowercase, numbers & symbols</Text>
             </View>
 
             {/* Error Message */}

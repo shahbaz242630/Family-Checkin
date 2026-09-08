@@ -8,25 +8,51 @@ import type {
   OperationsVisibilityRepository,
 } from './operations-visibility.repository';
 
-type RecentCheckIn = Pick<CheckIn, 'id' | 'receiverId' | 'status' | 'scheduledAt' | 'sentAt' | 'respondedAt' | 'resolvedAt'> & {
+type RecentCheckIn = Pick<
+  CheckIn,
+  'id' | 'receiverId' | 'status' | 'scheduledAt' | 'sentAt' | 'respondedAt' | 'resolvedAt'
+> & {
   escalations: Array<Pick<EscalationEvent, 'result'>>;
   _count: { escalations: number };
 };
 
 type CheckInDetail = Pick<
   CheckIn,
-  'id' | 'receiverId' | 'status' | 'channelUsed' | 'scheduledAt' | 'sentAt' | 'respondedAt' | 'responseDetectedAs' | 'resolvedAt'
+  | 'id'
+  | 'receiverId'
+  | 'status'
+  | 'channelUsed'
+  | 'scheduledAt'
+  | 'sentAt'
+  | 'respondedAt'
+  | 'responseDetectedAs'
+  | 'resolvedAt'
 > & {
   attempts: Array<
     Pick<
       CheckInAttempt,
-      'id' | 'attemptNumber' | 'channel' | 'status' | 'scheduledAt' | 'sentAt' | 'completedAt' | 'providerStatus' | 'failureReason'
+      | 'id'
+      | 'attemptNumber'
+      | 'channel'
+      | 'status'
+      | 'scheduledAt'
+      | 'sentAt'
+      | 'completedAt'
+      | 'providerStatus'
+      | 'failureReason'
     >
   >;
   escalations: Array<
     Pick<
       EscalationEvent,
-      'id' | 'attemptNumber' | 'channel' | 'startedAt' | 'completedAt' | 'result' | 'senderNotifiedAt' | 'backupAlertedAt'
+      | 'id'
+      | 'attemptNumber'
+      | 'channel'
+      | 'startedAt'
+      | 'completedAt'
+      | 'result'
+      | 'senderNotifiedAt'
+      | 'backupAlertedAt'
     >
   >;
   _count: { escalations: number };
@@ -180,8 +206,9 @@ export class PrismaOperationsVisibilityRepository implements OperationsVisibilit
       respondedAt: checkIn.respondedAt ?? undefined,
       resolvedAt: checkIn.resolvedAt ?? undefined,
       escalationAttemptCount: checkIn._count.escalations,
-      successfulEscalationCount: checkIn.escalations.filter((escalation) => escalation.result === EscalationResult.SUCCESS)
-        .length,
+      successfulEscalationCount: checkIn.escalations.filter(
+        (escalation) => escalation.result === EscalationResult.SUCCESS,
+      ).length,
     }));
   }
 
@@ -249,8 +276,9 @@ export class PrismaOperationsVisibilityRepository implements OperationsVisibilit
       responseDetectedAs: checkIn.responseDetectedAs ?? undefined,
       resolvedAt: checkIn.resolvedAt ?? undefined,
       escalationAttemptCount: checkIn._count.escalations,
-      successfulEscalationCount: checkIn.escalations.filter((escalation) => escalation.result === EscalationResult.SUCCESS)
-        .length,
+      successfulEscalationCount: checkIn.escalations.filter(
+        (escalation) => escalation.result === EscalationResult.SUCCESS,
+      ).length,
       attempts: (checkIn.attempts ?? []).map((attempt) => ({
         id: attempt.id,
         attemptNumber: attempt.attemptNumber,

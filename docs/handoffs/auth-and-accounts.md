@@ -59,6 +59,8 @@ BRD: §5.1 FR-AUTH-01..04 · Open backlog: CB-025, CB-028, CB-033, CB-043, CB-04
 
 The mobile auth setup took significant effort and must not be casually rewritten. Protected files whose behavior must be preserved. Four of them (`_layout.tsx`, `auth/callback.tsx`, `auth/reset-password.tsx`, `contexts/AuthContext.tsx`) were edited on 2026-09-07 for CB-029 and CB-039 under a narrow founder approval — surgical edits only, with a per-file account in PR #44. That approval was for those two defects and does not carry forward: the next change needs its own.
 
+On 2026-09-08 (#49, CB-087) four of them — `services/supabase.ts`, `services/auth.ts`, `contexts/AuthContext.tsx` and `app/auth/reset-password.tsx` — were reformatted by Prettier under a separate founder approval. Strip whitespace, parentheses, commas and quote characters from both sides and the files are byte-identical: every identifier, keyword, operator and literal is unchanged. The parentheses Prettier added make existing precedence explicit (`x as string || null` → `(x as string) || null`; `c ? a ?? b : d` → `c ? (a ?? b) : d`) and do not move a boundary. That approval covered formatting and nothing else.
+
 Protected files:
 
 - `apps/mobile/src/services/supabase.ts`
@@ -68,7 +70,7 @@ Protected files:
 - `apps/mobile/src/app/_layout.tsx`
 - `apps/mobile/src/app/auth/callback.tsx`
 - `apps/mobile/src/app/auth/reset-password.tsx`
-- `apps/mobile/app.json`
+- `apps/mobile/app.config.js` (was `app.json` until CB-027; the founder approved the conversion on 2026-09-08 because a static JSON file cannot read the EAS environment variable that carries `google-services.json`, #49)
 
 Important auth behavior to preserve:
 

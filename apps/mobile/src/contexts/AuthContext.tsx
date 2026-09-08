@@ -32,7 +32,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Get initial session
     const initializeAuth = async () => {
       try {
-        const { data: { session: initialSession } } = await supabase.auth.getSession();
+        const {
+          data: { session: initialSession },
+        } = await supabase.auth.getSession();
         setSession(initialSession);
         setUser(initialSession?.user ?? null);
       } catch (error) {
@@ -45,20 +47,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initializeAuth();
 
     // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, currentSession) => {
-        setSession(currentSession);
-        setUser(currentSession?.user ?? null);
-        setIsLoading(false);
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(async (event, currentSession) => {
+      setSession(currentSession);
+      setUser(currentSession?.user ?? null);
+      setIsLoading(false);
 
-        // Handle specific auth events
-        if (event === 'SIGNED_OUT') {
-          // Clear any cached data
-          setUser(null);
-          setSession(null);
-        }
+      // Handle specific auth events
+      if (event === 'SIGNED_OUT') {
+        // Clear any cached data
+        setUser(null);
+        setSession(null);
       }
-    );
+    });
 
     // Cleanup subscription on unmount
     return () => {
@@ -132,11 +134,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isAdmin,
   };
 
-  return (
-    <AuthContext.Provider value={value}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export function useAuthContext() {

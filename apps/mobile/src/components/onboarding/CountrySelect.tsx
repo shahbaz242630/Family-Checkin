@@ -13,7 +13,14 @@ interface CountrySelectProps {
   compactDialCode?: boolean;
 }
 
-export function CountrySelect({ label, value, onChange, disabled, showDialCode = true, compactDialCode }: CountrySelectProps) {
+export function CountrySelect({
+  label,
+  value,
+  onChange,
+  disabled,
+  showDialCode = true,
+  compactDialCode,
+}: CountrySelectProps) {
   const [showPicker, setShowPicker] = useState(false);
   const [query, setQuery] = useState('');
   const selectedCountry = COUNTRIES.find((country) => country.isoCode === value.toUpperCase()) ?? COUNTRIES[0];
