@@ -33,18 +33,9 @@ export default function WelcomeScreen() {
 
         {/* Features */}
         <View style={styles.features}>
-          <FeatureItem
-            icon="🔔"
-            text="Daily receiver check-ins by WhatsApp, SMS, or voice"
-          />
-          <FeatureItem
-            icon="💬"
-            text="Escalation alerts only when attention is needed"
-          />
-          <FeatureItem
-            icon="👨‍👩‍👧‍👦"
-            text="Consent-first support for parents and family"
-          />
+          <FeatureItem icon="🔔" text="Daily receiver check-ins by WhatsApp, SMS, or voice" />
+          <FeatureItem icon="💬" text="Escalation alerts only when attention is needed" />
+          <FeatureItem icon="👨‍👩‍👧‍👦" text="Consent-first support for parents and family" />
         </View>
 
         {/* Tab Selector */}
@@ -53,27 +44,13 @@ export default function WelcomeScreen() {
             style={[styles.tab, activeTab === 'login' && styles.tabActive]}
             onPress={() => setActiveTab('login')}
           >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === 'login' && styles.tabTextActive,
-              ]}
-            >
-              Login
-            </Text>
+            <Text style={[styles.tabText, activeTab === 'login' && styles.tabTextActive]}>Login</Text>
           </Pressable>
           <Pressable
             style={[styles.tab, activeTab === 'signup' && styles.tabActive]}
             onPress={() => setActiveTab('signup')}
           >
-            <Text
-              style={[
-                styles.tabText,
-                activeTab === 'signup' && styles.tabTextActive,
-              ]}
-            >
-              Sign Up
-            </Text>
+            <Text style={[styles.tabText, activeTab === 'signup' && styles.tabTextActive]}>Sign Up</Text>
           </Pressable>
         </View>
 

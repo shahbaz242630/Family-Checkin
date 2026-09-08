@@ -85,8 +85,8 @@ export const handleAuthDeepLink = async (url: string): Promise<{ success: boolea
 
     // Check query params first (some flows use this)
     if (parsedUrl.queryParams) {
-      accessToken = parsedUrl.queryParams.access_token as string || null;
-      refreshToken = parsedUrl.queryParams.refresh_token as string || null;
+      accessToken = (parsedUrl.queryParams.access_token as string) || null;
+      refreshToken = (parsedUrl.queryParams.refresh_token as string) || null;
     }
 
     // If not in query params, check if tokens are in the path (hash fragment handling)
@@ -101,7 +101,7 @@ export const handleAuthDeepLink = async (url: string): Promise<{ success: boolea
 
     const stateParam =
       (parsedUrl.queryParams?.state as string | undefined) ||
-      (url.includes('#') ? new URLSearchParams(url.split('#')[1] ?? '').get('state') ?? undefined : undefined);
+      (url.includes('#') ? (new URLSearchParams(url.split('#')[1] ?? '').get('state') ?? undefined) : undefined);
 
     const expectedState = await consumeExpectedOAuthState();
     if (expectedState) {
@@ -112,7 +112,7 @@ export const handleAuthDeepLink = async (url: string): Promise<{ success: boolea
 
     const codeParam =
       (parsedUrl.queryParams?.code as string | undefined) ||
-      (url.includes('?') ? new URLSearchParams(url.split('?')[1] ?? '').get('code') ?? undefined : undefined);
+      (url.includes('?') ? (new URLSearchParams(url.split('?')[1] ?? '').get('code') ?? undefined) : undefined);
 
     if (codeParam) {
       const { error } = await supabase.auth.exchangeCodeForSession(codeParam);
@@ -155,14 +155,20 @@ export const handleAuthDeepLink = async (url: string): Promise<{ success: boolea
 
 // Helper to get current user
 export const getCurrentUser = async () => {
-  const { data: { user }, error } = await supabase.auth.getUser();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
   if (error) throw error;
   return user;
 };
 
 // Helper to get current session
 export const getSession = async () => {
-  const { data: { session }, error } = await supabase.auth.getSession();
+  const {
+    data: { session },
+    error,
+  } = await supabase.auth.getSession();
   if (error) throw error;
   return session;
 };

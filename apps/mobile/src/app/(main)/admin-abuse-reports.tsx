@@ -114,7 +114,9 @@ export default function AdminAbuseReportsScreen() {
                 <View key={report.id} style={styles.reportItem}>
                   <View style={styles.reportHeader}>
                     <Text style={styles.statusText}>{abuseStatusLabel(report.reviewStatus)}</Text>
-                    <Text style={styles.contentFlag}>{report.hasReportContent ? 'Content captured' : 'No content'}</Text>
+                    <Text style={styles.contentFlag}>
+                      {report.hasReportContent ? 'Content captured' : 'No content'}
+                    </Text>
                   </View>
                   <InfoRow label="Reported" value={formatOperationsDateTime(report.reportedAt)} />
                   <InfoRow label="Receiver ID" value={report.receiverId} mono />

@@ -2,7 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import type { Subscription } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../shared/prisma/prisma.service';
-import type { BillingRepository, LocalSubscriptionRecord, UpsertRevenueCatSubscriptionInput, UserBillingProfile } from './billing.repository';
+import type {
+  BillingRepository,
+  LocalSubscriptionRecord,
+  UpsertRevenueCatSubscriptionInput,
+  UserBillingProfile,
+} from './billing.repository';
 
 @Injectable()
 export class PrismaBillingRepository implements BillingRepository {

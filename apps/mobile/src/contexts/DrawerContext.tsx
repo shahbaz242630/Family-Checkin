@@ -71,11 +71,7 @@ export function DrawerProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  return (
-    <DrawerContext.Provider value={value}>
-      {children}
-    </DrawerContext.Provider>
-  );
+  return <DrawerContext.Provider value={value}>{children}</DrawerContext.Provider>;
 }
 
 export function useDrawer() {

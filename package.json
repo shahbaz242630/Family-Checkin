@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "prepare": "node scripts/install-hooks.mjs",
-    "verify": "npm run prisma:generate && npm run lint && npm run typecheck && npm run prisma:validate && npm run build && npm test && npm run security:workflows && npm run security:secrets && npm run security:deps",
+    "verify": "npm run format:check && npm run prisma:generate && npm run lint && npm run typecheck && npm run prisma:validate && npm run check:mobile-config && npm run build && npm test && npm run security:workflows && npm run security:secrets && npm run security:deps",
     "lint": "npm run lint:root && npm run lint --workspaces --if-present",
     "lint:root": "eslint scripts packages",
     "typecheck": "npm run build -w packages/shared-types && npm run type-check --workspaces --if-present",
@@ -20,6 +20,7 @@
     "prisma:generate": "npm run prisma:generate -w apps/backend",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "check:mobile-config": "node scripts/check-mobile-config.mjs",
     "security:workflows": "node scripts/github-actions-security-check.mjs",
     "security:secrets": "node scripts/secret-scan.mjs",
     "security:deps": "node scripts/dependency-audit.mjs",

@@ -200,7 +200,7 @@ The existing mobile auth setup is sensitive. Do not casually rewrite these files
 - `apps/mobile/src/app/_layout.tsx`
 - `apps/mobile/src/app/auth/callback.tsx`
 - `apps/mobile/src/app/auth/reset-password.tsx`
-- `apps/mobile/app.json`
+- `apps/mobile/app.config.js`
 
 Before and after auth-sensitive work, inspect diffs carefully.
 

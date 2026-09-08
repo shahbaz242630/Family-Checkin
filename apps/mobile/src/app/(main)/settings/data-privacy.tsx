@@ -1,23 +1,12 @@
 // Data & Privacy settings screen
 import { useRef, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  Pressable,
-  Alert,
-  ActivityIndicator,
-} from 'react-native';
+import { View, Text, StyleSheet, ScrollView, Pressable, Alert, ActivityIndicator } from 'react-native';
 import { useRouter } from 'expo-router';
 import { colors, spacing, fontSize, borderRadius } from '../../../theme';
 import { useAuthContext } from '../../../contexts/AuthContext';
 import { StepUpCodeModal } from '../../../components/common';
 import { requestAccountStepUp, verifyAccountStepUp, type BackendSensitiveAction } from '../../../services/backendApi';
-import {
-  downloadUserData,
-  deleteUserAccount,
-} from '../../../services/userData';
+import { downloadUserData, deleteUserAccount } from '../../../services/userData';
 
 export default function DataPrivacyScreen() {
   const router = useRouter();
@@ -60,7 +49,7 @@ export default function DataPrivacyScreen() {
           style: 'destructive',
           onPress: confirmDeleteAccount,
         },
-      ]
+      ],
     );
   };
 
@@ -75,7 +64,7 @@ export default function DataPrivacyScreen() {
           style: 'destructive',
           onPress: executeDeleteAccount,
         },
-      ]
+      ],
     );
   };
 
@@ -138,86 +127,86 @@ export default function DataPrivacyScreen() {
 
   return (
     <>
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Back Button */}
-      <Pressable onPress={() => router.back()} style={styles.backButton}>
-        <Text style={styles.backButtonText}>← Back</Text>
-      </Pressable>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {/* Back Button */}
+        <Pressable onPress={() => router.back()} style={styles.backButton}>
+          <Text style={styles.backButtonText}>← Back</Text>
+        </Pressable>
 
-      <Text style={styles.title}>Data & Privacy</Text>
-      <Text style={styles.subtitle}>Manage your data and account</Text>
+        <Text style={styles.title}>Data & Privacy</Text>
+        <Text style={styles.subtitle}>Manage your data and account</Text>
 
-      {/* Export Data Section */}
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Your Data</Text>
-        <View style={styles.card}>
-          <Text style={styles.cardIcon}>📦</Text>
-          <View style={styles.cardContent}>
-            <Text style={styles.cardTitle}>Export Data</Text>
-            <Text style={styles.cardDescription}>
-              Download a copy of all your data in JSON format including your profile, receivers, check-ins, and settings.
-            </Text>
+        {/* Export Data Section */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Your Data</Text>
+          <View style={styles.card}>
+            <Text style={styles.cardIcon}>📦</Text>
+            <View style={styles.cardContent}>
+              <Text style={styles.cardTitle}>Export Data</Text>
+              <Text style={styles.cardDescription}>
+                Download a copy of all your data in JSON format including your profile, receivers, check-ins, and
+                settings.
+              </Text>
+            </View>
+            <Pressable
+              style={[styles.actionButton, styles.exportButton]}
+              onPress={handleExportData}
+              disabled={isExporting}
+            >
+              {isExporting ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Text style={styles.exportButtonText}>Export</Text>
+              )}
+            </Pressable>
           </View>
-          <Pressable
-            style={[styles.actionButton, styles.exportButton]}
-            onPress={handleExportData}
-            disabled={isExporting}
-          >
-            {isExporting ? (
-              <ActivityIndicator size="small" color={colors.primary} />
-            ) : (
-              <Text style={styles.exportButtonText}>Export</Text>
-            )}
-          </Pressable>
         </View>
-      </View>
 
-      {/* Delete Account Section */}
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, styles.dangerTitle]}>Danger Zone</Text>
+        {/* Delete Account Section */}
+        <View style={styles.section}>
+          <Text style={[styles.sectionTitle, styles.dangerTitle]}>Danger Zone</Text>
 
-        <View style={[styles.card, styles.dangerCard]}>
-          <Text style={styles.cardIcon}>⚠️</Text>
-          <View style={styles.cardContent}>
-            <Text style={styles.cardTitle}>Delete Account</Text>
-            <Text style={styles.cardDescription}>
-              Permanently delete your account and all associated data. This action cannot be undone.
-            </Text>
+          <View style={[styles.card, styles.dangerCard]}>
+            <Text style={styles.cardIcon}>⚠️</Text>
+            <View style={styles.cardContent}>
+              <Text style={styles.cardTitle}>Delete Account</Text>
+              <Text style={styles.cardDescription}>
+                Permanently delete your account and all associated data. This action cannot be undone.
+              </Text>
+            </View>
+            <Pressable
+              style={[styles.actionButton, styles.deleteAccountButton]}
+              onPress={handleDeleteAccount}
+              disabled={isDeletingAccount}
+            >
+              {isDeletingAccount ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Text style={styles.deleteAccountButtonText}>Delete</Text>
+              )}
+            </Pressable>
           </View>
-          <Pressable
-            style={[styles.actionButton, styles.deleteAccountButton]}
-            onPress={handleDeleteAccount}
-            disabled={isDeletingAccount}
-          >
-            {isDeletingAccount ? (
-              <ActivityIndicator size="small" color="#FFFFFF" />
-            ) : (
-              <Text style={styles.deleteAccountButtonText}>Delete</Text>
-            )}
-          </Pressable>
         </View>
-      </View>
 
-      {/* Privacy Info */}
-      <View style={styles.infoSection}>
-        <Text style={styles.infoTitle}>Privacy Information</Text>
-        <Text style={styles.infoText}>
-          • Your data is stored securely on Supabase servers{'\n'}
-          • We use Row Level Security to protect your data{'\n'}
-          • You can export your data or delete your account at any time{'\n'}
-          • Nearby is not an emergency service
-        </Text>
-      </View>
-    </ScrollView>
-    <StepUpCodeModal
-      visible={Boolean(stepUpPrompt)}
-      title={stepUpPrompt?.title ?? ''}
-      message={stepUpPrompt?.message ?? ''}
-      code={stepUpCode}
-      onChangeCode={setStepUpCode}
-      onCancel={() => resolveStepUpPrompt(null)}
-      onSubmit={() => resolveStepUpPrompt(stepUpCode.trim() || null)}
-    />
+        {/* Privacy Info */}
+        <View style={styles.infoSection}>
+          <Text style={styles.infoTitle}>Privacy Information</Text>
+          <Text style={styles.infoText}>
+            • Your data is stored securely on Supabase servers{'\n'}• We use Row Level Security to protect your data
+            {'\n'}• You can export your data or delete your account at any time{'\n'}• Nearby is not an emergency
+            service
+          </Text>
+        </View>
+      </ScrollView>
+      <StepUpCodeModal
+        visible={Boolean(stepUpPrompt)}
+        title={stepUpPrompt?.title ?? ''}
+        message={stepUpPrompt?.message ?? ''}
+        code={stepUpCode}
+        onChangeCode={setStepUpCode}
+        onCancel={() => resolveStepUpPrompt(null)}
+        onSubmit={() => resolveStepUpPrompt(stepUpCode.trim() || null)}
+      />
     </>
   );
 }
@@ -337,4 +326,3 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
-

@@ -1,7 +1,11 @@
 import { BillingInterval, BillingStore, SubscriptionStatus, SubscriptionTier } from '@prisma/client';
 import { describe, expect, it } from 'vitest';
 import type { AuditService } from '../audit/audit.service';
-import type { BillingRepository, LocalSubscriptionRecord, UpsertRevenueCatSubscriptionInput } from './billing.repository';
+import type {
+  BillingRepository,
+  LocalSubscriptionRecord,
+  UpsertRevenueCatSubscriptionInput,
+} from './billing.repository';
 import { BillingService } from './billing.service';
 
 class FakeBillingRepository implements BillingRepository {
@@ -36,7 +40,10 @@ class FakeBillingRepository implements BillingRepository {
   }
 }
 
-function subscription(status: SubscriptionStatus, overrides: Partial<LocalSubscriptionRecord> = {}): LocalSubscriptionRecord {
+function subscription(
+  status: SubscriptionStatus,
+  overrides: Partial<LocalSubscriptionRecord> = {},
+): LocalSubscriptionRecord {
   return {
     id: 'subscription-1',
     userId: 'user-1',
@@ -86,7 +93,9 @@ describe('BillingService', () => {
     test.repository.subscription = subscription(SubscriptionStatus.ACTIVE);
     await expect(test.service.getBillingStatus('user-1')).resolves.toMatchObject({ entitled: true });
 
-    test.repository.subscription = subscription(SubscriptionStatus.TRIALING, { trialEndsAt: new Date('2026-05-20T00:00:00.000Z') });
+    test.repository.subscription = subscription(SubscriptionStatus.TRIALING, {
+      trialEndsAt: new Date('2026-05-20T00:00:00.000Z'),
+    });
     await expect(test.service.getBillingStatus('user-1')).resolves.toMatchObject({ entitled: true });
 
     test.repository.subscription = subscription(SubscriptionStatus.CANCELED, { willRenew: false });
@@ -98,7 +107,9 @@ describe('BillingService', () => {
     });
     await expect(test.service.getBillingStatus('user-1')).resolves.toMatchObject({ entitled: false });
 
-    test.repository.subscription = subscription(SubscriptionStatus.PAST_DUE, { currentPeriodEnd: new Date('2026-05-01T00:00:00.000Z') });
+    test.repository.subscription = subscription(SubscriptionStatus.PAST_DUE, {
+      currentPeriodEnd: new Date('2026-05-01T00:00:00.000Z'),
+    });
     await expect(test.service.getBillingStatus('user-1')).resolves.toMatchObject({ entitled: false });
   });
 

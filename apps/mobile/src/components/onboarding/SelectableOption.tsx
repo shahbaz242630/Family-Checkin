@@ -21,22 +21,14 @@ export function SelectableOption({
 }: SelectableOptionProps) {
   return (
     <Pressable
-      style={[
-        styles.container,
-        selected && styles.containerSelected,
-        disabled && styles.containerDisabled,
-      ]}
+      style={[styles.container, selected && styles.containerSelected, disabled && styles.containerDisabled]}
       onPress={onPress}
       disabled={disabled}
     >
       {icon && <Text style={styles.icon}>{icon}</Text>}
       <View style={styles.textContainer}>
         <Text style={[styles.label, selected && styles.labelSelected]}>{label}</Text>
-        {description && (
-          <Text style={[styles.description, selected && styles.descriptionSelected]}>
-            {description}
-          </Text>
-        )}
+        {description && <Text style={[styles.description, selected && styles.descriptionSelected]}>{description}</Text>}
       </View>
       <View style={[styles.radio, selected && styles.radioSelected]}>
         {selected && <View style={styles.radioDot} />}

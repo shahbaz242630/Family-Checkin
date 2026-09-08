@@ -51,7 +51,7 @@ BRD: FR-BIL-01, BRD-6.4, BRD-9.8 (FR-BIL-02 / BRD-7.6 describe Stripe+Telr and d
 
 ## Known gaps
 
-- CB-027 — the app is not store-buildable: `apps/mobile/eas.json` uses `${VAR}` interpolation, declares no `EXPO_PUBLIC_REVENUECAT_*` or `EXPO_PUBLIC_BACKEND_URL` in any profile, has no `versionCode`/`buildNumber`, and points `submit.production.android.serviceAccountKeyPath` at `./google-services.json`; `apps/mobile/app.json` has an empty `extra.eas.projectId` and no billing-related entry in `plugins`.
+- CB-027 — part done (#49). `eas.json` now binds each profile to an EAS environment, but the three `EXPO_PUBLIC_REVENUECAT_*` variables are set in **no** environment: there are no live products, so there are no values. Billing will not work in any build until they exist. `EXPO_PUBLIC_BACKEND_URL` is set in `development` only.
 - CB-041 — done (#43). One loose end: `logOutRevenueCat()` is implemented and tested but has no caller; it needs one line in `AuthContext.signOut`, a file owned by another agent in the sprint-4 wave.
 - Nothing above has been exercised against a real store. The 60 s polling ceiling is an estimate of how long the RevenueCat webhook takes; the first sandbox purchase should confirm or correct it.
 - CB-061 — tier comes from a regex over the product id (`tier_2|plus` → `TIER_2`, `tier_3|premium|family` → `TIER_3`, else `TIER_1`); there are no per-tier receiver/backup limits, and the BRD's three-retries-over-7-days / suspend-after-14-days-unpaid state is not modelled. The store paid-through period is the only grace window and `SUSPENDED` is never written.

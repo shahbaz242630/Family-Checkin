@@ -88,7 +88,7 @@ export const COUNTRIES: CountryOption[] = [
   { isoCode: 'CD', country: 'Congo - Kinshasa', dialCode: '+243' },
   { isoCode: 'CK', country: 'Cook Islands', dialCode: '+682' },
   { isoCode: 'CR', country: 'Costa Rica', dialCode: '+506' },
-  { isoCode: 'CI', country: 'Cote d\'Ivoire', dialCode: '+225' },
+  { isoCode: 'CI', country: "Cote d'Ivoire", dialCode: '+225' },
   { isoCode: 'HR', country: 'Croatia', dialCode: '+385' },
   { isoCode: 'CU', country: 'Cuba', dialCode: '+53' },
   { isoCode: 'CW', country: 'Curacao', dialCode: '+599' },

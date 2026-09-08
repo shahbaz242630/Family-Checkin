@@ -18,7 +18,7 @@ Sprint 4 wave 1 (CB-029, CB-032, CB-033, CB-034, CB-035, CB-036, CB-037, CB-039,
 
 | Layer       | Paths                                                                                   |
 | ----------- | --------------------------------------------------------------------------------------- |
-| Routes      | `apps/mobile/src/app/` (Expo Router root, set in `app.json` → `plugins.expo-router.root`) |
+| Routes      | `apps/mobile/src/app/` (Expo Router root, set in `app.config.js` → `plugins.expo-router.root`) |
 | Shell       | `apps/mobile/src/components/layout/` (`Header`, `Sidebar`, `ProfileMenu`), `contexts/DrawerContext.tsx` |
 | Auth state  | `apps/mobile/src/contexts/AuthContext.tsx` (session + the cached `isAdmin` flag), `components/auth/ProtectedRoute.tsx` |
 | API client  | `apps/mobile/src/services/backendApi.ts`, `services/backendErrors.ts`                     |
@@ -99,11 +99,11 @@ Backend endpoints this app calls are all declared in `services/backendApi.ts`; t
 - `userData.ts` requires a step-up token for both `GET /account/export` and `DELETE /account`, and signs out locally after a successful delete. `UserDataExport` mirrors the backend `AccountExportResponse` key for key (`checkIns`, `escalations`, and no optional sections) — CB-041 fixed two keys that never existed in the payload.
 - The billing screen never reads `/billing/status` once after a purchase. `pollBillingStatusUntilEntitled` (`services/billingPolling.ts`) re-reads it every 3 s for up to 60 s, because the store → RevenueCat → webhook → backend hop takes seconds; a failed read does not end the poll, and the screen cancels it on unmount. All timing is injected so it is tested with plain vitest.
 - `configureRevenueCat` calls `Purchases.configure` at most once per API key per app process. A different sender goes through `Purchases.logIn`; `logOutRevenueCat()` detaches the identity. Calling `configure` twice is the CB-041 bug and must not come back.
-- `eas.json` is not build-ready: `env` blocks use `${VAR}` interpolation EAS does not expand, no profile carries `EXPO_PUBLIC_BACKEND_URL` or RevenueCat keys, `app.json` `extra.eas.projectId` is empty, `submit.production.android.serviceAccountKeyPath` points at `./google-services.json`, and there is no `versionCode`/`buildNumber`.
+- `eas.json` is build-ready since #49: each profile names an `environment` and EAS supplies the values, `projectId`/`owner`/`versionCode`/`buildNumber` are set, and the submit key points outside the repo. `EXPO_PUBLIC_BACKEND_URL` is only in the `development` environment and the RevenueCat keys are in none — nothing is hosted and no products exist. No `eas build` has been run yet.
 
 ## Known gaps
 
-- CB-027 — `eas.json`/`app.json` not store-buildable: `${VAR}` env interpolation, empty `projectId`, wrong submit key path, no `versionCode`/`buildNumber`.
+- CB-027 — part done (#49). Config is store-shaped; the Done-when line needs an actual `eas build`, which has not been run.
 - CB-028 — Google/Apple sign-in rejects every callback with "Invalid authentication state" (custom `state` check).
 - CB-029 — done 2026-09-07 (#44): one handler in `hooks/useDeepLinks.ts`, screens driven by route params, signup shows "Check your email". Device re-check pending: the next emulator pass should confirm an email confirmation on a cold start and a recovery link on a warm start.
 - CB-030 — Push: no foreground handler, no tap → deep link, tokens never unregistered on sign-out, no Time-Sensitive entitlement.

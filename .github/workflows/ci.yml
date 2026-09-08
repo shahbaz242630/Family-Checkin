@@ -48,6 +48,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Cheapest gate, so it runs first. The pre-commit hook formats staged
+      # files, but it is skipped inside linked worktrees and by --no-verify, so
+      # unformatted code reached master three waves running (CB-087).
+      - name: Format check
+        run: npm run format:check
+
       # A fresh install does not produce the Prisma client (Prisma 7 with
       # prisma.config.ts skips the postinstall generate), and typecheck, build,
       # and the backend specs all import it.
@@ -62,6 +68,12 @@ jobs:
 
       - name: Prisma schema validation
         run: npm run prisma:validate
+
+      # CB-027: catches ${} interpolation in eas.json and a missing
+      # projectId/owner/versionCode/buildNumber. Both failures are invisible
+      # until a build reaches a device, so they are checked here instead.
+      - name: Mobile config check
+        run: npm run check:mobile-config
 
       - name: Build backend
         run: npm run build

@@ -99,7 +99,9 @@ describe('PrismaBackupContactsRepository', () => {
       },
     });
 
-    await expect(repository.findManyForReceiverForUser({ userId: 'user-1', receiverId: 'receiver-1' })).resolves.toBeNull();
+    await expect(
+      repository.findManyForReceiverForUser({ userId: 'user-1', receiverId: 'receiver-1' }),
+    ).resolves.toBeNull();
   });
 
   it('counts active backup contacts scoped to receiver ownership', async () => {

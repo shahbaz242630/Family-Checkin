@@ -51,13 +51,17 @@ against the Expo SDK 54 docs on 2026-09-07:
    }
    ```
 
-Step 2 only works from a **dynamic** config (`app.config.js`). Our config is
-static `app.json`, which cannot read `process.env`, so adopting this means
-converting `app.json` → `app.config.js`.
+Step 2 only works from a **dynamic** config (`app.config.js`). That conversion
+is **done** — the founder approved it on 2026-09-08 and `apps/mobile/app.json`
+is now `apps/mobile/app.config.js` (#49, CB-027). `app.config.js` inherited
+`app.json`'s place on the protected list in
+`docs/handoffs/auth-and-accounts.md`, so it still needs explicit approval to
+change.
 
-`app.json` is on the protected list in `docs/handoffs/auth-and-accounts.md`, so
-that conversion needs the founder's explicit approval. It is part of CB-031 and
-has not been done.
+The `googleServicesFile` line itself is deliberately **not** in the config yet.
+Pointing at a file that does not exist fails an Android build outright, and no
+Firebase project has been created. Adding those three lines is the whole of
+CB-031's config work once `google-services.json` exists.
 
 ## Identifiers, which are not secrets
 
@@ -65,24 +69,36 @@ These are public by design and belong in committed config:
 
 | Value | Where it goes | Status |
 |---|---|---|
-| iOS bundle identifier | `app.json` → `ios.bundleIdentifier` | set: `com.familycheckin.app` |
-| Android package | `app.json` → `android.package` | set: `com.familycheckin.app` |
-| Expo slug | `app.json` → `expo.slug` | set: `family-checkin` |
-| EAS project ID (UUID) | `app.json` → `extra.eas.projectId` | **empty** — `npx eas init` prints it (CB-027) |
-| Expo owner | `app.json` → `expo.owner` | **absent** (CB-027) |
-| Apple Team ID | `eas.json` submit profile | **absent** (CB-027) |
+| iOS bundle identifier | `app.config.js` → `ios.bundleIdentifier` | set: `com.familycheckin.app` |
+| Android package | `app.config.js` → `android.package` | set: `com.familycheckin.app` |
+| Expo slug | `app.config.js` → `expo.slug` | set: `family-checkin` |
+| EAS project ID (UUID) | `app.config.js` → `extra.eas.projectId` | set: `ddb699e2-f321-4f9e-8c17-64eeefc4cfd3` (2026-09-08) |
+| Expo owner | `app.config.js` → `expo.owner` | set: `shahbaz242630` (2026-09-08) |
+| Apple Team ID | `eas.json` submit profile | **absent** — needed for the first `eas submit --platform ios` (CB-027) |
 | Firebase project ID | inside `google-services.json` | **absent** (CB-031) |
 
 ## What is still open
 
-- `eas.json` build profiles use `${VAR}` interpolation in `env`. EAS does not
-  expand shell syntax there, so those builds would receive the literal string
-  `${EXPO_PUBLIC_SUPABASE_URL}`. The fix is EAS environment variables
-  (`eas env:create`), which needs the Expo account. CB-027.
-- `extra.eas.projectId`, `owner`, `versionCode`/`buildNumber` and
-  `ITSAppUsesNonExemptEncryption` are all still missing from `app.json`
-  (protected file, needs approval). CB-027.
-- `android.googleServicesFile` and the `app.config.js` conversion. CB-031.
+Closed on 2026-09-08 (#49): the `${VAR}` interpolation is gone — each build
+profile now names an `environment` and EAS supplies the values — and
+`projectId`, `owner`, `versionCode`, `buildNumber` and
+`ITSAppUsesNonExemptEncryption` are all set. `scripts/check-mobile-config.mjs`
+fails CI if any of that regresses.
+
+Still open:
+
+- **No `eas build` has ever been run.** Everything above is config that reads
+  correctly; none of it is proven until a build completes. CB-027's "Done when"
+  is still unobserved.
+- **`EXPO_PUBLIC_BACKEND_URL` exists only in the `development` environment**,
+  carrying the local value, because nothing is hosted. Preview and production
+  builds have no backend to reach; set it when hosting exists.
+- **The three RevenueCat keys are not set** in any environment. There are no
+  live products yet, so there are no values to set. `revenueCat.ts` degrades
+  without them; billing simply will not work in a build until they exist.
+- **Apple Team ID** is absent from the `eas.json` submit profile. Needed for
+  the first iOS submission, not for a build.
+- `android.googleServicesFile` and the Firebase project. CB-031.
 
 ## A trap in `.gitignore`
 

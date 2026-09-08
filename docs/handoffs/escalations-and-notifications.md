@@ -62,7 +62,7 @@ Metadata worth knowing: every `sender_push.*` (except `skipped`) and `sender_voi
 
 ## Known gaps
 
-- Android push cannot arrive at all: `apps/mobile/app.json` has no `android.googleServicesFile` and no FCM project exists (CB-031).
+- Android push cannot arrive at all: `apps/mobile/app.config.js` has no `android.googleServicesFile` and no FCM project exists (CB-031). The config is dynamic since #49, so the line can read an EAS file variable as soon as one exists; it is left out deliberately because pointing at a missing file fails the build.
 - Expo Go on Android is skipped by design (`Constants.appOwnership === 'expo'` returns early); Expo Go on SDK 53+ has no remote push, so a development build is required to see any push.
 - iOS Critical Alerts entitlement is not implemented and Android DND bypass is off (`bypassDnd: false`); neither may be claimed as granted behaviour.
 - Receipt-driven deactivations are not audited (only `device_tokens.active`/`updatedAt` change). The receipts themselves are drained both opportunistically after a send and from the scheduler (`POST /operations/push-receipts/run`, CB-085), so a quiet period no longer keeps a dead token active.

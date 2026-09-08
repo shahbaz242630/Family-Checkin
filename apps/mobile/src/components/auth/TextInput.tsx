@@ -16,25 +16,14 @@ interface TextInputProps extends Omit<RNTextInputProps, 'style'> {
   isPassword?: boolean;
 }
 
-export function TextInput({
-  label,
-  error,
-  isPassword = false,
-  ...props
-}: TextInputProps) {
+export function TextInput({ label, error, isPassword = false, ...props }: TextInputProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
 
   return (
     <View style={styles.container}>
       <Text style={styles.label}>{label}</Text>
-      <View
-        style={[
-          styles.inputContainer,
-          isFocused && styles.inputFocused,
-          error && styles.inputError,
-        ]}
-      >
+      <View style={[styles.inputContainer, isFocused && styles.inputFocused, error && styles.inputError]}>
         <RNTextInput
           style={styles.input}
           placeholderTextColor={colors.textLight}
@@ -44,13 +33,8 @@ export function TextInput({
           {...props}
         />
         {isPassword && (
-          <Pressable
-            onPress={() => setShowPassword(!showPassword)}
-            style={styles.toggleButton}
-          >
-            <Text style={styles.toggleText}>
-              {showPassword ? 'Hide' : 'Show'}
-            </Text>
+          <Pressable onPress={() => setShowPassword(!showPassword)} style={styles.toggleButton}>
+            <Text style={styles.toggleText}>{showPassword ? 'Hide' : 'Show'}</Text>
           </Pressable>
         )}
       </View>

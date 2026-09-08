@@ -1,13 +1,6 @@
 // Shared API/domain types aligned with the current receiver-first backend model.
 
-export type RelationshipType =
-  | 'PARENT'
-  | 'GRANDPARENT'
-  | 'SIBLING'
-  | 'SPOUSE'
-  | 'CHILD'
-  | 'FRIEND'
-  | 'OTHER';
+export type RelationshipType = 'PARENT' | 'GRANDPARENT' | 'SIBLING' | 'SPOUSE' | 'CHILD' | 'FRIEND' | 'OTHER';
 
 export type Channel = 'WHATSAPP' | 'SMS' | 'VOICE';
 
