@@ -36,6 +36,24 @@
       "package": "deepmerge-ts",
       "reason": "deepmerge-ts is used by @prisma/config to merge our own prisma.config.ts at CLI start; there is no untrusted or recursive input. Waiting on a Prisma 7.x release with the patched dependency.",
       "expires": "2026-12-31"
+    },
+    {
+      "ghsa": "GHSA-535w-7cp7-47q4",
+      "package": "multer",
+      "reason": "Denial of service via an oversized array index in field names. The API exposes no multipart or file-upload route: apps/backend/src contains no FileInterceptor, FilesInterceptor, UploadedFile or multer import, so multer is installed by @nestjs/platform-express but never wired into a request path, and multipart parsing is unreachable. Not fixable by a version bump: @nestjs/platform-express pins multer to an exact 2.2.0 in every release up to and including 12.0.1, and an npm overrides entry is silently ignored by npm 10.9 in this workspace (verified 2026-09-09). Remove once NestJS ships a release depending on multer >= 2.3.0.",
+      "expires": "2026-12-31"
+    },
+    {
+      "ghsa": "GHSA-qfvm-cv95-jqjf",
+      "package": "multer",
+      "reason": "Denial of service via a file descriptor leak on aborted uploads. Same unreachable chain as GHSA-535w-7cp7-47q4: no upload route exists, so no upload can be aborted. Same blocked upgrade path. Remove once NestJS ships a release depending on multer >= 2.3.0.",
+      "expires": "2026-12-31"
+    },
+    {
+      "ghsa": "GHSA-wc9g-mqfw-jrwm",
+      "package": "multer",
+      "reason": "Denial of service via crafted multipart field names. Same unreachable chain as GHSA-535w-7cp7-47q4: no route parses multipart bodies. Same blocked upgrade path. Remove once NestJS ships a release depending on multer >= 2.3.0.",
+      "expires": "2026-12-31"
     }
   ]
 }
